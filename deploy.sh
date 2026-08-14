@@ -39,9 +39,13 @@ systemctl is-active agro
 REMOTE
 
 echo "==> Checking it answers"
-PORT_URL="http://${HOST#*@}:1674/graphql"
-curl -fsS -m 10 -X POST "$PORT_URL" \
+# 401 is a healthy answer here: it means the server is up and the auth layer is doing its job.
+# Only a connection failure or a 5xx is a problem, so the status code is what gets checked.
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST "http://${HOST#*@}:1674/graphql" \
     -H 'Content-Type: application/json' \
-    -d '{"query":"{ health }"}'
-echo
+    -d '{"query":"{ health }"}')
+case "$STATUS" in
+    200 | 401) echo "    server responding (HTTP $STATUS)" ;;
+    *) echo "    unexpected response: HTTP $STATUS" >&2; exit 1 ;;
+esac
 echo "Deployed. Dashboard: http://${HOST#*@}:1674/"
