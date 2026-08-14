@@ -1,7 +1,7 @@
 # Agro
 
 Background sync daemon for [Wander](https://github.com/Kolbxyz/wander) (Linux TUI) and
-**Wanda** (Android). It keeps one playback handoff and a set of registered nodes per user, so a
+[Wanda](https://github.com/Kolbxyz/Wanda) (Android). It keeps one playback handoff and a set of registered nodes per user, so a
 session started on one device can be picked up on another, and serves its own dashboard.
 
 - GraphQL API — `POST /graphql`
