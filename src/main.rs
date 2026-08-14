@@ -1,4 +1,5 @@
 mod crypto;
+mod auth;
 mod db;
 mod embedded_dashboard;
 mod ingest;
@@ -47,9 +48,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = Router::new()
+    // Everything that exposes a user's data sits behind the token check; the dashboard's own
+    // static files and the capability-URL share endpoint stay public.
+    let protected = Router::new()
         .route("/graphql", post(graphql_handler))
         .route("/ws/sync", get(ws::ws_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_token,
+        ));
+
+    let app = Router::new()
+        .merge(protected)
         .route("/api/v1/dropbox/upload", post(ingest::dropbox_upload_handler))
         .route("/share/{token}", get(share::share_handler))
         .fallback(embedded_dashboard::static_dashboard_handler)

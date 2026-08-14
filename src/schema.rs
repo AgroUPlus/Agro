@@ -225,6 +225,22 @@ fn plugin_context(db: &Db) -> crate::plugins::PluginContext {
 }
 
 
+/// An app password as it is listed back. The token itself is deliberately absent: a credential is
+/// shown once, when it is created, and is not recoverable afterwards.
+#[derive(SimpleObject, Clone)]
+pub struct AppPassword {
+    pub label: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// The one time a token is returned. Shown once, at creation.
+#[derive(SimpleObject, Clone)]
+pub struct AppPasswordCreated {
+    pub label: String,
+    pub token: String,
+}
+
 pub struct QueryRoot;
 
 #[Object]
@@ -469,6 +485,19 @@ impl QueryRoot {
         Ok(payload)
     }
 
+    async fn app_passwords(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<AppPassword>> {
+        let db = ctx.data::<Db>()?;
+        Ok(db
+            .list_app_passwords(&user_id)?
+            .into_iter()
+            .map(|record| AppPassword {
+                label: record.label,
+                created_at: record.created_at,
+                last_used_at: record.last_used_at,
+            })
+            .collect())
+    }
+
     async fn synced_settings(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Option<SyncedSettingsPayload>> {
         let db = ctx.data::<Db>()?;
         let settings = db.get_synced_settings(&user_id)?;
@@ -619,6 +648,34 @@ impl MutationRoot {
             connection_url,
             qr_data,
         })
+    }
+
+    /// Issues a credential for one client, so that client can be revoked on its own rather than
+    /// by rotating the account passphrase every other device is using.
+    async fn create_app_password(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        label: String,
+    ) -> async_graphql::Result<AppPasswordCreated> {
+        let db = ctx.data::<Db>()?;
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Err("An app password needs a label, so you can tell which device it is".into());
+        }
+        let token = generate_passphrase();
+        db.create_app_password(&user_id, &label, &token)?;
+        Ok(AppPasswordCreated { label, token })
+    }
+
+    async fn revoke_app_password(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        label: String,
+    ) -> async_graphql::Result<bool> {
+        let db = ctx.data::<Db>()?;
+        Ok(db.revoke_app_password(&user_id, &label)?)
     }
 
     async fn toggle_plugin(&self, ctx: &Context<'_>, plugin_id: String, is_enabled: bool) -> async_graphql::Result<bool> {

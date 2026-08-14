@@ -45,7 +45,47 @@ const FALLBACK_RULES = [
   }
 ];
 
+
+/**
+ * The API requires a bearer token. It is kept in localStorage rather than in React state so a
+ * reload does not log you out, and it is sent on every request from one place — a fetch that
+ * forgets the header now fails loudly with a 401 rather than silently returning someone's data.
+ */
+const TOKEN_KEY = 'agro.token';
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+export function setToken(value) {
+  if (value) localStorage.setItem(TOKEN_KEY, value.trim());
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/** POSTs a GraphQL document with the stored token. Throws on 401 so callers can prompt. */
+export async function gql(query) {
+  const res = await fetch('/graphql', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
+    },
+    body: JSON.stringify({ query })
+  });
+  if (res.status === 401) {
+    const error = new Error('Unauthorized');
+    error.unauthorized = true;
+    throw error;
+  }
+  return res;
+}
+
 export default function App() {
+  // Null until the first request tells us whether the stored token works. Rendering the
+  // dashboard before then would flash real-looking empty data at someone who is not signed in.
+  const [locked, setLocked] = useState(!getToken());
+  const [tokenInput, setTokenInput] = useState('');
+  const [tokenError, setTokenError] = useState('');
   const [activeTab, setActiveTab] = useState('nodes');
   const [username, setUsername] = useState('alpha');
   const [usersList, setUsersList] = useState(['alpha']);
@@ -83,11 +123,7 @@ export default function App() {
   useEffect(() => {
     async function loadBackendData() {
       try {
-        const res = await fetch('/graphql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: `
+        const res = await gql(`
               query LoadInitialState {
                 users
                 me(username: "${username}") {
@@ -127,9 +163,7 @@ export default function App() {
                   streamFormat
                 }
               }
-            `
-          })
-        });
+            `);
 
         if (res.ok) {
           const { data } = await res.json();
@@ -180,7 +214,7 @@ export default function App() {
             ...logs
           ]);
         }
-      } catch (e) {}
+      } catch (e) { if (e.unauthorized) setLocked(true); }
     }
 
     loadBackendData();
@@ -188,11 +222,7 @@ export default function App() {
     // Polling every 2.5 seconds to refresh state & nodes
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/graphql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: `
+        const res = await gql(`
               query PollState {
                 activeNodes(userId: "${username}") {
                   deviceId
@@ -213,9 +243,7 @@ export default function App() {
                   deviceId
                 }
               }
-            `
-          })
-        });
+            `);
         if (res.ok) {
           const { data } = await res.json();
           if (data?.activeNodes) {
@@ -240,7 +268,7 @@ export default function App() {
             });
           }
         }
-      } catch (_) {}
+      } catch (e) { if (e.unauthorized) setLocked(true); }
     }, 2500);
 
     // Connect WebSocket for real-time daemon events
@@ -291,7 +319,7 @@ export default function App() {
           ]);
         }
       };
-    } catch (_) {}
+    } catch (e) { if (e.unauthorized) setLocked(true); }
 
     return () => {
       clearInterval(interval);
@@ -315,19 +343,13 @@ export default function App() {
 
   const handleRegenerate = async () => {
     try {
-      const res = await fetch('/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `
+      const res = await gql(`
             mutation RotateAccount {
               createAccount(username: "${username}") {
                 passphrase
               }
             }
-          `
-        })
-      });
+          `);
       if (res.ok) {
         const { data } = await res.json();
         if (data?.createAccount?.passphrase) {
@@ -340,7 +362,7 @@ export default function App() {
           return;
         }
       }
-    } catch (_) {}
+    } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
   const toggleRule = async (id) => {
@@ -356,27 +378,17 @@ export default function App() {
     ]);
 
     try {
-      await fetch('/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `
+      await gql(`
             mutation TogglePluginState {
               togglePlugin(pluginId: "${id}", isEnabled: ${nextState})
             }
-          `
-        })
-      });
-    } catch (_) {}
+          `);
+    } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
   const handleSaveSyncedSettings = async () => {
     try {
-      const res = await fetch('/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `
+      const res = await gql(`
             mutation SaveSettings {
               updateSyncedSettings(input: {
                 userId: "${username}",
@@ -389,9 +401,7 @@ export default function App() {
                 updatedAt
               }
             }
-          `
-        })
-      });
+          `);
       if (res.ok) {
         setSettingsSaved(true);
         setTimeout(() => setSettingsSaved(false), 2000);
@@ -400,27 +410,21 @@ export default function App() {
           ...prev
         ]);
       }
-    } catch (_) {}
+    } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
   const handleCreateUser = async () => {
     const clean = newUsernameInput.trim().toLowerCase();
     if (!clean) return;
     try {
-      const res = await fetch('/graphql', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: `
+      const res = await gql(`
             query InitNewUser {
               me(username: "${clean}") {
                 username
                 passphrase
               }
             }
-          `
-        })
-      });
+          `);
       if (res.ok) {
         setUsername(clean);
         setNewUsernameInput('');
@@ -429,11 +433,57 @@ export default function App() {
           setUsersList(prev => [...prev, clean]);
         }
       }
-    } catch (_) {}
+    } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
   const positionSec = Math.floor(lastHandoff.positionMs / 1000);
   const durationSec = Math.floor(lastHandoff.durationMs / 1000);
+
+  if (locked) {
+    return (
+      <div className="app-wrapper">
+        <div className="content-container" style={{ maxWidth: '420px', marginTop: '18vh' }}>
+          <header className="top-header">
+            <div className="brand-title"><Radio size={16} /> AGRO</div>
+          </header>
+          <div className="panel" style={{ padding: '24px' }}>
+            <p style={{ marginTop: 0, opacity: 0.8 }}>
+              Enter your account passphrase, or an app password.
+            </p>
+            <form
+              onSubmit={async (event) => {
+                event.preventDefault();
+                setToken(tokenInput);
+                try {
+                  const res = await gql('{ health }');
+                  if (!res.ok) throw new Error('rejected');
+                  setTokenError('');
+                  setLocked(false);
+                  window.location.reload();
+                } catch (_) {
+                  setToken('');
+                  setTokenError('That passphrase was not accepted.');
+                }
+              }}
+            >
+              <input
+                type="password"
+                autoFocus
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="four-word-pass-phrase"
+                style={{ width: '100%', padding: '10px', marginBottom: '12px' }}
+              />
+              <button type="submit" style={{ width: '100%', padding: '10px' }}>Unlock</button>
+            </form>
+            {tokenError && (
+              <p style={{ color: 'var(--status-error, #f7768e)' }}>{tokenError}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-wrapper">

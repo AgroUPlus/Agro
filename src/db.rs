@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -46,6 +46,16 @@ impl Db {
                 username TEXT UNIQUE NOT NULL,
                 api_key TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            );
+
+            -- Per-client credentials. A device gets its own token so it can be revoked on its
+            -- own, without rotating the account passphrase every other device is using.
+            CREATE TABLE IF NOT EXISTS app_passwords (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS plugins_state (
@@ -205,6 +215,93 @@ impl Db {
         } else {
             Ok(None)
         }
+    }
+
+    /// How many accounts exist. Zero means the server has never been set up, which is the only
+    /// state in which an unauthenticated request is allowed to create one.
+    pub fn user_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+    }
+
+    /// Resolves a bearer token to its username, accepting either the account passphrase or one of
+    /// its app passwords. Returns None for anything else — including an empty token.
+    pub fn user_for_token(&self, token: &str) -> Result<Option<String>> {
+        if token.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock().unwrap();
+        let account: Option<String> = conn
+            .query_row(
+                "SELECT username FROM users WHERE api_key = ?1",
+                params![token],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if account.is_some() {
+            return Ok(account);
+        }
+
+        let via_app_password: Option<String> = conn
+            .query_row(
+                "SELECT u.username FROM app_passwords a
+                 JOIN users u ON u.id = a.user_id
+                 WHERE a.token = ?1",
+                params![token],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if via_app_password.is_some() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let _ = conn.execute(
+                "UPDATE app_passwords SET last_used_at = ?1 WHERE token = ?2",
+                params![now, token],
+            );
+        }
+        Ok(via_app_password)
+    }
+
+    pub fn create_app_password(&self, username: &str, label: &str, token: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let user_id: String = conn.query_row(
+            "SELECT id FROM users WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO app_passwords (token, user_id, label, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![token, user_id, label, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Never returns the token itself: a credential is shown once, at creation.
+    pub fn list_app_passwords(&self, username: &str) -> Result<Vec<AppPasswordRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.label, a.created_at, a.last_used_at FROM app_passwords a
+             JOIN users u ON u.id = a.user_id
+             WHERE u.username = ?1 ORDER BY a.created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![username], |row| {
+            Ok(AppPasswordRecord {
+                label: row.get(0)?,
+                created_at: row.get(1)?,
+                last_used_at: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn revoke_app_password(&self, username: &str, label: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let removed = conn.execute(
+            "DELETE FROM app_passwords WHERE label = ?1 AND user_id = (
+                 SELECT id FROM users WHERE username = ?2
+             )",
+            params![label, username],
+        )?;
+        Ok(removed > 0)
     }
 
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<(String, String, String)>> {
@@ -519,6 +616,12 @@ pub struct HandoffRecord {
     /// one track. Kept opaque here: the clients agree on the shape, the server only stores it.
     pub queue_json: Option<String>,
     pub queue_index: Option<i64>,
+}
+
+pub struct AppPasswordRecord {
+    pub label: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
 }
 
 pub struct ShareRecord {
