@@ -8,6 +8,14 @@ use std::sync::Arc;
 pub type AgroSchema = Schema<QueryRoot, MutationRoot, async_graphql::EmptySubscription>;
 
 #[derive(SimpleObject, Clone)]
+pub struct AuthPayload {
+    pub success: bool,
+    pub username: String,
+    pub token: String,
+    pub message: String,
+}
+
+#[derive(SimpleObject, Clone)]
 pub struct AccountPayload {
     pub id: String,
     pub username: String,
@@ -62,6 +70,32 @@ pub struct HandoffState {
     pub is_playing: bool,
     pub device_id: String,
     pub updated_at: String,
+    /// The rest of the session: every track in the queue, so picking it up on another device
+    /// continues the listening rather than playing one song and stopping.
+    pub queue: Vec<HandoffTrack>,
+    /// Where `queue` was playing. -1 when the sender reported no queue at all.
+    pub queue_index: i32,
+}
+
+/// One entry of a handed-over queue. `track_uri` is the sending client's own id for it — a
+/// receiving client resolves it against its own backends, falling back to title and artist when
+/// the two devices do not share that source.
+#[derive(SimpleObject, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HandoffTrack {
+    pub track_uri: String,
+    pub track_title: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub artwork_url: Option<String>,
+}
+
+#[derive(InputObject, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HandoffTrackInput {
+    pub track_uri: String,
+    pub track_title: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub artwork_url: Option<String>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -142,7 +176,14 @@ pub struct HandoffInput {
     pub position_ms: i64,
     pub is_playing: bool,
     pub device_id: String,
+    /// Optional so a heartbeat can refresh position without re-sending the whole queue; when it is
+    /// omitted the stored queue is kept as-is.
+    pub queue: Option<Vec<HandoffTrackInput>>,
+    pub queue_index: Option<i32>,
 }
+
+/// See `update_handoff`.
+const MAX_QUEUE_TRACKS: usize = 100;
 
 pub struct QueryRoot;
 
@@ -152,34 +193,55 @@ impl QueryRoot {
         "Agro Server OK"
     }
 
-    async fn me(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<AccountPayload> {
+    async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<String>> {
         let db = ctx.data::<Db>()?;
-        if let Some((id, uname, passphrase_or_key)) = db.get_user_by_username(&username)? {
-            let qr_data = format!("agro://connect?username={}&passphrase={}", uname, passphrase_or_key);
-            let connection_url = format!("http://localhost:8700/connect?passphrase={}", passphrase_or_key);
-            Ok(AccountPayload {
-                id,
-                username: uname,
-                api_key: passphrase_or_key.clone(),
-                passphrase: passphrase_or_key,
-                connection_url,
-                qr_data,
+        Ok(db.list_users()?)
+    }
+
+    async fn authenticate(&self, ctx: &Context<'_>, username: String, passphrase: String) -> async_graphql::Result<AuthPayload> {
+        let db = ctx.data::<Db>()?;
+        let clean_user = username.trim().to_lowercase();
+        let clean_pass = passphrase.trim();
+        if clean_user.is_empty() || clean_pass.is_empty() {
+            return Ok(AuthPayload {
+                success: false,
+                username: clean_user,
+                token: String::new(),
+                message: "Username and passphrase cannot be empty".to_string(),
+            });
+        }
+        let valid = db.authenticate_user(&clean_user, clean_pass)?;
+        if valid {
+            Ok(AuthPayload {
+                success: true,
+                username: clean_user,
+                token: clean_pass.to_string(),
+                message: "Authenticated successfully".to_string(),
             })
         } else {
-            // Auto initialize default user if requested
-            let passphrase = generate_passphrase();
-            let id = db.create_user(&username, &passphrase)?;
-            let qr_data = format!("agro://connect?username={}&passphrase={}", username, passphrase);
-            let connection_url = format!("http://localhost:8700/connect?passphrase={}", passphrase);
-            Ok(AccountPayload {
-                id,
-                username,
-                api_key: passphrase.clone(),
-                passphrase,
-                connection_url,
-                qr_data,
+            Ok(AuthPayload {
+                success: false,
+                username: clean_user,
+                token: String::new(),
+                message: "Invalid passphrase for this user".to_string(),
             })
         }
+    }
+
+    async fn me(&self, ctx: &Context<'_>, username: String, passphrase: Option<String>) -> async_graphql::Result<AccountPayload> {
+        let db = ctx.data::<Db>()?;
+        let clean_user = username.trim().to_lowercase();
+        let (id, key) = db.get_or_create_user(&clean_user, passphrase.as_deref())?;
+        let qr_data = format!("agro://connect?username={}&passphrase={}", clean_user, key);
+        let connection_url = format!("http://localhost:8700/connect?passphrase={}", key);
+        Ok(AccountPayload {
+            id,
+            username: clean_user,
+            api_key: key.clone(),
+            passphrase: key,
+            connection_url,
+            qr_data,
+        })
     }
 
     async fn plugins(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgroPlugin>> {
@@ -207,6 +269,13 @@ impl QueryRoot {
             is_playing: r.is_playing,
             device_id: r.device_id,
             updated_at: r.updated_at,
+            // Stored opaquely as JSON; a value written by an older client that predates the queue
+            // simply reads back as an empty one rather than failing the whole query.
+            queue: r
+                .queue_json
+                .and_then(|json| serde_json::from_str::<Vec<HandoffTrack>>(&json).ok())
+                .unwrap_or_default(),
+            queue_index: r.queue_index.unwrap_or(-1) as i32,
         }))
     }
 
@@ -363,14 +432,24 @@ impl QueryRoot {
     async fn synced_settings(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Option<SyncedSettingsPayload>> {
         let db = ctx.data::<Db>()?;
         let settings = db.get_synced_settings(&user_id)?;
-        Ok(settings.map(|s| SyncedSettingsPayload {
-            user_id,
-            server_url: s.server_url,
-            server_username: s.server_username,
-            lrclib_url: s.lrclib_url,
-            lyrics_fetch_online: s.lyrics_fetch_online.unwrap_or(true),
-            stream_format: s.stream_format.unwrap_or_else(|| "FLAC".to_string()),
-            updated_at: s.updated_at,
+        let passphrase = db.get_user_by_username(&user_id)?
+            .map(|(_, _, p)| p)
+            .unwrap_or_default();
+
+        Ok(settings.map(|s| {
+            let server_url = s.server_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
+            let server_username = s.server_username.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
+            let lrclib_url = s.lrclib_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
+
+            SyncedSettingsPayload {
+                user_id,
+                server_url,
+                server_username,
+                lrclib_url,
+                lyrics_fetch_online: s.lyrics_fetch_online.unwrap_or(true),
+                stream_format: s.stream_format.unwrap_or_else(|| "FLAC".to_string()),
+                updated_at: s.updated_at,
+            }
         }))
     }
 }
@@ -444,11 +523,19 @@ impl MutationRoot {
         input: SyncedSettingsInput,
     ) -> async_graphql::Result<SyncedSettingsPayload> {
         let db = ctx.data::<Db>()?;
+        let passphrase = db.get_user_by_username(&input.user_id)?
+            .map(|(_, _, p)| p)
+            .unwrap_or_else(|| "default".to_string());
+
+        let enc_server_url = input.server_url.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
+        let enc_server_username = input.server_username.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
+        let enc_lrclib_url = input.lrclib_url.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
+
         db.upsert_synced_settings(
             &input.user_id,
-            input.server_url.as_deref(),
-            input.server_username.as_deref(),
-            input.lrclib_url.as_deref(),
+            enc_server_url.as_deref(),
+            enc_server_username.as_deref(),
+            enc_lrclib_url.as_deref(),
             input.lyrics_fetch_online,
             input.stream_format.as_deref(),
         )?;
@@ -456,9 +543,9 @@ impl MutationRoot {
         let settings = db.get_synced_settings(&input.user_id)?.unwrap();
         let payload = SyncedSettingsPayload {
             user_id: input.user_id.clone(),
-            server_url: settings.server_url,
-            server_username: settings.server_username,
-            lrclib_url: settings.lrclib_url,
+            server_url: input.server_url.clone().or(settings.server_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
+            server_username: input.server_username.clone().or(settings.server_username.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
+            lrclib_url: input.lrclib_url.clone().or(settings.lrclib_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
             lyrics_fetch_online: settings.lyrics_fetch_online.unwrap_or(true),
             stream_format: settings.stream_format.unwrap_or_else(|| "FLAC".to_string()),
             updated_at: settings.updated_at,
@@ -502,6 +589,13 @@ impl MutationRoot {
 
     async fn update_handoff(&self, ctx: &Context<'_>, input: HandoffInput) -> async_graphql::Result<bool> {
         let db = ctx.data::<Db>()?;
+        // A queue is capped rather than rejected: an endless-radio client can hold hundreds of
+        // entries, and the first hundred is far more session than anyone resumes through.
+        let queue_json = input.queue.as_ref().map(|tracks| {
+            let capped: Vec<&HandoffTrackInput> = tracks.iter().take(MAX_QUEUE_TRACKS).collect();
+            serde_json::to_string(&capped).unwrap_or_else(|_| "[]".to_string())
+        });
+
         db.update_handoff(
             &input.user_id,
             &input.track_uri,
@@ -512,6 +606,8 @@ impl MutationRoot {
             input.position_ms,
             input.is_playing,
             &input.device_id,
+            queue_json.as_deref(),
+            input.queue_index.map(|i| i as i64),
         )?;
 
         let track_summary = format!("{} • {}", input.track_title, input.artist_name);

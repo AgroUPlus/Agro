@@ -3,7 +3,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { 
   Radio, Smartphone, Terminal, Server, 
   Layers, KeyRound, ScrollText, Copy, 
-  Check, RefreshCw, Disc, Sliders, Save
+  Check, RefreshCw, Disc, Sliders, Save,
+  User, Users, ChevronDown, Plus
 } from 'lucide-react';
 
 const FALLBACK_RULES = [
@@ -23,9 +24,9 @@ const FALLBACK_RULES = [
   },
   {
     id: 'wifi-precache',
-    name: 'Smart Wi-Fi Pre-cache Signal',
-    description: 'Signals Wanda (Android) to download upcoming queue tracks in the background only when connected to unmetered Wi-Fi and charging.',
-    target: 'Wanda (Android)',
+    name: 'Proactive Wi-Fi Smart Pre-Caching',
+    description: 'Instructs Wanda to automatically pre-download the top 15 next queued tracks over unmetered Wi-Fi connections.',
+    target: 'Wanda Mobile',
     isEnabled: true
   },
   {
@@ -47,6 +48,9 @@ const FALLBACK_RULES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('nodes');
   const [username, setUsername] = useState('alpha');
+  const [usersList, setUsersList] = useState(['alpha']);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [newUsernameInput, setNewUsernameInput] = useState('');
   const [passphrase, setPassphrase] = useState('tempest-omega-pioneer-terra');
   const [copied, setCopied] = useState(false);
   const [rules, setRules] = useState(FALLBACK_RULES);
@@ -85,6 +89,7 @@ export default function App() {
           body: JSON.stringify({
             query: `
               query LoadInitialState {
+                users
                 me(username: "${username}") {
                   username
                   passphrase
@@ -119,7 +124,6 @@ export default function App() {
                   serverUsername
                   lrclibUrl
                   lyricsFetchOnline
-                  jamendoClientId
                   streamFormat
                 }
               }
@@ -129,6 +133,9 @@ export default function App() {
 
         if (res.ok) {
           const { data } = await res.json();
+          if (data?.users && data.users.length > 0) {
+            setUsersList(data.users);
+          }
           if (data?.me) {
             setUsername(data.me.username);
             setPassphrase(data.me.passphrase);
@@ -377,7 +384,6 @@ export default function App() {
                 serverUsername: "${syncedSettings.serverUsername}",
                 lrclibUrl: "${syncedSettings.lrclibUrl}",
                 lyricsFetchOnline: ${syncedSettings.lyricsFetchOnline},
-                jamendoClientId: "${syncedSettings.jamendoClientId}",
                 streamFormat: "${syncedSettings.streamFormat}"
               }) {
                 updatedAt
@@ -390,9 +396,38 @@ export default function App() {
         setSettingsSaved(true);
         setTimeout(() => setSettingsSaved(false), 2000);
         setSyncLogs(prev => [
-          { time: new Date().toLocaleTimeString(), event: `[SETTINGS] Broadcast updated settings to all paired nodes` },
+          { time: new Date().toLocaleTimeString(), event: `[SETTINGS] Encrypted & broadcast updated settings for ${username}` },
           ...prev
         ]);
+      }
+    } catch (_) {}
+  };
+
+  const handleCreateUser = async () => {
+    const clean = newUsernameInput.trim().toLowerCase();
+    if (!clean) return;
+    try {
+      const res = await fetch('/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            query InitNewUser {
+              me(username: "${clean}") {
+                username
+                passphrase
+              }
+            }
+          `
+        })
+      });
+      if (res.ok) {
+        setUsername(clean);
+        setNewUsernameInput('');
+        setShowUserMenu(false);
+        if (!usersList.includes(clean)) {
+          setUsersList(prev => [...prev, clean]);
+        }
       }
     } catch (_) {}
   };
@@ -403,12 +438,49 @@ export default function App() {
   return (
     <div className="app-wrapper">
       <div className="content-container">
-        {/* Centered Top Header */}
+        {/* Top Header with Multi-User Switcher */}
         <header className="top-header">
-          <div className="brand-row" style={{ justifyContent: 'center' }}>
+          <div className="brand-row" style={{ width: '100%', justifyContent: 'space-between', padding: '0 4px' }}>
+            <div style={{ width: '110px' }} />
             <div className="brand-title">
               <Radio size={16} />
               <span>AGRO</span>
+            </div>
+            <div className="user-dropdown-container">
+              <button className="user-badge-btn" onClick={() => setShowUserMenu(!showUserMenu)} title="Active User Tenant">
+                <User size={13} />
+                <span>{username}</span>
+                <ChevronDown size={12} />
+              </button>
+              {showUserMenu && (
+                <div className="user-dropdown-menu">
+                  <div className="user-dropdown-title">User Tenant</div>
+                  {usersList.map(u => (
+                    <button 
+                      key={u} 
+                      className={`user-item ${u === username ? 'active' : ''}`}
+                      onClick={() => { setUsername(u); setShowUserMenu(false); }}
+                    >
+                      <span>{u}</span>
+                      {u === username && <Check size={12} />}
+                    </button>
+                  ))}
+                  <div className="user-dropdown-divider" />
+                  <div style={{ padding: '6px 8px', display: 'flex', gap: '6px' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Add user" 
+                      value={newUsernameInput} 
+                      onChange={e => setNewUsernameInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateUser(); }}
+                      style={{ width: '110px', padding: '4px 6px', fontSize: '11px', background: 'var(--bg-app)', border: '1px solid var(--border-strong)', borderRadius: '4px', color: 'var(--text-primary)' }}
+                    />
+                    <button className="btn btn-secondary" onClick={handleCreateUser} style={{ padding: '4px 8px', fontSize: '11px' }}>
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

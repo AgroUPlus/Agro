@@ -14,6 +14,7 @@ impl Db {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.init_schema()?;
+        db.migrate_handoff_queue();
         Ok(db)
     }
 
@@ -23,7 +24,17 @@ impl Db {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.init_schema()?;
+        db.migrate_handoff_queue();
         Ok(db)
+    }
+
+    /// Adds the queue columns to a database created before they existed. SQLite has no
+    /// `ADD COLUMN IF NOT EXISTS`, and the only failure mode is "already there", so the error is
+    /// the expected outcome on every run after the first.
+    fn migrate_handoff_queue(&self) {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_json TEXT", []);
+        let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_index INTEGER", []);
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -64,7 +75,9 @@ impl Db {
                 position_ms INTEGER NOT NULL,
                 is_playing BOOLEAN NOT NULL,
                 device_id TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                queue_json TEXT,
+                queue_index INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS ephemeral_shares (
@@ -120,6 +133,9 @@ impl Db {
                 updated_at TEXT NOT NULL
             );
 
+            -- The queue a session was playing, as a JSON array. Added after the table shipped,
+            -- so existing databases pick it up through the guarded ALTER in `migrate_queue`.
+
             -- Clean up any test dummy nodes
             DELETE FROM registered_nodes WHERE device_id IN ('wander-workstation', 'wanda-pixel8');
             ",
@@ -137,6 +153,45 @@ impl Db {
             params![user_id, username, api_key, now],
         )?;
         Ok(user_id)
+    }
+
+    pub fn get_or_create_user(&self, username: &str, preferred_passphrase: Option<&str>) -> Result<(String, String)> {
+        if let Some((id, _, key)) = self.get_user_by_username(username)? {
+            return Ok((id, key));
+        }
+        let passphrase = preferred_passphrase
+            .filter(|p| !p.trim().is_empty())
+            .map(String::from)
+            .unwrap_or_else(crate::passphrase::generate_passphrase);
+        let user_id = self.create_user(username, &passphrase)?;
+        Ok((user_id, passphrase))
+    }
+
+    pub fn list_users(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT username FROM users ORDER BY created_at ASC")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut users = Vec::new();
+        for r in rows {
+            users.push(r?);
+        }
+        if users.is_empty() {
+            users.push("alpha".to_string());
+        }
+        Ok(users)
+    }
+
+    pub fn authenticate_user(&self, username: &str, passphrase: &str) -> Result<bool> {
+        if username.trim().is_empty() || passphrase.trim().is_empty() {
+            return Ok(false);
+        }
+        if let Some((_, _, stored_pass)) = self.get_user_by_username(username)? {
+            Ok(stored_pass.trim() == passphrase.trim())
+        } else {
+            // Frictionless first-time auto-registration with provided passphrase
+            let _ = self.create_user(username, passphrase)?;
+            Ok(true)
+        }
     }
 
     pub fn validate_api_key(&self, api_key: &str) -> Result<Option<(String, String)>> {
@@ -197,12 +252,14 @@ impl Db {
         position_ms: i64,
         is_playing: bool,
         device_id: &str,
+        queue_json: Option<&str>,
+        queue_index: Option<i64>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(user_id) DO UPDATE SET
              track_uri = excluded.track_uri,
              track_title = excluded.track_title,
@@ -212,15 +269,19 @@ impl Db {
              position_ms = excluded.position_ms,
              is_playing = excluded.is_playing,
              device_id = excluded.device_id,
-             updated_at = excluded.updated_at",
-            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now],
+             updated_at = excluded.updated_at,
+             -- A heartbeat that carries no queue must not erase the one already stored: only a
+             -- client that actually sent a queue replaces it.
+             queue_json = COALESCE(excluded.queue_json, handoff_state.queue_json),
+             queue_index = COALESCE(excluded.queue_index, handoff_state.queue_index)",
+            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index],
         )?;
         Ok(())
     }
 
     pub fn get_handoff(&self, user_id: &str) -> Result<Option<HandoffRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at FROM handoff_state WHERE user_id = ?1")?;
+        let mut stmt = conn.prepare("SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index FROM handoff_state WHERE user_id = ?1")?;
         let mut rows = stmt.query(params![user_id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(HandoffRecord {
@@ -233,6 +294,8 @@ impl Db {
                 is_playing: row.get(6)?,
                 device_id: row.get(7)?,
                 updated_at: row.get(8)?,
+                queue_json: row.get(9)?,
+                queue_index: row.get(10)?,
             }))
         } else {
             Ok(None)
@@ -429,6 +492,10 @@ pub struct HandoffRecord {
     pub is_playing: bool,
     pub device_id: String,
     pub updated_at: String,
+    /// The whole queue as a JSON array, so a resumed session continues rather than stopping after
+    /// one track. Kept opaque here: the clients agree on the shape, the server only stores it.
+    pub queue_json: Option<String>,
+    pub queue_index: Option<i64>,
 }
 
 pub struct ShareRecord {
