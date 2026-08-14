@@ -1,7 +1,7 @@
 use async_graphql::{Context, InputObject, Object, Schema, SimpleObject};
 use crate::db::Db;
 use crate::passphrase::generate_passphrase;
-use crate::plugins::{get_default_plugins, AgroPlugin};
+use crate::plugins::AgroPlugin;
 use crate::ws::{WsHub, WsMessage};
 use std::sync::Arc;
 
@@ -185,6 +185,46 @@ pub struct HandoffInput {
 /// See `update_handoff`.
 const MAX_QUEUE_TRACKS: usize = 100;
 
+/// How long a node stays "online" after it last reported in. Clients heartbeat inside this window
+/// while they are playing; anything longer and they show as away.
+const NODE_ONLINE_SECONDS: i64 = 45;
+
+/// Gathers what the server actually knows, so the plugin list describes this deployment
+/// rather than a fixed example of one.
+fn plugin_context(db: &Db) -> crate::plugins::PluginContext {
+    let nodes = db.get_all_nodes().unwrap_or_default();
+    let now = chrono::Utc::now();
+    let online = |last_seen: &str| {
+        chrono::DateTime::parse_from_rfc3339(last_seen)
+            .map(|dt| (now - dt.with_timezone(&chrono::Utc)).num_seconds() < NODE_ONLINE_SECONDS)
+            .unwrap_or(false)
+    };
+    let is_wander = |n: &crate::db::NodeRecord| n.client_type == "wander";
+
+    let settings = nodes
+        .first()
+        .and_then(|n| db.get_synced_settings(&n.user_id).ok().flatten());
+
+    crate::plugins::PluginContext {
+        online_wander: nodes.iter().filter(|n| is_wander(n) && online(&n.last_seen_at)).count(),
+        online_wanda: nodes.iter().filter(|n| !is_wander(n) && online(&n.last_seen_at)).count(),
+        known_wander: nodes.iter().filter(|n| is_wander(n)).count(),
+        known_wanda: nodes.iter().filter(|n| !is_wander(n)).count(),
+        navidrome_url: settings.as_ref().and_then(|s| s.server_url.clone()),
+        navidrome_username: settings.as_ref().and_then(|s| s.server_username.clone()),
+        lrclib_url: settings.as_ref().and_then(|s| s.lrclib_url.clone()),
+        lyrics_online: settings
+            .as_ref()
+            .and_then(|s| s.lyrics_fetch_online)
+            .unwrap_or(true),
+        has_handoff: nodes
+            .first()
+            .map(|n| db.get_handoff(&n.user_id).ok().flatten().is_some())
+            .unwrap_or(false),
+    }
+}
+
+
 pub struct QueryRoot;
 
 #[Object]
@@ -247,7 +287,7 @@ impl QueryRoot {
     async fn plugins(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgroPlugin>> {
         let db = ctx.data::<Db>()?;
         let saved_states = db.get_plugin_states().unwrap_or_default();
-        let mut plugins = get_default_plugins();
+        let mut plugins = crate::plugins::get_plugins(&plugin_context(db));
         for p in &mut plugins {
             if let Some(&enabled) = saved_states.get(&p.id) {
                 p.is_enabled = enabled;
@@ -410,7 +450,7 @@ impl QueryRoot {
         let now = chrono::Utc::now();
         let payload = nodes.into_iter().map(|n| {
             let is_online = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&n.last_seen_at) {
-                (now - dt.with_timezone(&chrono::Utc)).num_seconds() < 45
+                (now - dt.with_timezone(&chrono::Utc)).num_seconds() < NODE_ONLINE_SECONDS
             } else {
                 false
             };

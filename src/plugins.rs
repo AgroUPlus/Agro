@@ -22,122 +22,149 @@ pub struct PluginMetaItem {
     pub value: String,
 }
 
-pub fn get_default_plugins() -> Vec<AgroPlugin> {
+/// Live facts the plugin list is built from, so what the dashboard shows is what the server
+/// actually knows rather than a fixed description of an ideal deployment.
+pub struct PluginContext {
+    /// Nodes seen within the online window, by client type ("wander" / "wanda").
+    pub online_wander: usize,
+    pub online_wanda: usize,
+    pub known_wander: usize,
+    pub known_wanda: usize,
+    /// From `synced_settings`: the Navidrome the clients agreed on, and the lyrics source.
+    pub navidrome_url: Option<String>,
+    pub navidrome_username: Option<String>,
+    pub lrclib_url: Option<String>,
+    pub lyrics_online: bool,
+    /// Whether any session is currently stored for anyone.
+    pub has_handoff: bool,
+}
+
+fn meta(key: &str, value: impl Into<String>) -> PluginMetaItem {
+    PluginMetaItem { key: key.to_string(), value: value.into() }
+}
+
+/// Marks the features whose resolvers still answer with sample data. Saying so in the list is the
+/// difference between a roadmap and a lie about what is running.
+fn preview(mut plugin: AgroPlugin) -> AgroPlugin {
+    plugin.is_connected = false;
+    plugin.latency_ms = None;
+    plugin.metadata.insert(0, meta("Status", "Preview — resolver returns sample data"));
+    plugin
+}
+
+pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
     vec![
         AgroPlugin {
             id: "wander-tui".to_string(),
             name: "Wander TUI Connector".to_string(),
-            description: "Native link for Wander Rust Desktop client: zero-latency playback handoff, MPRIS v2 shell bridge, and Discord Rich Presence.".to_string(),
-            version: "1.4.0".to_string(),
+            description: "Playback handoff for the Wander Rust desktop client: registers as a node, publishes the playing track, position and queue.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Client".to_string(),
             target: "Wander (TUI)".to_string(),
             is_enabled: true,
-            is_connected: true,
-            latency_ms: Some(2),
-            endpoint: Some("ws://127.0.0.1:8700/ws/sync".to_string()),
+            is_connected: ctx.online_wander > 0,
+            // Nothing here measures round-trip time, so reporting a number would be inventing one.
+            latency_ms: None,
+            endpoint: Some("/ws/sync".to_string()),
             metadata: vec![
-                PluginMetaItem { key: "Protocol".to_string(), value: "Async Tokio WS".to_string() },
-                PluginMetaItem { key: "Active Sessions".to_string(), value: "1 (Desktop TUI)".to_string() },
-                PluginMetaItem { key: "Hand-off Buffer".to_string(), value: "Lossless Ring".to_string() },
+                meta("Listening now", ctx.online_wander.to_string()),
+                meta("Registered devices", ctx.known_wander.to_string()),
+                meta("Transport", "GraphQL over HTTP, WebSocket for push"),
             ],
         },
         AgroPlugin {
             id: "wanda-android".to_string(),
             name: "Wanda Android Bridge".to_string(),
-            description: "Modular connection for Wanda Android client: Media3 playback coordination, Wi-Fi smart background cache, and QR passkey handshake.".to_string(),
-            version: "1.2.0".to_string(),
+            description: "Playback handoff for the Wanda Android client: Media3 playback coordination, QR or manual pairing, resume with the full queue.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Client".to_string(),
             target: "Wanda (Android)".to_string(),
             is_enabled: true,
-            is_connected: true,
-            latency_ms: Some(8),
-            endpoint: Some("http://192.168.1.100:8700/graphql".to_string()),
+            is_connected: ctx.online_wanda > 0,
+            latency_ms: None,
+            endpoint: Some("/graphql".to_string()),
             metadata: vec![
-                PluginMetaItem { key: "Transport".to_string(), value: "Ktor GraphQL".to_string() },
-                PluginMetaItem { key: "Security".to_string(), value: "Passphrase Auth".to_string() },
-                PluginMetaItem { key: "Offline Cache".to_string(), value: "15 Tracks Preloaded".to_string() },
+                meta("Listening now", ctx.online_wanda.to_string()),
+                meta("Registered devices", ctx.known_wanda.to_string()),
+                meta("Session stored", if ctx.has_handoff { "Yes" } else { "No" }),
             ],
         },
         AgroPlugin {
             id: "subsonic-navidrome".to_string(),
-            name: "Subsonic & Navidrome Gateway".to_string(),
-            description: "Upstream synchronization with self-hosted Navidrome instances via Subsonic 1.16 salted md5/sha256 authentication.".to_string(),
-            version: "2.1.0".to_string(),
+            name: "Navidrome address sync".to_string(),
+            description: "Carries the Navidrome server address and username between clients so a new device knows where to sign in. Credentials are never stored or forwarded.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Backend".to_string(),
             target: "Core".to_string(),
             is_enabled: true,
-            is_connected: true,
-            latency_ms: Some(14),
-            endpoint: Some("https://music.home.internal".to_string()),
+            is_connected: ctx.navidrome_url.is_some(),
+            latency_ms: None,
+            endpoint: ctx.navidrome_url.clone(),
             metadata: vec![
-                PluginMetaItem { key: "API Version".to_string(), value: "Subsonic 1.16.1".to_string() },
-                PluginMetaItem { key: "Salted Token".to_string(), value: "Active".to_string() },
-                PluginMetaItem { key: "Transcoding".to_string(), value: "Direct Stream (Raw)".to_string() },
+                meta("Server", ctx.navidrome_url.clone().unwrap_or_else(|| "Not set".to_string())),
+                meta("Username", ctx.navidrome_username.clone().unwrap_or_else(|| "Not set".to_string())),
+                meta("Password", "Never synced — entered on each device"),
             ],
         },
         AgroPlugin {
             id: "lrclib-lyrics".to_string(),
-            name: "LRCLIB Synced Lyrics Engine".to_string(),
-            description: "Automated real-time synchronized lyrics resolver powered by LRCLIB database, serving both Wander and Wanda clients.".to_string(),
-            version: "1.0.8".to_string(),
+            name: "LRCLIB lyrics source".to_string(),
+            description: "The synced-lyrics endpoint the clients are told to use. Wander and Wanda fetch lyrics themselves; this is the address they agree on.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Enrichment".to_string(),
             target: "Core".to_string(),
-            is_enabled: true,
-            is_connected: true,
-            latency_ms: Some(45),
-            endpoint: Some("https://lrclib.net/api".to_string()),
+            is_enabled: ctx.lyrics_online,
+            is_connected: ctx.lyrics_online,
+            latency_ms: None,
+            endpoint: Some(
+                ctx.lrclib_url.clone().unwrap_or_else(|| "https://lrclib.net/api".to_string()),
+            ),
             metadata: vec![
-                PluginMetaItem { key: "Format".to_string(), value: "Enhanced LRC [mm:ss.xx]".to_string() },
-                PluginMetaItem { key: "Cache TTL".to_string(), value: "30 Days (SQLite)".to_string() },
+                meta("Online lookup", if ctx.lyrics_online { "Enabled" } else { "Disabled" }),
+                meta("Fetched by", "The client, not the server"),
             ],
         },
-        AgroPlugin {
+        preview(AgroPlugin {
             id: "acoustid-dedup".to_string(),
-            name: "AcoustID Chromaprint Matcher".to_string(),
-            description: "Acoustic fingerprinting engine that detects audio duplicates across formats (FLAC vs MP3) and consolidates library metadata.".to_string(),
-            version: "1.1.2".to_string(),
+            name: "Duplicate detection".to_string(),
+            description: "Finds the same recording held in several formats. The `duplicatesReport` query is scaffolded and answers with sample data.".to_string(),
+            version: "0.0.0".to_string(),
             category: "Curation".to_string(),
             target: "Core".to_string(),
-            is_enabled: true,
-            is_connected: true,
+            is_enabled: false,
+            is_connected: false,
             latency_ms: None,
             endpoint: None,
-            metadata: vec![
-                PluginMetaItem { key: "Engine".to_string(), value: "Lofty / Chromaprint".to_string() },
-                PluginMetaItem { key: "Match Threshold".to_string(), value: "98.5% Confidence".to_string() },
-            ],
-        },
+            metadata: vec![meta("Query", "duplicatesReport")],
+        }),
         AgroPlugin {
             id: "ephemeral-share".to_string(),
-            name: "Ephemeral 24h Web Player".to_string(),
-            description: "Generates self-expiring, zero-login web streaming URLs for sharing favorite tracks with external friends safely.".to_string(),
-            version: "1.0.0".to_string(),
+            name: "Ephemeral share links".to_string(),
+            description: "Self-expiring share URLs served at /share/{token}.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Sharing".to_string(),
             target: "Cloud".to_string(),
             is_enabled: true,
             is_connected: true,
-            latency_ms: Some(1),
+            latency_ms: None,
             endpoint: Some("/share/{token}".to_string()),
             metadata: vec![
-                PluginMetaItem { key: "Default Expiry".to_string(), value: "24 Hours".to_string() },
-                PluginMetaItem { key: "Security".to_string(), value: "UUIDv4 Nonce".to_string() },
+                meta("Created by", "createEphemeralShare"),
+                meta("Token", "UUIDv4"),
             ],
         },
-        AgroPlugin {
+        preview(AgroPlugin {
             id: "jam-session".to_string(),
-            name: "Jam Collaborative Listening".to_string(),
-            description: "Multi-user synchronized listening room with dynamic democratic queue voting across mobile and desktop listeners.".to_string(),
-            version: "1.3.1".to_string(),
+            name: "Jam collaborative listening".to_string(),
+            description: "Shared listening room with a voted queue. The `jamRoomState` query is scaffolded and answers with sample data.".to_string(),
+            version: "0.0.0".to_string(),
             category: "Social".to_string(),
             target: "Core".to_string(),
-            is_enabled: true,
-            is_connected: true,
-            latency_ms: Some(5),
-            endpoint: Some("ws://127.0.0.1:8700/ws/sync".to_string()),
-            metadata: vec![
-                PluginMetaItem { key: "Room Mode".to_string(), value: "Democratic Vote Order".to_string() },
-                PluginMetaItem { key: "Clock Drift".to_string(), value: "< 15ms NTP Synchronized".to_string() },
-            ],
-        },
+            is_enabled: false,
+            is_connected: false,
+            latency_ms: None,
+            endpoint: None,
+            metadata: vec![meta("Query", "jamRoomState")],
+        }),
     ]
 }

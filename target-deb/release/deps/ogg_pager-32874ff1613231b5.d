@@ -1,0 +1,12 @@
+/src/target-deb/release/deps/ogg_pager-32874ff1613231b5.d: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/crc.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/error.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/header.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/packets.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/paginate.rs
+
+/src/target-deb/release/deps/libogg_pager-32874ff1613231b5.rlib: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/crc.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/error.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/header.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/packets.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/paginate.rs
+
+/src/target-deb/release/deps/libogg_pager-32874ff1613231b5.rmeta: /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/crc.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/error.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/header.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/packets.rs /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/paginate.rs
+
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/lib.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/crc.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/error.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/header.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/packets.rs:
+/usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ogg_pager-0.6.1/src/paginate.rs:
