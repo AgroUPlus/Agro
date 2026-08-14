@@ -700,6 +700,15 @@ impl MutationRoot {
         Ok(db.revoke_app_password(&user_id, &label)?)
     }
 
+    /// Deletes an account with its nodes, session, settings and app passwords.
+    ///
+    /// Irreversible, and it can lock you out: deleting the last account puts the server back into
+    /// first-run, where anyone who can reach it may create the next one. The caller confirms.
+    async fn delete_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<bool> {
+        let db = ctx.data::<Db>()?;
+        Ok(db.delete_user(&username.trim().to_lowercase())?)
+    }
+
     async fn toggle_plugin(&self, ctx: &Context<'_>, plugin_id: String, is_enabled: bool) -> async_graphql::Result<bool> {
         let db = ctx.data::<Db>()?;
         db.set_plugin_enabled(&plugin_id, is_enabled)?;

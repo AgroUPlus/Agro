@@ -177,6 +177,28 @@ impl Db {
         Ok((user_id, passphrase))
     }
 
+    /// Removes an account and everything that belongs to it. Deliberately thorough: leaving a
+    /// user's nodes, session and settings behind would let a recreated account inherit them.
+    pub fn delete_user(&self, username: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let user_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM users WHERE username = ?1",
+                params![username],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(user_id) = user_id else {
+            return Ok(false);
+        };
+        conn.execute("DELETE FROM app_passwords WHERE user_id = ?1", params![user_id])?;
+        conn.execute("DELETE FROM registered_nodes WHERE user_id = ?1", params![username])?;
+        conn.execute("DELETE FROM handoff_state WHERE user_id = ?1", params![username])?;
+        conn.execute("DELETE FROM synced_settings WHERE user_id = ?1", params![username])?;
+        conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+        Ok(true)
+    }
+
     pub fn list_users(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT username FROM users ORDER BY created_at ASC")?;

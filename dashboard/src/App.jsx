@@ -437,6 +437,38 @@ export default function App() {
     } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
+  /**
+   * Deleting an account takes its devices, session and app passwords with it, and deleting the
+   * last one reopens first-run — so this asks for the name to be typed rather than accepting a
+   * single click on a menu the user is otherwise just browsing.
+   */
+  const handleDeleteUser = async () => {
+    const typed = window.prompt(
+      `Delete the account "${username}"?\n\n` +
+      'This removes its devices, its saved session, its synced settings and every app password. ' +
+      'It cannot be undone.\n\n' +
+      `Type ${username} to confirm.`
+    );
+    if (typed !== username) return;
+    try {
+      const res = await gql(`
+            mutation DeleteUser {
+              deleteAccount(username: "${username}")
+            }
+          `);
+      if (res.ok) {
+        const remaining = usersList.filter(u => u !== username);
+        setUsersList(remaining);
+        setUsername(remaining[0] || '');
+        setShowUserMenu(false);
+        // The token just deleted may have been this account's own, so re-authenticate rather than
+        // leaving the dashboard making requests as a user that no longer exists.
+        setToken('');
+        setLocked(true);
+      }
+    } catch (e) { if (e.unauthorized) setLocked(true); }
+  };
+
   const positionSec = Math.floor(lastHandoff.positionMs / 1000);
   const durationSec = Math.floor(lastHandoff.durationMs / 1000);
 
@@ -528,6 +560,16 @@ export default function App() {
                     />
                     <button className="btn btn-secondary" onClick={handleCreateUser} style={{ padding: '4px 8px', fontSize: '11px' }}>
                       <Plus size={12} />
+                    </button>
+                  </div>
+                  <div className="user-dropdown-divider" />
+                  <div style={{ padding: '6px 8px' }}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handleDeleteUser}
+                      style={{ width: '100%', padding: '4px 8px', fontSize: '11px', color: 'var(--status-error, #f7768e)' }}
+                    >
+                      Delete "{username}"
                     </button>
                   </div>
                 </div>
