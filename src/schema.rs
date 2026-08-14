@@ -284,20 +284,17 @@ impl QueryRoot {
         }
     }
 
-    async fn me(&self, ctx: &Context<'_>, username: String, passphrase: Option<String>) -> async_graphql::Result<AccountPayload> {
+    /// Looks an account up. **Does not create one** — it used to, through `get_or_create_user`,
+    /// which made a read-only-looking query mint accounts as a side effect: opening the dashboard
+    /// recreated a deleted account, with a new passphrase, and closed the first-run setup window
+    /// behind it. Accounts come from `createAccount` and nowhere else.
+    async fn me(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<Option<AccountPayload>> {
         let db = ctx.data::<Db>()?;
         let clean_user = username.trim().to_lowercase();
-        let (id, key) = db.get_or_create_user(&clean_user, passphrase.as_deref())?;
-        let qr_data = format!("agro://connect?username={}&passphrase={}", clean_user, key);
-        let connection_url = format!("http://localhost:8700/connect?passphrase={}", key);
-        Ok(AccountPayload {
-            id,
-            username: clean_user,
-            api_key: key.clone(),
-            passphrase: key,
-            connection_url,
-            qr_data,
-        })
+        let Some((id, _, key)) = db.get_user_by_username(&clean_user)? else {
+            return Ok(None);
+        };
+        Ok(Some(account_payload(id, clean_user, key)))
     }
 
     async fn plugins(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgroPlugin>> {
@@ -523,6 +520,35 @@ impl QueryRoot {
     }
 }
 
+/// The address clients should be told to connect to. `localhost` was hardcoded here, which made
+/// the pairing QR unusable from a phone — and the QR carried no `server` parameter at all, which
+/// is the one field the Android client needs to know where to connect.
+fn public_url() -> String {
+    std::env::var("AGRO_PUBLIC_URL").unwrap_or_default()
+}
+
+fn account_payload(id: String, username: String, key: String) -> AccountPayload {
+    let server = public_url();
+    let qr_data = if server.is_empty() {
+        format!("agro://connect?username={}&passphrase={}", username, key)
+    } else {
+        format!(
+            "agro://connect?username={}&passphrase={}&server={}",
+            username,
+            key,
+            urlencoding::encode(&server)
+        )
+    };
+    AccountPayload {
+        id,
+        username,
+        api_key: key.clone(),
+        passphrase: key,
+        connection_url: server,
+        qr_data,
+    }
+}
+
 pub struct MutationRoot;
 
 #[Object]
@@ -634,20 +660,16 @@ impl MutationRoot {
     }
     async fn create_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<AccountPayload> {
         let db = ctx.data::<Db>()?;
+        let username = username.trim().to_lowercase();
+        if username.is_empty() {
+            return Err("An account needs a username".into());
+        }
+        if db.get_user_by_username(&username)?.is_some() {
+            return Err("That account already exists".into());
+        }
         let passphrase = generate_passphrase();
-        
         let id = db.create_user(&username, &passphrase)?;
-        let qr_data = format!("agro://connect?username={}&passphrase={}", username, passphrase);
-        let connection_url = format!("http://localhost:8700/connect?passphrase={}", passphrase);
-
-        Ok(AccountPayload {
-            id,
-            username,
-            api_key: passphrase.clone(),
-            passphrase,
-            connection_url,
-            qr_data,
-        })
+        Ok(account_payload(id, username, passphrase))
     }
 
     /// Issues a credential for one client, so that client can be revoked on its own rather than

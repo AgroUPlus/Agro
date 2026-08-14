@@ -417,9 +417,10 @@ export default function App() {
     const clean = newUsernameInput.trim().toLowerCase();
     if (!clean) return;
     try {
+      // createAccount, not me(): looking an account up must not conjure one into existence.
       const res = await gql(`
-            query InitNewUser {
-              me(username: "${clean}") {
+            mutation CreateUser {
+              createAccount(username: "${clean}") {
                 username
                 passphrase
               }
