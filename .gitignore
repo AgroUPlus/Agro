@@ -1,0 +1,10 @@
+/target
+
+# The live database. Holds account passphrases and API keys — never commit it.
+agro_data.db
+*.db-wal
+*.db-shm
+
+# Built into the binary by rust-embed at compile time, not source.
+dashboard/dist/
+dashboard/node_modules/
