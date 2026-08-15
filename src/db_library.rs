@@ -223,6 +223,38 @@ impl Db {
         rows.collect()
     }
 
+    /// Tracks this device holds that the server has already filed into the library.
+    ///
+    /// The candidate list for "you can free this space" — the device's copy is redundant because
+    /// the server has one. Only the index is consulted here; whether the archived file is really
+    /// on disk is checked by the caller, which is the half that needs the filesystem.
+    ///
+    /// Deliberately not filtered by user beyond the holding row: a device belongs to one account,
+    /// and `archived_path` is set by this server alone.
+    pub fn reclaimable_on_device(
+        &self,
+        user_id: &str,
+        device_id: &str,
+        limit: i64,
+    ) -> Result<Vec<LibraryTrack>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT t.content_hash, t.title, t.artist, t.album, t.album_artist,
+                    t.track_no, t.disc_no, t.year, t.genre, t.duration_ms, t.size_bytes,
+                    t.format, t.bitrate_kbps, t.archived_path
+             FROM library_tracks t
+             JOIN device_holdings h
+               ON h.content_hash = t.content_hash
+              AND h.user_id = ?1
+              AND h.device_id = ?2
+             WHERE t.archived_path IS NOT NULL
+             ORDER BY t.size_bytes DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![user_id, device_id, limit], row_to_track)?;
+        rows.collect()
+    }
+
     pub fn library_stats(&self, user_id: &str) -> Result<LibraryStats> {
         let conn = self.conn.lock().unwrap();
         let (track_count, archived_count, total_bytes) = conn.query_row(

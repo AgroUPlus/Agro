@@ -1,4 +1,4 @@
-use async_graphql::{Context, InputObject, Object, Schema, SimpleObject};
+use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject};
 use crate::auth::AuthedUser;
 use crate::db::Db;
 use crate::passphrase::generate_passphrase;
@@ -576,6 +576,72 @@ impl QueryRoot {
             .collect())
     }
 
+    /// How this account should sync — the one answer both clients branch on.
+    ///
+    /// Derived rather than configured: a deployment that archives and has a Navidrome address on
+    /// file is a streaming setup whether or not anyone said so, and a deployment with no library
+    /// root cannot be anything but index-only.
+    async fn sync_mode(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<SyncMode> {
+        authorize(ctx, &user_id)?;
+        if !ctx.data::<crate::storage::Storage>()?.archives() {
+            return Ok(SyncMode::IndexOnly);
+        }
+        // Presence is the whole question, so the address is never decrypted here.
+        let has_navidrome = ctx
+            .data::<Db>()?
+            .get_synced_settings(&user_id)?
+            .and_then(|s| s.server_url)
+            .is_some_and(|url| !url.trim().is_empty());
+
+        Ok(if has_navidrome {
+            SyncMode::Navidrome
+        } else {
+            SyncMode::PeerToPeer
+        })
+    }
+
+    /// Tracks this device could delete without losing them: the server holds a filed copy.
+    ///
+    /// Both the index *and* the disk are consulted. An `archived_path` pointing at a file that is
+    /// no longer there would otherwise talk a device into deleting its only copy — the index is a
+    /// record of what this server did, not proof of what is on the disk now.
+    ///
+    /// The size is checked rather than the hash. Re-hashing every candidate would read the whole
+    /// library on every call; a size mismatch catches the truncated and half-restored cases, and
+    /// the bytes were already verified against the declared hash when they were archived.
+    async fn reclaimable(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        device_id: String,
+        limit: Option<i32>,
+    ) -> async_graphql::Result<Vec<LibraryTrackPayload>> {
+        authorize(ctx, &user_id)?;
+        let storage = ctx.data::<crate::storage::Storage>()?;
+        // Nothing is reclaimable when the server is not the durable copy.
+        let Some(root) = storage.library_root.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let limit = limit.unwrap_or(50).clamp(1, MAX_MISSING as i32) as i64;
+
+        Ok(ctx
+            .data::<Db>()?
+            .reclaimable_on_device(&user_id, &device_id, limit)?
+            .into_iter()
+            .filter(|track| {
+                let Some(relative) = track.archived_path.as_ref() else {
+                    return false;
+                };
+                let Ok(path) = crate::storage::resolve_within(root, std::path::Path::new(relative))
+                else {
+                    return false;
+                };
+                std::fs::metadata(&path).is_ok_and(|m| m.len() == track.size_bytes as u64)
+            })
+            .map(to_library_payload)
+            .collect())
+    }
+
     async fn synced_settings(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Option<SyncedSettingsPayload>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
@@ -654,6 +720,26 @@ pub struct LibraryTrackPayload {
     /// the index entry — which is the whole of index-only mode, and of a track that lives on a
     /// peer.
     pub archived_path: Option<String>,
+}
+
+/// How this deployment moves music between devices.
+///
+/// The clients used to decide this individually, from local config that knew nothing about the
+/// server — which is why the same account could behave differently on the desktop and the phone.
+/// The server holds every fact the decision needs, so it makes the decision and the clients
+/// render it.
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SyncMode {
+    /// A Navidrome is configured for this account and the server archives. Devices do not need
+    /// their own copies — they stream — so downloads are never offered and freeing space is
+    /// always safe.
+    Navidrome,
+    /// The server archives, but there is no Navidrome to stream from. A device that lacks a
+    /// recording is offered the file itself.
+    PeerToPeer,
+    /// No library root: the server keeps the index and relays through the spool, but never keeps
+    /// the bytes. It cannot be the durable copy, so it never suggests deleting one.
+    IndexOnly,
 }
 
 #[derive(SimpleObject, Clone)]

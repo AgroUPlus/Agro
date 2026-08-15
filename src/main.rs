@@ -5,6 +5,7 @@ mod db_library;
 mod embedded_dashboard;
 mod library;
 mod norm;
+mod offers;
 mod passphrase;
 mod plugins;
 mod schema;
@@ -29,6 +30,7 @@ pub struct AppState {
     pub db: Db,
     pub ws_hub: Arc<WsHub>,
     pub storage: storage::Storage,
+    pub offers: offers::OfferBatcher,
 }
 
 #[tokio::main]
@@ -54,11 +56,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: db.clone(),
         ws_hub: ws_hub.clone(),
         storage: store,
+        offers: offers::OfferBatcher::spawn(db.clone(), ws_hub.clone()),
     };
 
     let schema: AgroSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
         .data(db.clone())
         .data(ws_hub.clone())
+        // Resolvers need to know whether this deployment archives at all, and where — that is what
+        // decides which sync mode the clients are told to run in.
+        .data(state.storage.clone())
         .finish();
 
     let cors = CorsLayer::new()

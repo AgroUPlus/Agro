@@ -425,6 +425,9 @@ async fn archive(
     );
 
     run_archive_hook(state, &stored, &target);
+    // Collected rather than sent: an album arrives as a run of these, and should reach the other
+    // devices as one offer.
+    state.offers.note_archived(&session.user_id);
 
     Json(json!({ "status": "archived", "path": stored })).into_response()
 }
