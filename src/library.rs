@@ -419,7 +419,10 @@ async fn archive(
         .to_string();
     let _ = state.db.set_archived_path(content_hash, &stored);
 
-    state.ws_hub.broadcast(
+    // Addressed to the account, not shouted. `archivedPath` spells out artist, album and title, so
+    // a broadcast handed one account's library to every other account's devices.
+    state.ws_hub.notify_user(
+        &session.user_id,
         "LIBRARY_UPDATED",
         json!({ "contentHash": content_hash, "archivedPath": stored }),
     );
@@ -507,7 +510,8 @@ async fn spool(
 
     evict_spool(state).await;
 
-    state.ws_hub.broadcast(
+    state.ws_hub.notify_user(
+        &session.user_id,
         "LIBRARY_UPDATED",
         json!({ "contentHash": session.content_hash, "spooled": true }),
     );
