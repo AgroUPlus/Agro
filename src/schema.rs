@@ -874,6 +874,30 @@ impl MutationRoot {
         Ok(payload)
     }
 
+    async fn unregister_node(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        device_id: String,
+    ) -> async_graphql::Result<bool> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let removed = db.delete_node(&user_id, &device_id)?;
+        if removed {
+            if let Ok(ws_hub) = ctx.data::<Arc<WsHub>>() {
+                ws_hub.notify_user(
+                    &user_id,
+                    "NODE_UPDATE",
+                    serde_json::json!({
+                        "deviceId": device_id,
+                        "deleted": true
+                    }),
+                );
+            }
+        }
+        Ok(removed)
+    }
+
     async fn update_synced_settings(
         &self,
         ctx: &Context<'_>,

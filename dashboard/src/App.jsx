@@ -4,7 +4,7 @@ import {
   Radio, Smartphone, Terminal, Server, 
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
-  User, Users, ChevronDown, Plus, Library, HardDrive
+  User, Users, ChevronDown, Plus, Library, HardDrive, Trash2
 } from 'lucide-react';
 
 /** Bytes as something readable. The library totals are the only place this is needed. */
@@ -459,6 +459,21 @@ export default function App() {
     } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
+  const handleDeleteNode = async (deviceId) => {
+    try {
+      await gql(`
+        mutation UnregisterNode {
+          unregisterNode(userId: "${username}", deviceId: "${deviceId}")
+        }
+      `);
+      setNodes(prev => prev.filter(n => n.deviceId !== deviceId));
+      setSyncLogs(prev => [
+        { time: new Date().toLocaleTimeString(), event: `[NODE] Removed device ${deviceId}` },
+        ...prev
+      ]);
+    } catch (e) { if (e.unauthorized) setLocked(true); }
+  };
+
   const handleCreateUser = async () => {
     const clean = newUsernameInput.trim().toLowerCase();
     if (!clean) return;
@@ -689,13 +704,30 @@ export default function App() {
                             {node.clientType.toLowerCase().includes('wanda') ? 'wanda' : 'wander'}
                           </div>
                         </div>
-                        <span className="daemon-pill" style={{ 
-                          fontSize: '10px', 
-                          padding: '2px 6px',
-                          color: node.isOnline ? 'var(--status-active)' : 'var(--text-muted)'
-                        }}>
-                          {node.isOnline ? 'ONLINE' : 'AWAY'}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span className="daemon-pill" style={{ 
+                            fontSize: '10px', 
+                            padding: '2px 6px',
+                            color: node.isOnline ? 'var(--status-active)' : 'var(--text-muted)'
+                          }}>
+                            {node.isOnline ? 'ONLINE' : 'AWAY'}
+                          </span>
+                          <button
+                            onClick={() => handleDeleteNode(node.deviceId)}
+                            title="Remove device"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
                       <div className="node-footer">
                         <span>{node.currentTrack ? `Track: ${node.currentTrack}` : 'Status: Idle'}</span>

@@ -692,6 +692,15 @@ impl Db {
         Ok(nodes)
     }
 
+    pub fn delete_node(&self, user_id: &str, device_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM registered_nodes WHERE user_id = ?1 AND device_id = ?2",
+            params![user_id, device_id],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn upsert_synced_settings(
         &self,
         user_id: &str,
