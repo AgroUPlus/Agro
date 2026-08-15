@@ -4,7 +4,8 @@ import {
   Radio, Smartphone, Terminal, Server, 
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
-  User, Users, ChevronDown, Plus, Library, HardDrive, Trash2
+  User, Users, ChevronDown, Plus, Library, HardDrive, Trash2,
+  Music, Database, Activity, ShieldCheck
 } from 'lucide-react';
 
 /** Bytes as something readable. The library totals are the only place this is needed. */
@@ -858,7 +859,7 @@ export default function App() {
                   </label>
                   <input
                     type="text"
-                    placeholder="frwd.top"
+                    placeholder="share.example.com"
                     value={syncedSettings.shareDomain}
                     onChange={(e) => setSyncedSettings({ ...syncedSettings, shareDomain: e.target.value })}
                     style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-main)', fontSize: '12px' }}
@@ -958,43 +959,151 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 4: Daemon Logs */}
+        {/* Tab 4: Library */}
         {activeTab === 'library' && (
-          <div className="panel">
-            <div className="panel-header">
-              <Library size={16} />
-              <h2>Music library</h2>
-            </div>
-            {libraryStats ? (
-              <div className="stat-grid">
-                <div className="stat">
-                  <span className="stat-value">{libraryStats.trackCount}</span>
-                  <span className="stat-label">tracks known</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <div className="card-title">Music Library & Fleet Ledger</div>
+                  <div className="card-subtitle">
+                    Cross-device SHA-256 track index and local server audio archive
+                  </div>
                 </div>
-                <div className="stat">
-                  <span className="stat-value">{libraryStats.archivedCount}</span>
-                  <span className="stat-label">held on this server</span>
-                </div>
-                <div className="stat">
-                  <span className="stat-value">{formatBytes(libraryStats.totalBytes)}</span>
-                  <span className="stat-label">total size</span>
-                </div>
-                <div className="stat">
-                  <span className="stat-value">{formatBytes(libraryStats.spoolBytes)}</span>
-                  <span className="stat-label">staged for peers</span>
+                <div className="daemon-pill">
+                  <ShieldCheck size={12} />
+                  <span>SYNC READY</span>
                 </div>
               </div>
-            ) : (
-              <p className="empty-note">
-                Nothing reported yet. Turn on library sync in Wanda or Wander and the totals
-                appear here.
-              </p>
-            )}
-            <p className="empty-note">
-              &ldquo;Tracks known&rdquo; counts every distinct file any of your devices has told
-              this server about. &ldquo;Held on this server&rdquo; counts the ones whose audio is
-              actually here.
-            </p>
+
+              {libraryStats ? (
+                <>
+                  <div className="nodes-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                    <div className="node-card" style={{ padding: '16px' }}>
+                      <div className="node-header" style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '500' }}>KNOWN IN FLEET</span>
+                        <Music size={15} style={{ color: 'var(--text-secondary)' }} />
+                      </div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {libraryStats.trackCount}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Indexed across nodes
+                      </div>
+                    </div>
+
+                    <div className="node-card" style={{ padding: '16px' }}>
+                      <div className="node-header" style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '500' }}>SERVER VAULT</span>
+                        <HardDrive size={15} style={{ color: 'var(--status-active)' }} />
+                      </div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--status-active)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {libraryStats.archivedCount}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Stored on this server
+                      </div>
+                    </div>
+
+                    <div className="node-card" style={{ padding: '16px' }}>
+                      <div className="node-header" style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '500' }}>AUDIO STORAGE</span>
+                        <Database size={15} style={{ color: 'var(--text-secondary)' }} />
+                      </div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {formatBytes(libraryStats.totalBytes)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Total library audio size
+                      </div>
+                    </div>
+
+                    <div className="node-card" style={{ padding: '16px' }}>
+                      <div className="node-header" style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: '500' }}>PEER RELAY SPOOL</span>
+                        <Activity size={15} style={{ color: 'var(--text-secondary)' }} />
+                      </div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>
+                        {formatBytes(libraryStats.spoolBytes)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        Staged for peer downloads
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Archive Coverage Meter */}
+                  <div style={{ 
+                    background: 'var(--bg-surface-elevated)', 
+                    border: '1px solid var(--border-subtle)', 
+                    borderRadius: 'var(--radius-sm)', 
+                    padding: '16px',
+                    marginTop: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                      <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>Server Archive Coverage</span>
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--status-active)', fontWeight: '600' }}>
+                        {libraryStats.trackCount > 0 
+                          ? `${Math.min(100, Math.round((libraryStats.archivedCount / libraryStats.trackCount) * 100))}%` 
+                          : '0%'}
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: '6px', background: 'var(--border-subtle)', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ 
+                        height: '100%', 
+                        width: `${libraryStats.trackCount > 0 ? Math.min(100, (libraryStats.archivedCount / libraryStats.trackCount) * 100) : 0}%`,
+                        background: 'var(--status-active)',
+                        borderRadius: '999px',
+                        transition: 'width 0.3s ease'
+                      }} />
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {libraryStats.archivedCount} of {libraryStats.trackCount} fleet tracks physically mirrored in Navidrome storage.
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', background: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-sm)' }}>
+                  No tracks reported yet. Turn on <strong>Library Sync</strong> in Wanda or Wander to populate this ledger.
+                </div>
+              )}
+            </div>
+
+            {/* Pipeline Cards */}
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Storage & Ingestion Architecture</div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    1. Fleet Index & Ledger
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                    Clients report content hashes without uploading files until requested, keeping sync instant and lightweight.
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    2. Navidrome Vault Root
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                    Uploaded audio is automatically probed for tags and organized into <code>Artist/Album/Track</code> for Navidrome streaming.
+                  </div>
+                </div>
+                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    3. Spool FIFO Relay
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                    Peer uploads are staged in a quota-managed FIFO spool for peer-to-peer syncing across Wander nodes.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

@@ -285,6 +285,13 @@ impl QueryRoot {
         "Agro Server OK"
     }
 
+    /// Looks up the target URL for a short link UID.
+    async fn resolve_short_link(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<String>> {
+        let db = ctx.data::<Db>()?;
+        let target = db.get_short_link(&id)?;
+        Ok(target)
+    }
+
     async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<String>> {
         let db = ctx.data::<Db>()?;
         Ok(db.list_users()?)
@@ -954,6 +961,33 @@ impl MutationRoot {
 
         Ok(payload)
     }
+
+    /// Creates a short UID for a share URL. Returns the short link UID (e.g. "aB3x9Q").
+    async fn create_short_link(
+        &self,
+        ctx: &Context<'_>,
+        user_id: Option<String>,
+        target_url: String,
+    ) -> async_graphql::Result<String> {
+        let db = ctx.data::<Db>()?;
+        let target_url = target_url.trim();
+        if target_url.is_empty() {
+            return Err("Target URL cannot be empty".into());
+        }
+        use rand::Rng;
+        const CHARSET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let mut rng = rand::thread_rng();
+        let uid: String = (0..7)
+            .map(|_| {
+                let idx = rng.gen_range(0..CHARSET.len());
+                CHARSET[idx] as char
+            })
+            .collect();
+
+        db.create_short_link(&uid, target_url, user_id.as_deref())?;
+        Ok(uid)
+    }
+
     async fn create_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<AccountPayload> {
         let db = ctx.data::<Db>()?;
         let username = username.trim().to_lowercase();

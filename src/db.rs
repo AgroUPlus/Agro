@@ -118,6 +118,17 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE synced_settings ADD COLUMN share_hosts TEXT;
     ALTER TABLE synced_settings ADD COLUMN share_enabled BOOLEAN DEFAULT 0;
     ",
+    // 5 — UID-based short links for forwarding.
+    "
+    CREATE TABLE IF NOT EXISTS short_links (
+        id TEXT PRIMARY KEY,
+        target_url TEXT NOT NULL,
+        user_id TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_short_links_created ON short_links(created_at);
+    ",
 ];
 
 #[derive(Clone)]
@@ -791,6 +802,32 @@ impl Db {
         hosts.sort();
         hosts.dedup();
         Ok(hosts)
+    }
+
+    /// Stores a short link UID mapping to a target URL.
+    pub fn create_short_link(&self, id: &str, target_url: &str, user_id: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, target_url, user_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieves the target URL for a short link UID.
+    pub fn get_short_link(&self, id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT target_url FROM short_links WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
     }
 }
 
