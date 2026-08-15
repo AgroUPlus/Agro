@@ -4,8 +4,17 @@ import {
   Radio, Smartphone, Terminal, Server, 
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
-  User, Users, ChevronDown, Plus
+  User, Users, ChevronDown, Plus, Library, HardDrive
 } from 'lucide-react';
+
+/** Bytes as something readable. The library totals are the only place this is needed. */
+function formatBytes(bytes) {
+  if (!bytes) return '0 MB';
+  const gb = 1024 ** 3;
+  const mb = 1024 ** 2;
+  if (bytes >= gb) return `${(bytes / gb).toFixed(1)} GB`;
+  return `${Math.round(bytes / mb)} MB`;
+}
 
 const FALLBACK_RULES = [
   {
@@ -95,6 +104,8 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [rules, setRules] = useState(FALLBACK_RULES);
   const [nodes, setNodes] = useState([]);
+  // Library index totals, refreshed alongside everything else on the poll.
+  const [libraryStats, setLibraryStats] = useState(null);
   const [syncedSettings, setSyncedSettings] = useState({
     serverUrl: 'http://localhost:4533',
     serverUsername: 'alpha',
@@ -186,6 +197,9 @@ export default function App() {
           if (data?.activeNodes) {
             setNodes(data.activeNodes);
           }
+          if (data?.libraryStats) {
+            setLibraryStats(data.libraryStats);
+          }
           if (data?.syncedSettings) {
             setSyncedSettings(s => ({
               ...s,
@@ -242,6 +256,12 @@ export default function App() {
                   isPlaying
                   deviceId
                 }
+                libraryStats(userId: "${username}") {
+                  trackCount
+                  archivedCount
+                  totalBytes
+                  spoolBytes
+                }
               }
             `);
         if (res.ok) {
@@ -273,7 +293,10 @@ export default function App() {
 
     // Connect WebSocket for real-time daemon events
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/sync`;
+    // The token has to travel: a browser cannot set headers on a WebSocket handshake, so the
+    // server also accepts it as a query parameter. Without it the middleware rejects the upgrade
+    // and the Logs tab is silently dead in any deployment that has an account.
+    const wsUrl = `${protocol}//${window.location.host}/ws/sync?token=${encodeURIComponent(getToken() || '')}`;
     let ws;
     try {
       ws = new WebSocket(wsUrl);
@@ -601,6 +624,13 @@ export default function App() {
               <span>Pairing</span>
             </button>
             <button 
+              className={`nav-pill-btn ${activeTab === 'library' ? 'active' : ''}`}
+              onClick={() => setActiveTab('library')}
+            >
+              <Library size={14} />
+              <span>Library</span>
+            </button>
+            <button 
               className={`nav-pill-btn ${activeTab === 'logs' ? 'active' : ''}`}
               onClick={() => setActiveTab('logs')}
             >
@@ -821,6 +851,45 @@ export default function App() {
         )}
 
         {/* Tab 4: Daemon Logs */}
+        {activeTab === 'library' && (
+          <div className="panel">
+            <div className="panel-header">
+              <Library size={16} />
+              <h2>Music library</h2>
+            </div>
+            {libraryStats ? (
+              <div className="stat-grid">
+                <div className="stat">
+                  <span className="stat-value">{libraryStats.trackCount}</span>
+                  <span className="stat-label">tracks known</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-value">{libraryStats.archivedCount}</span>
+                  <span className="stat-label">held on this server</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-value">{formatBytes(libraryStats.totalBytes)}</span>
+                  <span className="stat-label">total size</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-value">{formatBytes(libraryStats.spoolBytes)}</span>
+                  <span className="stat-label">staged for peers</span>
+                </div>
+              </div>
+            ) : (
+              <p className="empty-note">
+                Nothing reported yet. Turn on library sync in Wanda or Wander and the totals
+                appear here.
+              </p>
+            )}
+            <p className="empty-note">
+              &ldquo;Tracks known&rdquo; counts every distinct file any of your devices has told
+              this server about. &ldquo;Held on this server&rdquo; counts the ones whose audio is
+              actually here.
+            </p>
+          </div>
+        )}
+
         {activeTab === 'logs' && (
           <div className="card">
             <div className="card-header">

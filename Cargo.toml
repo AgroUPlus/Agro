@@ -26,3 +26,10 @@ uuid = { version = "1.10", features = ["v4"] }
 urlencoding = "2.1"
 mime_guess = "2.0"
 aes-gcm = "0.10"
+# Matching one recording across devices: see `norm`. Unicode-aware because "Beyoncé" and "Beyonce"
+# have to reduce to the same key.
+regex = "1.11"
+unicode-normalization = "0.1"
+# Bridges an axum body stream to tokio's AsyncRead, so uploads copy straight to disk instead of
+# being collected into memory.
+tokio-util = { version = "0.7", features = ["io"] }

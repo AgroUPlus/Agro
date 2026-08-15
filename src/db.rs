@@ -2,9 +2,117 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// Schema changes, in order. **Append only** — an entry's index is its version number, so
+/// reordering or removing one silently skips it on every database that has already run it.
+const MIGRATIONS: &[&str] = &[
+    // 1 — the music library.
+    //
+    // `music_tracks` and `jam_tracks` are dropped rather than reused: both were created by
+    // `init_schema` and never read or written by anything, and `music_tracks` lacked every column
+    // this needs (no owning device, no content hash, no size, no format).
+    //
+    // Note on `user_id`: it holds a **username**, matching `registered_nodes`, `handoff_state` and
+    // `synced_settings`. Only `app_passwords.user_id` holds the `users.id` UUID. That split is
+    // pre-existing and easy to trip over.
+    "
+    DROP TABLE IF EXISTS music_tracks;
+    DROP TABLE IF EXISTS jam_tracks;
+
+    -- One row per distinct *file*, identified by the SHA-256 of its bytes.
+    CREATE TABLE IF NOT EXISTS library_tracks (
+        content_hash   TEXT PRIMARY KEY,
+        title          TEXT NOT NULL,
+        artist         TEXT NOT NULL,
+        album          TEXT,
+        album_artist   TEXT,
+        track_no       INTEGER,
+        disc_no        INTEGER,
+        year           INTEGER,
+        genre          TEXT,
+        duration_ms    INTEGER NOT NULL,
+        size_bytes     INTEGER NOT NULL,
+        format         TEXT,
+        bitrate_kbps   INTEGER,
+        -- Normalised for fuzzy matching; see `norm`. Stored rather than computed per query so the
+        -- index below can be used.
+        norm_artist    TEXT NOT NULL,
+        norm_title     TEXT NOT NULL,
+        -- Relative to AGRO_LIBRARY_ROOT. NULL when the server holds only the index entry and not
+        -- the bytes, which is the whole of index-only mode.
+        archived_path  TEXT,
+        first_seen_at  TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_match
+        ON library_tracks(norm_artist, norm_title);
+
+    -- Which devices hold which file. The diff reads this.
+    CREATE TABLE IF NOT EXISTS device_holdings (
+        device_id    TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        -- Opaque client handle (a content URI, a filesystem path). Never interpreted here — it
+        -- means something only on the device that reported it.
+        local_ref    TEXT,
+        reported_at  TEXT NOT NULL,
+        PRIMARY KEY (device_id, content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_holdings_user
+        ON device_holdings(user_id, content_hash);
+
+    -- In-flight uploads, so an interrupted transfer resumes instead of restarting.
+    CREATE TABLE IF NOT EXISTS upload_sessions (
+        upload_id      TEXT PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        device_id      TEXT NOT NULL,
+        content_hash   TEXT NOT NULL,
+        size_bytes     INTEGER NOT NULL,
+        received_bytes INTEGER NOT NULL DEFAULT 0,
+        target         TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        expires_at     TEXT NOT NULL
+    );
+
+    -- Files staged for a peer to collect. Size-capped and TTL'd: this host has a few GB of disk.
+    CREATE TABLE IF NOT EXISTS spool_items (
+        content_hash TEXT PRIMARY KEY,
+        size_bytes   INTEGER NOT NULL,
+        from_device  TEXT NOT NULL,
+        user_id      TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        expires_at   TEXT NOT NULL
+    );
+    ",
+    // 2 — the performance variants of a title, sorted and comma-joined ("", "live",
+    // "acoustic,live").
+    //
+    // Migration 1 stored only the normalised artist and title, and `normalize_title` strips
+    // variant markers — so "Come As You Are" and "Come As You Are (Live)" were indistinguishable
+    // in the index, and owning the studio cut suppressed the offer of the live take. Matching on
+    // this column too is what keeps two genuinely different performances apart.
+    //
+    // Existing rows get '' and are corrected the next time their device reports them; the column
+    // cannot be backfilled in SQL because the normalisation lives in Rust.
+    "
+    ALTER TABLE library_tracks ADD COLUMN norm_variants TEXT NOT NULL DEFAULT '';
+    DROP INDEX IF EXISTS idx_library_match;
+    CREATE INDEX idx_library_match
+        ON library_tracks(norm_artist, norm_title, norm_variants);
+    ",
+    // 3 — the file extension the client declared, carried with the upload session.
+    //
+    // It used to live in an in-memory map keyed by upload id, which meant a server restart
+    // mid-transfer lost it: the resumed upload then had no declared extension and fell back to
+    // whatever lofty could infer, filing a FLAC as `.bin`. An upload that survives a restart has
+    // to carry everything needed to finish it.
+    "ALTER TABLE upload_sessions ADD COLUMN extension TEXT;",
+];
+
 #[derive(Clone)]
 pub struct Db {
-    conn: Arc<Mutex<Connection>>,
+    /// `pub(crate)` so the library index can keep its own `impl Db` block in `db_library`, rather
+    /// than growing this file by another few hundred lines of unrelated SQL.
+    pub(crate) conn: Arc<Mutex<Connection>>,
 }
 
 impl Db {
@@ -14,7 +122,7 @@ impl Db {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.init_schema()?;
-        db.migrate_handoff_queue();
+        db.migrate()?;
         Ok(db)
     }
 
@@ -24,13 +132,44 @@ impl Db {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.init_schema()?;
-        db.migrate_handoff_queue();
+        db.migrate()?;
         Ok(db)
     }
 
-    /// Adds the queue columns to a database created before they existed. SQLite has no
-    /// `ADD COLUMN IF NOT EXISTS`, and the only failure mode is "already there", so the error is
-    /// the expected outcome on every run after the first.
+    /// Brings the database up to date.
+    ///
+    /// Two mechanisms, for two eras. [`Self::migrate_handoff_queue`] predates any version stamp
+    /// and stays idempotent because databases exist in both states. Everything since is a numbered
+    /// entry in [`MIGRATIONS`], applied in order, each in its own transaction, with
+    /// `PRAGMA user_version` stamped as it goes — so each runs exactly once and a failure aborts
+    /// startup rather than leaving a half-migrated database serving requests.
+    fn migrate(&self) -> Result<()> {
+        self.migrate_handoff_queue();
+
+        let mut conn = self.conn.lock().unwrap();
+        let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+        for (index, migration) in MIGRATIONS.iter().enumerate() {
+            let version = index as i64 + 1;
+            if version <= current {
+                continue;
+            }
+            let tx = conn.transaction()?;
+            tx.execute_batch(migration)?;
+            // PRAGMA takes no bound parameters, and `version` is a loop index over a compile-time
+            // constant rather than anything a caller supplied.
+            tx.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Adds the queue columns to a database created before they existed.
+    ///
+    /// `init_schema` includes them now, so this only ever does anything on a database that
+    /// predates them. SQLite has no `ADD COLUMN IF NOT EXISTS`, and the only failure mode is
+    /// "already there", so the error is the expected outcome on every run after the first — which
+    /// is exactly why nothing newer than this is done that way.
     fn migrate_handoff_queue(&self) {
         let conn = self.conn.lock().unwrap();
         let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_json TEXT", []);
@@ -100,27 +239,9 @@ impl Db {
                 expires_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS music_tracks (
-                id TEXT PRIMARY KEY,
-                file_path TEXT UNIQUE NOT NULL,
-                title TEXT NOT NULL,
-                artist TEXT NOT NULL,
-                album TEXT,
-                genre TEXT,
-                duration_secs INTEGER NOT NULL,
-                fingerprint TEXT,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS jam_tracks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_id TEXT NOT NULL,
-                track_title TEXT NOT NULL,
-                artist_name TEXT NOT NULL,
-                submitted_by TEXT NOT NULL,
-                votes INTEGER DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
+            -- `music_tracks` and `jam_tracks` used to be created here and were never read or
+            -- written by anything. They are dropped by migration 1; the real library index is
+            -- `library_tracks`.
 
             CREATE TABLE IF NOT EXISTS registered_nodes (
                 device_id TEXT PRIMARY KEY,

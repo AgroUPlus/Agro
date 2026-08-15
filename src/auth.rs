@@ -25,6 +25,22 @@ use serde_json::json;
 
 use crate::AppState;
 
+/// Who the presented token actually belongs to.
+///
+/// The resolved account used to be thrown away: `require_token` looked it up, checked it existed,
+/// and dropped it. Every resolver therefore fell back to trusting the `userId` its *caller* sent,
+/// so any valid token could read or write any other account's sessions, settings and library.
+/// Carrying the identity forward in the request extensions is what lets a resolver check that the
+/// two agree — see `schema::authorize`.
+///
+/// The username, not the `users.id` UUID, because that is what the data is keyed by:
+/// `registered_nodes`, `handoff_state`, `synced_settings` and the library tables all store a
+/// username in their `user_id` column. Only `app_passwords` uses the UUID.
+#[derive(Clone, Debug)]
+pub struct AuthedUser {
+    pub username: String,
+}
+
 /// Browsers cannot set headers on a WebSocket handshake, so `/ws/sync` also accepts the token as a
 /// query parameter. Clients that can send a header should.
 #[derive(Deserialize)]
@@ -35,7 +51,7 @@ pub struct TokenQuery {
 pub async fn require_token(
     State(state): State<AppState>,
     Query(query): Query<TokenQuery>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     // An unconfigured server has nobody to authenticate as. This is the setup window, and it is
@@ -55,7 +71,10 @@ pub async fn require_token(
     let token = header_token.or(query.token).unwrap_or_default();
 
     match state.db.user_for_token(&token) {
-        Ok(Some(_)) => next.run(request).await,
+        Ok(Some(username)) => {
+            request.extensions_mut().insert(AuthedUser { username });
+            next.run(request).await
+        }
         _ => unauthorized(),
     }
 }
