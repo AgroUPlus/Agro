@@ -173,8 +173,8 @@ line, precisely so that client-supplied tags cannot get into what the shell pars
 
 ## Deploying
 
-`./deploy.sh [user@host]` builds the dashboard and the server here — the latter inside a Debian 12
+`./deploy.sh <user@host>` builds the dashboard and the server here — the latter inside a Debian 12
 container, so the binary matches the target's older glibc — then uploads it and restarts the
-service. Defaults to `root@192.168.1.16`, the host the music library lives on.
+service. You can also pass the host via the `AGRO_DEPLOY_HOST` environment variable.
 
 The target never compiles anything, which is what lets it be a small container.
