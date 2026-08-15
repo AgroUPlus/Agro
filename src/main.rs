@@ -4,6 +4,7 @@ mod db;
 mod db_library;
 mod embedded_dashboard;
 mod library;
+mod listen;
 mod norm;
 mod offers;
 mod passphrase;
@@ -93,6 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .merge(protected)
         .route("/share/{token}", get(share::share_handler))
+        // Public by design: a shared link is opened by someone with no account here.
+        .route("/listen", get(listen::listen_handler))
         .fallback(embedded_dashboard::static_dashboard_handler)
         .layer(cors)
         .with_state(state)

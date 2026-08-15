@@ -112,7 +112,12 @@ export default function App() {
     lrclibUrl: 'https://lrclib.net',
     lyricsFetchOnline: true,
     jamendoClientId: '',
-    streamFormat: 'FLAC'
+    streamFormat: 'FLAC',
+    // Share-link forwarding. Blank domain and enabled:false is "off", which is also what every
+    // player does with no Agro at all — the feature is an addition, never a dependency.
+    shareDomain: '',
+    shareHosts: '',
+    shareEnabled: false
   });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -172,6 +177,9 @@ export default function App() {
                   lrclibUrl
                   lyricsFetchOnline
                   streamFormat
+                  shareDomain
+                  shareHosts
+                  shareEnabled
                 }
                 libraryStats(userId: "${username}") {
                   trackCount
@@ -214,7 +222,10 @@ export default function App() {
               lrclibUrl: data.syncedSettings.lrclibUrl || s.lrclibUrl,
               lyricsFetchOnline: data.syncedSettings.lyricsFetchOnline ?? s.lyricsFetchOnline,
               jamendoClientId: data.syncedSettings.jamendoClientId || '',
-              streamFormat: data.syncedSettings.streamFormat || 'FLAC'
+              streamFormat: data.syncedSettings.streamFormat || 'FLAC',
+              shareDomain: data.syncedSettings.shareDomain || '',
+              shareHosts: data.syncedSettings.shareHosts || '',
+              shareEnabled: data.syncedSettings.shareEnabled ?? false
             }));
           }
           if (data?.playbackHandoff && data.playbackHandoff.trackTitle) {
@@ -428,7 +439,10 @@ export default function App() {
                 serverUsername: "${syncedSettings.serverUsername}",
                 lrclibUrl: "${syncedSettings.lrclibUrl}",
                 lyricsFetchOnline: ${syncedSettings.lyricsFetchOnline},
-                streamFormat: "${syncedSettings.streamFormat}"
+                streamFormat: "${syncedSettings.streamFormat}",
+                shareDomain: "${syncedSettings.shareDomain}",
+                shareHosts: "${syncedSettings.shareHosts}",
+                shareEnabled: ${syncedSettings.shareEnabled}
               }) {
                 updatedAt
               }
@@ -783,6 +797,59 @@ export default function App() {
                     <option value="OPUS">Opus (High Efficiency)</option>
                     <option value="MP3">MP3 320k (Universal)</option>
                   </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Share link forwarding */}
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title">Share Links</div>
+                <button
+                  className={`btn ${syncedSettings.shareEnabled ? 'btn-primary' : ''}`}
+                  onClick={() => setSyncedSettings({ ...syncedSettings, shareEnabled: !syncedSettings.shareEnabled })}
+                >
+                  <span>{syncedSettings.shareEnabled ? 'On' : 'Off'}</span>
+                </button>
+              </div>
+
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+                Sends share links from Wanda and Wander out on a domain of yours instead of the
+                backend&rsquo;s own, forwarded by this server at <code>/listen</code>. Off, each
+                player shares its backend&rsquo;s link &mdash; the same as with no Agro at all.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Share Domain
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="frwd.top"
+                    value={syncedSettings.shareDomain}
+                    onChange={(e) => setSyncedSettings({ ...syncedSettings, shareDomain: e.target.value })}
+                    style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-main)', fontSize: '12px' }}
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    Point its DNS at this server. Links read {syncedSettings.shareDomain || 'your-domain'}/listen?v=&hellip;
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
+                    Forward To (comma separated)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="music.example.com"
+                    value={syncedSettings.shareHosts}
+                    onChange={(e) => setSyncedSettings({ ...syncedSettings, shareHosts: e.target.value })}
+                    style={{ width: '100%', padding: '8px 10px', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-main)', fontSize: '12px' }}
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    Your music server. YouTube&rsquo;s hosts are always allowed; anything else is
+                    refused, so the domain cannot be used to forward strangers elsewhere.
+                  </div>
                 </div>
               </div>
             </div>
