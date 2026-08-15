@@ -106,6 +106,18 @@ const MIGRATIONS: &[&str] = &[
     // whatever lofty could infer, filing a FLAC as `.bin`. An upload that survives a restart has
     // to carry everything needed to finish it.
     "ALTER TABLE upload_sessions ADD COLUMN extension TEXT;",
+    // 4 — share-link forwarding: the domain a user's players send share links out on, the hosts
+    // this server will forward such a link to, and whether the whole thing is on.
+    //
+    // Deliberately not encrypted, unlike `server_url` beside it. `/listen` is a public route with
+    // no user in context and so no passphrase to decrypt with — and none of the three is a secret.
+    // The domain is printed in every link, and the host list *is* the allowlist: the thing that
+    // decides where a stranger's click may go, which the server has to be able to read on its own.
+    "
+    ALTER TABLE synced_settings ADD COLUMN share_domain TEXT;
+    ALTER TABLE synced_settings ADD COLUMN share_hosts TEXT;
+    ALTER TABLE synced_settings ADD COLUMN share_enabled BOOLEAN DEFAULT 0;
+    ",
 ];
 
 #[derive(Clone)]
@@ -261,6 +273,9 @@ impl Db {
                 lrclib_url TEXT,
                 lyrics_fetch_online BOOLEAN DEFAULT 1,
                 stream_format TEXT DEFAULT 'FLAC',
+                -- The share-link columns are added by migration 4, not here: a fresh database
+                -- runs `init_schema` and then *every* migration, so a column declared in both
+                -- places aborts startup on 'duplicate column name'.
                 updated_at TEXT NOT NULL
             );
 
