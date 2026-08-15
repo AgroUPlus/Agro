@@ -8,6 +8,12 @@
 //! - **`AGRO_SPOOL_ROOT`** — staging for in-flight uploads and for files waiting to be collected
 //!   by a peer. Size-capped and TTL'd, because this is the disk that runs out.
 //!
+//! And one optional hook, **`AGRO_ARCHIVE_HOOK`** — a shell command run after a file is filed.
+//! The library is a plain directory and agro treats it as one; anything that keeps its own index
+//! of that directory needs telling, and this is how, without agro knowing what that thing is. A
+//! Nextcloud data directory wants `docker exec -u www-data nextcloud php occ files:scan --path=…`;
+//! a plain folder of music wants nothing, which is the default.
+//!
 //! The path building here is the security-critical part of the feature. The endpoint this
 //! replaces joined a caller-supplied filename straight onto a directory, so `../../` escaped it.
 //! Every segment is sanitised, and the assembled path is then *checked* to still be inside its
@@ -33,6 +39,8 @@ pub struct Storage {
     pub spool_root: PathBuf,
     pub spool_max_bytes: u64,
     pub spool_ttl_hours: i64,
+    /// Shell command run after a successful archive. `None` — the default — runs nothing.
+    pub archive_hook: Option<String>,
 }
 
 impl Storage {
@@ -54,6 +62,10 @@ impl Storage {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(72),
+            archive_hook: std::env::var("AGRO_ARCHIVE_HOOK")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
         }
     }
 
@@ -219,6 +231,28 @@ mod tests {
             track_no: Some(1),
             extension: "flac",
         }
+    }
+
+    /// One test rather than three: the environment is process-global, so cases that set the same
+    /// variable cannot run as separate tests without racing each other.
+    #[test]
+    fn archive_hook_is_absent_unless_it_says_something() {
+        std::env::remove_var("AGRO_ARCHIVE_HOOK");
+        assert_eq!(Storage::from_env().archive_hook, None, "unset means no hook");
+
+        std::env::set_var("AGRO_ARCHIVE_HOOK", "   ");
+        assert_eq!(
+            Storage::from_env().archive_hook,
+            None,
+            "whitespace is not a command"
+        );
+
+        std::env::set_var("AGRO_ARCHIVE_HOOK", "  occ files:scan  ");
+        assert_eq!(
+            Storage::from_env().archive_hook.as_deref(),
+            Some("occ files:scan")
+        );
+        std::env::remove_var("AGRO_ARCHIVE_HOOK");
     }
 
     #[test]

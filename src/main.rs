@@ -46,6 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // easy to forget on a new host.
         None => println!("📁 No AGRO_LIBRARY_ROOT — index-only mode, uploads spool for peers"),
     }
+    if store.archive_hook.is_some() {
+        println!("🪝 Archive hook set — runs after each file is filed");
+    }
 
     let state = AppState {
         db: db.clone(),

@@ -5,11 +5,14 @@
 # a few GB of disk, which is not enough to compile Rust, and its glibc (2.36) is older than this
 # machine's, so a binary built directly on the host would not run there.
 #
-#   ./deploy.sh                     # deploys to root@192.168.1.15
+#   ./deploy.sh                     # deploys to root@192.168.1.16
 #   ./deploy.sh root@other-host     # deploys somewhere else
 set -euo pipefail
 
-HOST="${1:-root@192.168.1.15}"
+# .16 is the host the music library is actually on, so agro runs there and writes to it as an
+# ordinary local directory. Navidrome, on .15, still reads that library over its own read-only
+# sshfs mount and is not involved in a deploy.
+HOST="${1:-root@192.168.1.16}"
 REMOTE_PATH="/opt/agro"
 
 echo "==> Building the dashboard"

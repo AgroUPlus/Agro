@@ -173,6 +173,12 @@ export default function App() {
                   lyricsFetchOnline
                   streamFormat
                 }
+                libraryStats(userId: "${username}") {
+                  trackCount
+                  archivedCount
+                  totalBytes
+                  spoolBytes
+                }
               }
             `);
 
@@ -268,6 +274,9 @@ export default function App() {
           const { data } = await res.json();
           if (data?.activeNodes) {
             setNodes(data.activeNodes);
+          }
+          if (data?.libraryStats) {
+            setLibraryStats(data.libraryStats);
           }
           if (data?.playbackHandoff && data.playbackHandoff.trackTitle) {
             setLastHandoff(prev => {

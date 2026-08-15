@@ -384,9 +384,9 @@ async fn archive(
     }
 
     // Rename rather than copy where possible, so the file appears complete or not at all —
-    // Navidrome and Nextcloud both watch this tree and must never see a half-written file.
-    // Across filesystems (the library is very likely a different mount) rename fails, so fall
-    // back to copying to a temp name in the destination directory and renaming that.
+    // whatever scans this tree must never see a half-written file. Across filesystems (the spool
+    // and the library need not be the same mount) rename fails, so fall back to copying to a temp
+    // name in the destination directory and renaming that.
     if tokio::fs::rename(part_path, &target).await.is_err() {
         let staging = target.with_extension("agro-part");
         if let Err(err) = tokio::fs::copy(part_path, &staging).await {
@@ -397,6 +397,19 @@ async fn archive(
             return server_error(&format!("could not place the file: {err}"));
         }
         let _ = tokio::fs::remove_file(part_path).await;
+    }
+
+    // The library is frequently a directory shared with another service — a media scanner, a file
+    // sync daemon — reached through a common group on a setgid directory. A file inheriting the
+    // spool's tighter mode would be one that service cannot manage, so widen it to group-writable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) = tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o664))
+            .await
+        {
+            tracing::warn!("library: could not set mode on {}: {err}", target.display());
+        }
     }
 
     let stored = target
@@ -411,7 +424,58 @@ async fn archive(
         json!({ "contentHash": content_hash, "archivedPath": stored }),
     );
 
+    run_archive_hook(state, &stored, &target);
+
     Json(json!({ "status": "archived", "path": stored })).into_response()
+}
+
+/// How long the archive hook gets before it is killed. A reindex of a large library can be slow;
+/// a hook that has not finished in a minute is hung, and holding a task open for it helps nobody.
+const ARCHIVE_HOOK_TIMEOUT_SECS: u64 = 60;
+
+/// Tells whatever else indexes the library that a file arrived.
+///
+/// Detached on purpose. The bytes are filed and the row is written by the time this runs, so the
+/// upload has already succeeded — a hook that fails, hangs or does not exist must not turn that
+/// into an error for the client. Failures are logged and nothing else.
+///
+/// The paths go in the environment rather than into the command string: they are derived from tags
+/// a client supplied, and interpolating them into a line handed to `sh` would be an injection.
+fn run_archive_hook(state: &AppState, relative: &str, absolute: &Path) {
+    let Some(command) = state.storage.archive_hook.clone() else {
+        return;
+    };
+    let relative = relative.to_string();
+    let absolute = absolute.to_path_buf();
+
+    tokio::spawn(async move {
+        let run = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .env("AGRO_ARCHIVED_PATH", &relative)
+            .env("AGRO_ARCHIVED_ABS", &absolute)
+            .output();
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(ARCHIVE_HOOK_TIMEOUT_SECS),
+            run,
+        )
+        .await
+        {
+            Ok(Ok(out)) if out.status.success() => {
+                tracing::debug!("archive hook finished for {relative}");
+            }
+            Ok(Ok(out)) => tracing::warn!(
+                "archive hook exited {} for {relative}: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Ok(Err(err)) => tracing::warn!("archive hook could not run: {err}"),
+            Err(_) => tracing::warn!(
+                "archive hook timed out after {ARCHIVE_HOOK_TIMEOUT_SECS}s for {relative}"
+            ),
+        }
+    });
 }
 
 /// Parks the bytes for a peer to collect, evicting whatever it takes to stay under the cap.

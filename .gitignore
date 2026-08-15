@@ -1,4 +1,6 @@
 /target
+# The deploy build's target dir, written by the Debian container. Build output, not source.
+/target-deb
 
 # The live database. Holds account passphrases and API keys — never commit it.
 agro_data.db
