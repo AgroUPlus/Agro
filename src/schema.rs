@@ -72,6 +72,13 @@ pub struct SyncedSettingsPayload {
     pub lrclib_url: Option<String>,
     pub lyrics_fetch_online: bool,
     pub stream_format: String,
+    /// The domain the players rewrite share links onto, e.g. `frwd.top`. Empty means they each
+    /// share their backend's own link, which is also what happens with no Agro at all.
+    pub share_domain: Option<String>,
+    /// Comma-separated hosts `/listen` will forward to. The allowlist, in other words: without
+    /// one, the route would be an open redirect wearing the user's domain.
+    pub share_hosts: Option<String>,
+    pub share_enabled: bool,
     pub updated_at: String,
 }
 
@@ -83,6 +90,9 @@ pub struct SyncedSettingsInput {
     pub lrclib_url: Option<String>,
     pub lyrics_fetch_online: Option<bool>,
     pub stream_format: Option<String>,
+    pub share_domain: Option<String>,
+    pub share_hosts: Option<String>,
+    pub share_enabled: Option<bool>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -662,6 +672,10 @@ impl QueryRoot {
                 lrclib_url,
                 lyrics_fetch_online: s.lyrics_fetch_online.unwrap_or(true),
                 stream_format: s.stream_format.unwrap_or_else(|| "FLAC".to_string()),
+                // Plaintext, unlike the three above: see migration 4 in `db`.
+                share_domain: s.share_domain,
+                share_hosts: s.share_hosts,
+                share_enabled: s.share_enabled.unwrap_or(false),
                 updated_at: s.updated_at,
             }
         }))
@@ -882,6 +896,11 @@ impl MutationRoot {
             enc_lrclib_url.as_deref(),
             input.lyrics_fetch_online,
             input.stream_format.as_deref(),
+            crate::db::ShareSettingsInput {
+                domain: input.share_domain.as_deref(),
+                hosts: input.share_hosts.as_deref(),
+                enabled: input.share_enabled,
+            },
         )?;
 
         let settings = db.get_synced_settings(&input.user_id)?.unwrap();
@@ -892,6 +911,9 @@ impl MutationRoot {
             lrclib_url: input.lrclib_url.clone().or(settings.lrclib_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
             lyrics_fetch_online: settings.lyrics_fetch_online.unwrap_or(true),
             stream_format: settings.stream_format.unwrap_or_else(|| "FLAC".to_string()),
+            share_domain: settings.share_domain,
+            share_hosts: settings.share_hosts,
+            share_enabled: settings.share_enabled.unwrap_or(false),
             updated_at: settings.updated_at,
         };
 

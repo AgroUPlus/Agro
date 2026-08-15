@@ -700,20 +700,35 @@ impl Db {
         lrclib_url: Option<&str>,
         lyrics_fetch_online: Option<bool>,
         stream_format: Option<&str>,
+        share: ShareSettingsInput<'_>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO synced_settings (user_id, server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO synced_settings (user_id, server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format, share_domain, share_hosts, share_enabled, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(user_id) DO UPDATE SET
              server_url = COALESCE(excluded.server_url, synced_settings.server_url),
              server_username = COALESCE(excluded.server_username, synced_settings.server_username),
              lrclib_url = COALESCE(excluded.lrclib_url, synced_settings.lrclib_url),
              lyrics_fetch_online = COALESCE(excluded.lyrics_fetch_online, synced_settings.lyrics_fetch_online),
              stream_format = COALESCE(excluded.stream_format, synced_settings.stream_format),
+             share_domain = COALESCE(excluded.share_domain, synced_settings.share_domain),
+             share_hosts = COALESCE(excluded.share_hosts, synced_settings.share_hosts),
+             share_enabled = COALESCE(excluded.share_enabled, synced_settings.share_enabled),
              updated_at = excluded.updated_at",
-            params![user_id, server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format, now],
+            params![
+                user_id,
+                server_url,
+                server_username,
+                lrclib_url,
+                lyrics_fetch_online,
+                stream_format,
+                share.domain,
+                share.hosts,
+                share.enabled,
+                now
+            ],
         )?;
         Ok(())
     }
@@ -721,7 +736,8 @@ impl Db {
     pub fn get_synced_settings(&self, user_id: &str) -> Result<Option<SyncedSettingsRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format, updated_at
+            "SELECT server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format,
+                    share_domain, share_hosts, share_enabled, updated_at
              FROM synced_settings WHERE user_id = ?1"
         )?;
         let mut rows = stmt.query(params![user_id])?;
@@ -732,12 +748,50 @@ impl Db {
                 lrclib_url: row.get(2)?,
                 lyrics_fetch_online: row.get(3)?,
                 stream_format: row.get(4)?,
-                updated_at: row.get(5)?,
+                share_domain: row.get(5)?,
+                share_hosts: row.get(6)?,
+                share_enabled: row.get(7)?,
+                updated_at: row.get(8)?,
             }))
         } else {
             Ok(None)
         }
     }
+
+    /// Every host any account on this server has allowed, for the public `/listen` route.
+    ///
+    /// That route has no user in context — a shared link is opened by a stranger, with no token —
+    /// so the allowlist it enforces is the union of what the accounts here have set. Only rows
+    /// with forwarding actually switched on contribute to it.
+    pub fn allowed_share_hosts(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT share_hosts FROM synced_settings
+             WHERE share_enabled = 1 AND share_hosts IS NOT NULL",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut hosts: Vec<String> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            hosts.extend(
+                raw.split(',')
+                    .map(|host| host.trim().to_lowercase())
+                    .filter(|host| !host.is_empty()),
+            );
+        }
+        hosts.sort();
+        hosts.dedup();
+        Ok(hosts)
+    }
+}
+
+/// The share-link fields of a settings upsert, grouped so the function keeps a readable signature
+/// rather than taking nine positional `Option`s in a row.
+#[derive(Default, Clone, Copy)]
+pub struct ShareSettingsInput<'a> {
+    pub domain: Option<&'a str>,
+    pub hosts: Option<&'a str>,
+    pub enabled: Option<bool>,
 }
 
 pub struct NodeRecord {
@@ -757,6 +811,11 @@ pub struct SyncedSettingsRecord {
     pub lrclib_url: Option<String>,
     pub lyrics_fetch_online: Option<bool>,
     pub stream_format: Option<String>,
+    /// The domain the players send share links out on, e.g. `frwd.top`.
+    pub share_domain: Option<String>,
+    /// Comma-separated hosts `/listen` may forward to.
+    pub share_hosts: Option<String>,
+    pub share_enabled: Option<bool>,
     pub updated_at: String,
 }
 
