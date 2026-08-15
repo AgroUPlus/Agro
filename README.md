@@ -151,6 +151,33 @@ device_id = "wander-desktop"
 sync_settings = true
 ```
 
+## Share links on your own domain
+
+Optional, and off until asked for. With it on, Wanda and Wander stop sharing their backends' own
+links — a Navidrome URL only you can reach, a YouTube link useless to someone who does not use it —
+and send out `https://your-domain/listen?v=<id>` instead. This server forwards whoever opens one to
+where the track actually is.
+
+Set it up in the dashboard, under **Share Links**:
+
+1. **Share Domain** — the domain you own, e.g. `frwd.top`. Point its DNS at this server (an `A`
+   record to this host, or a `CNAME` if it sits behind the same proxy) and make sure the proxy
+   serves `/listen` from here.
+2. **Forward To** — your music server's host, comma separated for more than one. YouTube's hosts
+   are always allowed. Everything else is refused: a forwarder that will send a visitor to any
+   address handed to it is an open redirect wearing your domain, so the list is the whole point.
+3. **On**, then **Sync to Devices**. Every paired player picks the domain up on its next
+   foreground — nothing to type into each one.
+
+Turning it **Off** puts the players back to their backends' own links immediately.
+
+Both players also have a local field for this (Wanda: *Settings → Sharing*; Wander: `[share]` in
+`config.toml`), used when no server publishes one. Sharing never depends on Agro being present,
+paired or reachable — this only saves configuring it twice.
+
+`/listen` is public, like `/share/{token}`: a shared link is opened by someone with no account
+here. It records nothing — no log line, no counter, no cookie.
+
 ## Authentication
 
 Every `/graphql` and `/ws/sync` request needs `Authorization: Bearer <passphrase or app password>`.
