@@ -83,6 +83,27 @@ impl Storage {
     pub fn spool_file(&self, content_hash: &str) -> PathBuf {
         self.spool_root.join(format!("{content_hash}.bin"))
     }
+
+    /// Where album artwork lives.
+    ///
+    /// Under the library root when there is one, so covers travel with the music they belong to
+    /// and a backup of the library is a backup of them. Index-only servers still want artwork for
+    /// the dashboard, so they fall back to the spool — which is disposable, and covers being
+    /// disposable is fine: they can always be extracted from the files again.
+    ///
+    /// Dot-prefixed so a media scanner pointed at the same tree ignores it.
+    pub fn covers_root(&self) -> PathBuf {
+        self.library_root
+            .clone()
+            .unwrap_or_else(|| self.spool_root.clone())
+            .join(".covers")
+    }
+
+    /// A cover's path. `album_key` is a hex hash and `extension` comes from a fixed set, so
+    /// neither can contain a path separator — nothing off a tag reaches this.
+    pub fn cover_file(&self, album_key: &str, extension: &str) -> PathBuf {
+        self.covers_root().join(format!("{album_key}.{extension}"))
+    }
 }
 
 /// The tags a file's shelf position is derived from.

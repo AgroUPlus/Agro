@@ -43,6 +43,44 @@ pub struct UploadSession {
     pub extension: Option<String>,
 }
 
+/// What a browse request is listing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowseKind {
+    Artist,
+    Album,
+    Track,
+}
+
+/// One tile in the library view.
+#[derive(Debug, Clone)]
+pub struct BrowseItem {
+    /// Stable within its kind: a content hash for a track, `artist\x01album` for an album, the
+    /// artist name for an artist.
+    pub id: String,
+    pub title: String,
+    pub subtitle: String,
+    /// The key to fetch artwork with, when this item can have any. See [`album_key`].
+    pub cover_key: Option<String>,
+    pub track_count: i64,
+    /// False when the selected device is missing this — the whole reason for the view.
+    pub present_on_device: bool,
+}
+
+/// A path-safe, stable identifier for an album's artwork.
+///
+/// A hash rather than the names themselves: album and artist tags contain slashes, dots, null
+/// bytes and every other thing that has no business reaching a filename, and this value *is* the
+/// filename under the covers directory. Case- and whitespace-folded so two spellings of the same
+/// album share one cover instead of storing it twice.
+pub fn album_key(album_artist: &str, album: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(album_artist.trim().to_lowercase().as_bytes());
+    hasher.update([0x01]);
+    hasher.update(album.trim().to_lowercase().as_bytes());
+    hex::encode(hasher.finalize())[..32].to_string()
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LibraryStats {
     pub track_count: i64,
@@ -279,6 +317,193 @@ impl Db {
             total_bytes,
             spool_bytes,
         })
+    }
+
+    // ── Browsing ────────────────────────────────────────────────────────────────────────────
+
+    /// The account's library as something you can look at, one page at a time.
+    ///
+    /// The scope is "every file any of this account's devices has reported, plus everything the
+    /// server itself holds" — the same definition [`Self::library_stats`] counts, so the totals in
+    /// the header and the rows underneath cannot disagree.
+    ///
+    /// `present_on_device` is the point of the whole thing: it is what greys a row out. It answers
+    /// *exactly* — this device reported this content hash — rather than fuzzily. The fuzzy matcher
+    /// in [`crate::norm`] exists for deciding what to *offer* a device, where a different rip of
+    /// the same recording counts as already having it; for "is this file here", that would report a
+    /// library as complete when the files are not the ones listed.
+    pub fn library_browse(
+        &self,
+        user_id: &str,
+        device_id: Option<&str>,
+        kind: BrowseKind,
+        search: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<BrowseItem>> {
+        let conn = self.conn.lock().unwrap();
+
+        // The scope and the search, written once because all three kinds need the same ones and
+        // three copies of them would drift.
+        let scope = "FROM library_tracks t
+             WHERE (EXISTS (SELECT 1 FROM device_holdings h
+                            WHERE h.content_hash = t.content_hash AND h.user_id = :user)
+                    OR t.archived_path IS NOT NULL)
+               -- ESCAPE is not optional: SQLite has no default escape character, so without it
+               -- the backslashes the search term is escaped with are matched literally and a
+               -- search containing % or _ finds nothing at all.
+               AND (:search IS NULL
+                    OR t.title LIKE :like ESCAPE '\\'
+                    OR t.artist LIKE :like ESCAPE '\\'
+                    OR COALESCE(t.album, '') LIKE :like ESCAPE '\\'
+                    OR COALESCE(t.album_artist, '') LIKE :like ESCAPE '\\')";
+
+        // Present when *this* device holds it. With no device selected nothing is greyed out, so
+        // the expression is a constant rather than a join that would always be false.
+        let present = match device_id {
+            Some(_) => {
+                "EXISTS (SELECT 1 FROM device_holdings h
+                         WHERE h.content_hash = t.content_hash AND h.device_id = :device)"
+            }
+            None => "1",
+        };
+
+        let sql = match kind {
+            BrowseKind::Track => format!(
+                "SELECT t.content_hash,
+                        t.title,
+                        COALESCE(t.album_artist, t.artist),
+                        t.album,
+                        1,
+                        MIN({present})
+                 {scope}
+                 GROUP BY t.content_hash
+                 ORDER BY COALESCE(t.album_artist, t.artist), t.album, t.track_no, t.title
+                 LIMIT :limit OFFSET :offset"
+            ),
+            BrowseKind::Album => format!(
+                "SELECT COALESCE(t.album_artist, t.artist) || char(1) || COALESCE(t.album, ''),
+                        COALESCE(t.album, 'Unknown Album'),
+                        COALESCE(t.album_artist, t.artist),
+                        t.album,
+                        COUNT(*),
+                        MIN({present})
+                 {scope}
+                 GROUP BY COALESCE(t.album_artist, t.artist), COALESCE(t.album, '')
+                 ORDER BY COALESCE(t.album_artist, t.artist), COALESCE(t.album, '')
+                 LIMIT :limit OFFSET :offset"
+            ),
+            BrowseKind::Artist => format!(
+                "SELECT COALESCE(t.album_artist, t.artist),
+                        COALESCE(t.album_artist, t.artist),
+                        COALESCE(t.album_artist, t.artist),
+                        NULL,
+                        COUNT(*),
+                        MIN({present})
+                 {scope}
+                 GROUP BY COALESCE(t.album_artist, t.artist)
+                 ORDER BY COALESCE(t.album_artist, t.artist)
+                 LIMIT :limit OFFSET :offset"
+            ),
+        };
+
+        // `%` and `_` are wildcards in LIKE, so a search for "50%" would otherwise match anything.
+        let like = search.map(|term| {
+            format!(
+                "%{}%",
+                term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+            )
+        });
+        // Built rather than declared, because `:device` only appears in the statement when a
+        // device was selected — rusqlite rejects a bound name the SQL does not mention, so binding
+        // it unconditionally made every all-devices query fail outright.
+        let mut params: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
+            (":user", &user_id),
+            (":search", &search),
+            (":like", &like),
+            (":limit", &limit),
+            (":offset", &offset),
+        ];
+        if let Some(device) = device_id.as_ref() {
+            params.push((":device", device));
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+
+        let mut items = Vec::new();
+        while let Some(row) = rows.next()? {
+            let album_artist: String = row.get(2)?;
+            let album: Option<String> = row.get(3)?;
+            items.push(BrowseItem {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                subtitle: album_artist.clone(),
+                // Only albums and their tracks have a cover to point at; an artist row has no one
+                // album to borrow one from.
+                cover_key: album
+                    .as_deref()
+                    .filter(|_| kind != BrowseKind::Artist)
+                    .map(|name| album_key(&album_artist, name)),
+                track_count: row.get(4)?,
+                // `MIN` over the group: an album counts as present only when every one of its
+                // tracks is. A half-copied album shown as complete is the one answer this view must
+                // never give.
+                present_on_device: row.get::<_, i64>(5)? != 0,
+            });
+        }
+        Ok(items)
+    }
+
+    // ── Cover art ───────────────────────────────────────────────────────────────────────────
+
+    pub fn set_cover(
+        &self,
+        album_key: &str,
+        album_artist: &str,
+        album: &str,
+        extension: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO library_covers
+                 (album_key, album_artist, album, extension, updated_at)
+             VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))",
+            params![album_key, album_artist, album, extension],
+        )?;
+        Ok(())
+    }
+
+    /// The stored cover's file extension, or `None` when the album has no artwork.
+    pub fn cover_extension(&self, album_key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT extension FROM library_covers WHERE album_key = ?1",
+            params![album_key],
+            |row| row.get(0),
+        )
+        .optional()
+    }
+
+    pub fn has_cover(&self, album_key: &str) -> bool {
+        matches!(self.cover_extension(album_key), Ok(Some(_)))
+    }
+
+    /// One archived file per album, for the backfill pass to read artwork out of.
+    pub fn albums_for_cover_backfill(&self) -> Result<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(t.album_artist, t.artist), t.album, MIN(t.archived_path)
+             FROM library_tracks t
+             WHERE t.archived_path IS NOT NULL AND COALESCE(t.album, '') != ''
+             GROUP BY COALESCE(t.album_artist, t.artist), t.album",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((row.get(0)?, row.get(1)?, row.get(2)?));
+        }
+        Ok(out)
     }
 
     // ── Upload sessions ─────────────────────────────────────────────────────────────────────
@@ -540,6 +765,60 @@ mod tests {
                 .unwrap();
         }
         db
+    }
+
+    #[test]
+    fn browsing_without_a_device_lists_everything_as_present() {
+        // Regression: the "all devices" query does not mention `:device`, and binding it anyway
+        // made rusqlite reject the statement — so the default view of the library, the one you get
+        // before choosing anything, was the one that could not run.
+        let db = db_with(&[(track("h1", "Nirvana", "Come As You Are", 219_000), "laptop")]);
+        let items = db
+            .library_browse("alpha", None, BrowseKind::Album, None, 50, 0)
+            .expect("a browse with no device selected must work");
+        assert_eq!(items.len(), 1);
+        assert!(items[0].present_on_device, "nothing to be missing from");
+        assert!(items[0].cover_key.is_some(), "an album can carry artwork");
+    }
+
+    #[test]
+    fn browsing_greys_out_what_the_chosen_device_lacks() {
+        let db = db_with(&[
+            (track("h1", "Nirvana", "Come As You Are", 219_000), "laptop"),
+            (track("h2", "Pixies", "Debaser", 172_000), "phone"),
+        ]);
+        let items = db
+            .library_browse("alpha", Some("phone"), BrowseKind::Track, None, 50, 0)
+            .unwrap();
+        let missing: Vec<&str> = items
+            .iter()
+            .filter(|item| !item.present_on_device)
+            .map(|item| item.title.as_str())
+            .collect();
+        assert_eq!(missing, vec!["Come As You Are"], "only the laptop has that one");
+    }
+
+    #[test]
+    fn browsing_by_artist_has_no_cover_to_point_at() {
+        let db = db_with(&[(track("h1", "Nirvana", "Come As You Are", 219_000), "laptop")]);
+        let items = db
+            .library_browse("alpha", None, BrowseKind::Artist, None, 50, 0)
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].cover_key.is_none(), "an artist has no one album to borrow art from");
+    }
+
+    #[test]
+    fn browse_search_treats_wildcards_as_literal_text() {
+        let db = db_with(&[
+            (track("h1", "Nirvana", "Come As You Are", 219_000), "laptop"),
+            (track("h2", "Artist", "100% Real", 100_000), "laptop"),
+        ]);
+        let items = db
+            .library_browse("alpha", None, BrowseKind::Track, Some("%"), 50, 0)
+            .unwrap();
+        assert_eq!(items.len(), 1, "`%` must match the track with a percent sign, not everything");
+        assert_eq!(items[0].title, "100% Real");
     }
 
     #[test]

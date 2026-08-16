@@ -9,6 +9,8 @@ pub async fn share_handler(
     State(state): State<AppState>,
 ) -> Html<String> {
     if let Ok(Some(share)) = state.db.get_ephemeral_share(&token) {
+        // Aggregate only, as with short links: a count, never a visitor.
+        state.db.record_share_click(&token);
         let html = format!(
             r#"<!DOCTYPE html>
 <html lang="en">

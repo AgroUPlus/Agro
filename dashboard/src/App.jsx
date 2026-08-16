@@ -5,8 +5,11 @@ import {
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
   User, Users, ChevronDown, Plus, Library, HardDrive, Trash2,
-  Music, Database, Activity, ShieldCheck
+  Music, Database, Activity, ShieldCheck, Link2, BarChart3
 } from 'lucide-react';
+import LinksTab from './tabs/LinksTab.jsx';
+import LibraryBrowser from './tabs/LibraryBrowser.jsx';
+import StatsTab from './tabs/StatsTab.jsx';
 
 /** Bytes as something readable. The library totals are the only place this is needed. */
 function formatBytes(bytes) {
@@ -72,15 +75,22 @@ export function setToken(value) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-/** POSTs a GraphQL document with the stored token. Throws on 401 so callers can prompt. */
-export async function gql(query) {
+/**
+ * POSTs a GraphQL document with the stored token. Throws on 401 so callers can prompt.
+ *
+ * `variables` is optional only because the calls that predate it interpolate the username straight
+ * into the document. New callers should pass variables instead: a link id or a username spliced
+ * into a query string is an injection waiting to happen, and it breaks outright on any value
+ * containing a quote.
+ */
+export async function gql(query, variables) {
   const res = await fetch('/graphql', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {})
     },
-    body: JSON.stringify({ query })
+    body: JSON.stringify(variables ? { query, variables } : { query })
   });
   if (res.status === 401) {
     const error = new Error('Unauthorized');
@@ -670,6 +680,20 @@ export default function App() {
               <span>Library</span>
             </button>
             <button 
+              className={`nav-pill-btn ${activeTab === 'stats' ? 'active' : ''}`}
+              onClick={() => setActiveTab('stats')}
+            >
+              <BarChart3 size={14} />
+              <span>Stats</span>
+            </button>
+            <button 
+              className={`nav-pill-btn ${activeTab === 'links' ? 'active' : ''}`}
+              onClick={() => setActiveTab('links')}
+            >
+              <Link2 size={14} />
+              <span>Links</span>
+            </button>
+            <button 
               className={`nav-pill-btn ${activeTab === 'logs' ? 'active' : ''}`}
               onClick={() => setActiveTab('logs')}
             >
@@ -678,6 +702,14 @@ export default function App() {
             </button>
           </nav>
         </header>
+
+        {activeTab === 'stats' && (
+          <StatsTab username={username} onUnauthorized={() => setLocked(true)} />
+        )}
+
+        {activeTab === 'links' && (
+          <LinksTab username={username} onUnauthorized={() => setLocked(true)} />
+        )}
 
         {/* Tab 1: Nodes & Playback State */}
         {activeTab === 'nodes' && (
@@ -1072,38 +1104,11 @@ export default function App() {
               )}
             </div>
 
-            {/* Pipeline Cards */}
-            <div className="card">
-              <div className="card-header">
-                <div className="card-title">Storage & Ingestion Architecture</div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    1. Fleet Index & Ledger
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                    Clients report content hashes without uploading files until requested, keeping sync instant and lightweight.
-                  </div>
-                </div>
-                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    2. Navidrome Vault Root
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                    Uploaded audio is automatically probed for tags and organized into <code>Artist/Album/Track</code> for Navidrome streaming.
-                  </div>
-                </div>
-                <div style={{ background: 'var(--bg-surface-elevated)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                    3. Spool FIFO Relay
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
-                    Peer uploads are staged in a quota-managed FIFO spool for peer-to-peer syncing across Wander nodes.
-                  </div>
-                </div>
-              </div>
-            </div>
+            <LibraryBrowser
+              username={username}
+              devices={nodes}
+              onUnauthorized={() => setLocked(true)}
+            />
           </div>
         )}
 

@@ -129,6 +129,56 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX IF NOT EXISTS idx_short_links_created ON short_links(created_at);
     ",
+    // 6 — click counts, so a link can be managed rather than only minted.
+    //
+    // A bare counter and a timestamp, nothing else. `/listen` deliberately records nothing about
+    // who clicked (see `listen.rs`) and that does not change here: an aggregate that cannot
+    // distinguish one visitor from another lets the owner see that a link is being used without
+    // building a log of the people using it. No IP, no user agent, no referer.
+    //
+    // `source` says where the link came from, which is what decides whether deleting it also has
+    // to reach a Navidrome server or is purely local to Agro.
+    "
+    ALTER TABLE short_links ADD COLUMN click_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE short_links ADD COLUMN last_clicked_at INTEGER;
+    ALTER TABLE short_links ADD COLUMN source TEXT;
+    ALTER TABLE ephemeral_shares ADD COLUMN click_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE ephemeral_shares ADD COLUMN last_clicked_at INTEGER;
+    ",
+    // 7 — album cover art, extracted from the files as they are archived.
+    //
+    // Only the *fact* of a cover lives here; the bytes go on disk under the library root, because
+    // a few hundred JPEGs in SQLite would bloat every backup of a database that is otherwise tiny.
+    // `album_key` is a hash of the album artist and album name (see `album_key` in `library.rs`),
+    // which is also the on-disk filename — so nothing a tag contains ever reaches a path.
+    //
+    // Agro stored no artwork at all before this. The library was a list of hashes and strings,
+    // which is enough to sync files and nothing like enough to *look* at a library.
+    "
+    CREATE TABLE IF NOT EXISTS library_covers (
+        album_key    TEXT PRIMARY KEY,
+        album_artist TEXT,
+        album        TEXT,
+        extension    TEXT NOT NULL,
+        updated_at   INTEGER NOT NULL
+    );
+    ",
+    // 8 — listening history that is actually written to.
+    //
+    // The `scrobbles` table has existed since the first schema and nothing ever inserted into it:
+    // there was a writer function with no callers and a `agroRewind` resolver returning invented
+    // Daft Punk figures. Clients now post their play history here, which is what makes one set of
+    // statistics across every device possible at all.
+    //
+    // `client_type` distinguishes phone from desktop for per-device breakdowns. The unique index is
+    // what makes ingest idempotent: a client's outbox retries after a failed upload, and without it
+    // a flaky connection inflates every number it touches.
+    "
+    ALTER TABLE scrobbles ADD COLUMN client_type TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scrobbles_unique
+        ON scrobbles(user_id, artist_name, track_title, played_at);
+    CREATE INDEX IF NOT EXISTS idx_scrobbles_user_time ON scrobbles(user_id, played_at);
+    ",
 ];
 
 #[derive(Clone)]
@@ -588,6 +638,85 @@ impl Db {
         Ok(())
     }
 
+    /// Ingests a batch of plays from one device.
+    ///
+    /// `INSERT OR IGNORE` against the unique index from migration 8, so a client re-sending an
+    /// outbox it was not sure landed does not double every play in it. Returns how many rows were
+    /// genuinely new, which is what lets a client tell "already had it" from "did not work".
+    pub fn record_scrobbles(
+        &self,
+        user_id: &str,
+        device_name: &str,
+        client_type: Option<&str>,
+        entries: &[ScrobbleEntry],
+    ) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let mut inserted = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO scrobbles
+                     (user_id, track_title, artist_name, album_name, genre, duration_secs,
+                      device_name, played_at, client_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for entry in entries {
+                inserted += stmt.execute(params![
+                    user_id,
+                    entry.track_title,
+                    entry.artist_name,
+                    entry.album_name,
+                    entry.genre,
+                    entry.duration_secs,
+                    device_name,
+                    entry.played_at,
+                    client_type,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(inserted)
+    }
+
+    /// Raw plays for an account, newest last.
+    ///
+    /// Deliberately returns rows rather than aggregates. The desktop client already computes a
+    /// specific set of statistics from a local history file, and the numbers here have to agree
+    /// with those exactly or switching a device between local and centralised stats looks like data
+    /// loss. Sharing the *shape* of the computation is how that is guaranteed, so the aggregation
+    /// lives in one place (`stats.rs`) rather than being re-expressed in SQL.
+    pub fn scrobble_rows(
+        &self,
+        user_id: &str,
+        device_name: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<Vec<ScrobbleRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT track_title, artist_name, album_name, genre, duration_secs, device_name,
+                    played_at
+             FROM scrobbles
+             WHERE user_id = ?1
+               AND (?2 IS NULL OR device_name = ?2)
+               AND (?3 IS NULL OR played_at >= ?3)
+             ORDER BY played_at",
+        )?;
+        let mut rows = stmt.query(params![user_id, device_name, since])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(ScrobbleRow {
+                track_title: row.get(0)?,
+                artist_name: row.get(1)?,
+                album_name: row.get(2)?,
+                genre: row.get(3)?,
+                duration_secs: row.get(4)?,
+                device_name: row.get(5)?,
+                played_at: row.get(6)?,
+            });
+        }
+        Ok(out)
+    }
+
     pub fn create_ephemeral_share(
         &self,
         user_id: &str,
@@ -805,30 +934,220 @@ impl Db {
     }
 
     /// Stores a short link UID mapping to a target URL.
-    pub fn create_short_link(&self, id: &str, target_url: &str, user_id: Option<&str>) -> Result<()> {
+    ///
+    /// `source` names where the link came from — `"navidrome"` for a share the music server itself
+    /// minted, anything else (or nothing) for a link that exists only here. Deletion reads it to
+    /// decide whether removing the row is the whole job.
+    pub fn create_short_link(
+        &self,
+        id: &str,
+        target_url: &str,
+        user_id: Option<&str>,
+        source: Option<&str>,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
         conn.execute(
-            "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![id, target_url, user_id, now],
+            "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at, source)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, target_url, user_id, unix_now(), source],
         )?;
         Ok(())
     }
 
     /// Retrieves the target URL for a short link UID.
+    ///
+    /// Expiry is enforced here. It was not, so a link given a deliberate lifetime kept forwarding
+    /// for ever — the column was written and then never read.
     pub fn get_short_link(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT target_url FROM short_links WHERE id = ?1")?;
-        let mut rows = stmt.query(params![id])?;
+        let mut stmt = conn.prepare(
+            "SELECT target_url FROM short_links
+             WHERE id = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+        )?;
+        let mut rows = stmt.query(params![id, unix_now()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row.get(0)?))
         } else {
             Ok(None)
         }
     }
+
+    /// Bumps a short link's hit counter. Aggregate only — see migration 6.
+    pub fn record_short_link_click(&self, id: &str) {
+        let conn = self.conn.lock().unwrap();
+        // A counter is never worth failing a redirect over: the visitor gets their page either way.
+        let _ = conn.execute(
+            "UPDATE short_links SET click_count = click_count + 1, last_clicked_at = ?2
+             WHERE id = ?1",
+            params![id, unix_now()],
+        );
+    }
+
+    /// Bumps an ephemeral share's hit counter. Aggregate only — see migration 6.
+    pub fn record_share_click(&self, token: &str) {
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE ephemeral_shares SET click_count = click_count + 1, last_clicked_at = ?2
+             WHERE token = ?1",
+            params![token, unix_now()],
+        );
+    }
+
+    /// Every link this account has minted, newest first, across both link mechanisms.
+    ///
+    /// The two tables have almost nothing in common — one holds a hosted audio URL with an RFC3339
+    /// expiry, the other a forwarding target with a Unix one — so they are normalised here rather
+    /// than in the resolver, which should not have to know that "a link" is two different things.
+    pub fn list_links(&self, user_id: &str) -> Result<Vec<LinkRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut links = Vec::new();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, target_url, created_at, expires_at, click_count, last_clicked_at, source
+             FROM short_links WHERE user_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let mut rows = stmt.query(params![user_id])?;
+        while let Some(row) = rows.next()? {
+            links.push(LinkRow {
+                id: row.get(0)?,
+                kind: LinkKind::Short,
+                target: row.get(1)?,
+                label: None,
+                created_at: row.get(2)?,
+                expires_at: row.get(3)?,
+                click_count: row.get(4)?,
+                last_clicked_at: row.get(5)?,
+                source: row.get(6)?,
+            });
+        }
+
+        let mut stmt = conn.prepare(
+            "SELECT token, audio_url, track_title, artist_name, expires_at, click_count,
+                    last_clicked_at
+             FROM ephemeral_shares WHERE user_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![user_id])?;
+        while let Some(row) = rows.next()? {
+            let title: String = row.get(2)?;
+            let artist: String = row.get(3)?;
+            let expires: Option<String> = row.get(4)?;
+            links.push(LinkRow {
+                id: row.get(0)?,
+                kind: LinkKind::Ephemeral,
+                target: row.get(1)?,
+                label: Some(format!("{artist} — {title}")),
+                // Ephemeral shares carry no creation timestamp, only an expiry. Deriving the one
+                // from the other would be a guess at the TTL, so the field stays honest and empty.
+                created_at: None,
+                expires_at: expires.as_deref().and_then(rfc3339_to_unix),
+                click_count: row.get(5)?,
+                last_clicked_at: row.get(6)?,
+                source: None,
+            });
+        }
+
+        links.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(links)
+    }
+
+    /// Deletes a link. Returns the row's `source` so the caller can decide what else has to happen.
+    ///
+    /// Scoped by `user_id` in the statement itself rather than checked first: a link belonging to
+    /// somebody else must not be deletable, and a check-then-delete leaves a window where it is.
+    pub fn delete_link(&self, user_id: &str, id: &str, kind: LinkKind) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        match kind {
+            LinkKind::Short => {
+                let source: Option<String> = conn
+                    .query_row(
+                        "SELECT source FROM short_links WHERE id = ?1 AND user_id = ?2",
+                        params![id, user_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?
+                    .flatten();
+                let removed = conn.execute(
+                    "DELETE FROM short_links WHERE id = ?1 AND user_id = ?2",
+                    params![id, user_id],
+                )?;
+                if removed == 0 {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                Ok(source)
+            }
+            LinkKind::Ephemeral => {
+                let removed = conn.execute(
+                    "DELETE FROM ephemeral_shares WHERE token = ?1 AND user_id = ?2",
+                    params![id, user_id],
+                )?;
+                if removed == 0 {
+                    return Err(rusqlite::Error::QueryReturnedNoRows);
+                }
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// One play, as a client reports it.
+///
+/// `played_at` is RFC3339 and comes from the client, not from this server: a phone that was offline
+/// for a day is reporting yesterday's listening, and stamping it on arrival would pile a week of
+/// history onto one afternoon.
+pub struct ScrobbleEntry {
+    pub track_title: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub genre: Option<String>,
+    pub duration_secs: i64,
+    pub played_at: String,
+}
+
+/// One play, as stored.
+pub struct ScrobbleRow {
+    pub track_title: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub genre: Option<String>,
+    pub duration_secs: i64,
+    pub device_name: String,
+    pub played_at: String,
+}
+
+/// Which of the two link mechanisms a row belongs to. See [`Db::list_links`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LinkKind {
+    /// `/listen?id=…` — forwards to a target URL on an allowed host.
+    Short,
+    /// `/share/<token>` — a hosted audio page with a hard expiry.
+    Ephemeral,
+}
+
+/// One link, normalised across both tables.
+pub struct LinkRow {
+    pub id: String,
+    pub kind: LinkKind,
+    pub target: String,
+    /// What the link is *of*, when the row knows. Only ephemeral shares carry track metadata.
+    pub label: Option<String>,
+    pub created_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub click_count: i64,
+    pub last_clicked_at: Option<i64>,
+    pub source: Option<String>,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn rfc3339_to_unix(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 /// The share-link fields of a settings upsert, grouped so the function keeps a readable signature

@@ -11,6 +11,7 @@ mod passphrase;
 mod plugins;
 mod schema;
 mod share;
+mod stats;
 mod storage;
 mod ws;
 
@@ -60,6 +61,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         offers: offers::OfferBatcher::spawn(db.clone(), ws_hub.clone()),
     };
 
+    // A one-shot pass rather than something that runs at every boot: cover extraction only happens
+    // as files are archived, so a library that predates the feature has none. Run once after
+    // upgrading and the dashboard has artwork.
+    if std::env::args().any(|arg| arg == "reindex-covers") {
+        let found = library::reindex_covers(&state).await;
+        println!("🖼  Extracted {found} album covers");
+        return Ok(());
+    }
+
     let schema: AgroSchema = Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
         .data(db.clone())
         .data(ws_hub.clone())
@@ -81,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/library/upload", post(library::begin_upload))
         .route("/api/v1/library/upload/{upload_id}", put(library::put_upload))
         .route("/api/v1/library/fetch/{content_hash}", get(library::fetch))
+        .route("/api/v1/cover/{album_key}", get(library::cover))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,

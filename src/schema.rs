@@ -1,6 +1,7 @@
 use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject};
 use crate::auth::AuthedUser;
-use crate::db::Db;
+use crate::db::{Db, LinkKind};
+use crate::db_library::BrowseKind;
 use crate::passphrase::generate_passphrase;
 use crate::plugins::AgroPlugin;
 use crate::ws::WsHub;
@@ -171,6 +172,108 @@ pub struct SharePayload {
     pub artist_name: String,
 }
 
+/// One link this account has minted, whichever of the two mechanisms produced it.
+#[derive(SimpleObject, Clone)]
+pub struct ShareLink {
+    pub id: String,
+    /// `SHORT` for `/listen?id=…`, `EPHEMERAL` for a hosted `/share/<token>` page.
+    pub kind: String,
+    /// Where the link goes: the forwarding target, or the hosted audio URL.
+    pub target: String,
+    /// The full address to hand out.
+    pub url: String,
+    /// What the link is of, when the row knows. Only ephemeral shares carry track metadata.
+    pub label: Option<String>,
+    pub created_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    /// How many times it has been opened. An aggregate and nothing else — see migration 6.
+    pub click_count: i64,
+    pub last_clicked_at: Option<i64>,
+    /// Which backend minted the underlying share, when known. `"navidrome"` matters at deletion.
+    pub source: Option<String>,
+}
+
+/// A named total: an artist, an album, a genre, a device.
+#[derive(SimpleObject, Clone)]
+pub struct StatEntry {
+    pub name: String,
+    /// Plays for the top-N lists; seconds for the per-device breakdown.
+    pub value: i64,
+}
+
+/// Listening statistics for one account, across every device that reports to it.
+#[derive(SimpleObject, Clone)]
+pub struct ListeningStats {
+    /// The last 24 hours, not since midnight — there is no one timezone across a fleet.
+    pub secs_today: i64,
+    pub secs_week: i64,
+    pub secs_total: i64,
+    pub plays_total: i64,
+    pub streak: i64,
+    pub top_artists: Vec<StatEntry>,
+    pub top_albums: Vec<StatEntry>,
+    pub top_tracks: Vec<StatEntry>,
+    pub top_genres: Vec<StatEntry>,
+    /// Seconds per day for the last fourteen days, oldest first.
+    pub by_day: Vec<i64>,
+    /// Seconds per day for the last eight weeks, oldest first.
+    pub heatmap: Vec<i64>,
+    /// Seconds per hour of the day, UTC, index 0 = midnight.
+    pub by_hour: Vec<i64>,
+    /// Seconds per device, most-listened first.
+    pub by_device: Vec<StatEntry>,
+}
+
+/// One play a client is reporting.
+#[derive(InputObject)]
+pub struct ScrobbleInput {
+    pub track_title: String,
+    pub artist_name: String,
+    pub album_name: Option<String>,
+    pub genre: Option<String>,
+    pub duration_secs: i64,
+    /// RFC3339, from the device. A phone that was offline is reporting yesterday's listening, and
+    /// stamping it on arrival would pile a week of history onto one afternoon.
+    pub played_at: String,
+}
+
+/// One tile in the library view.
+#[derive(SimpleObject, Clone)]
+pub struct LibraryItem {
+    pub id: String,
+    pub title: String,
+    pub subtitle: String,
+    /// Fetch artwork from `/api/v1/cover/{coverKey}`. Null for artists, and for albums with none.
+    pub cover_key: Option<String>,
+    pub track_count: i64,
+    /// False when the selected device is missing this. Null-ish only in the sense that with no
+    /// device selected everything reports true — there is nothing to be missing from.
+    pub present_on_device: bool,
+}
+
+/// What `libraryBrowse` is listing.
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+pub enum LibraryBrowseKind {
+    Artist,
+    Album,
+    Track,
+}
+
+/// The outcome of deleting a link.
+#[derive(SimpleObject, Clone)]
+pub struct DeleteLinkPayload {
+    pub deleted: bool,
+    /// True when the link pointed at a Navidrome share that Agro cannot revoke on the user's
+    /// behalf.
+    ///
+    /// Agro holds a Navidrome address and username but deliberately never the password — see the
+    /// encrypted fields on `synced_settings`, and the "the password stays on each device" rule the
+    /// clients are built around. Revoking a share needs that password, so the honest answer is to
+    /// remove Agro's own record and say plainly that the share still exists on the music server,
+    /// rather than to start storing a credential the whole design avoids.
+    pub navidrome_cleanup_required: bool,
+}
+
 #[derive(SimpleObject, Clone)]
 pub struct DuplicateCluster {
     pub group_id: String,
@@ -290,6 +393,88 @@ impl QueryRoot {
         let db = ctx.data::<Db>()?;
         let target = db.get_short_link(&id)?;
         Ok(target)
+    }
+
+    /// The account's library, page by page, for looking at rather than syncing.
+    ///
+    /// `deviceId` picks whose shelf is being compared against: every item comes back with
+    /// `presentOnDevice`, which is what lets the view grey out what that device is missing. Omit it
+    /// and everything reads as present, because there is nothing to be missing from.
+    async fn library_browse(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        kind: LibraryBrowseKind,
+        device_id: Option<String>,
+        search: Option<String>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> async_graphql::Result<Vec<LibraryItem>> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let kind = match kind {
+            LibraryBrowseKind::Artist => BrowseKind::Artist,
+            LibraryBrowseKind::Album => BrowseKind::Album,
+            LibraryBrowseKind::Track => BrowseKind::Track,
+        };
+        // Capped rather than trusted: a page size is a hint from a caller, and an uncapped one is
+        // a request to load somebody's whole library into memory.
+        let limit = limit.unwrap_or(120).clamp(1, 500);
+        let offset = offset.unwrap_or(0).max(0);
+        let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+        Ok(db
+            .library_browse(
+                &user_id,
+                device_id.as_deref().filter(|d| !d.is_empty()),
+                kind,
+                search.as_deref(),
+                limit,
+                offset,
+            )?
+            .into_iter()
+            .map(|item| LibraryItem {
+                id: item.id,
+                title: item.title,
+                subtitle: item.subtitle,
+                cover_key: item.cover_key,
+                track_count: item.track_count,
+                present_on_device: item.present_on_device,
+            })
+            .collect())
+    }
+
+    /// Every link this account has minted, newest first.
+    ///
+    /// Both mechanisms in one list: the user made "a link", and which table it landed in is an
+    /// implementation detail they should not have to know to find it again.
+    async fn links(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<ShareLink>> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let base = public_url();
+        let base = base.trim_end_matches('/');
+        Ok(db
+            .list_links(&user_id)?
+            .into_iter()
+            .map(|row| ShareLink {
+                url: match row.kind {
+                    LinkKind::Short => format!("{base}/listen?id={}", row.id),
+                    LinkKind::Ephemeral => format!("{base}/share/{}", row.id),
+                },
+                kind: match row.kind {
+                    LinkKind::Short => "SHORT".to_string(),
+                    LinkKind::Ephemeral => "EPHEMERAL".to_string(),
+                },
+                id: row.id,
+                target: row.target,
+                label: row.label,
+                created_at: row.created_at,
+                expires_at: row.expires_at,
+                click_count: row.click_count,
+                last_clicked_at: row.last_clicked_at,
+                source: row.source,
+            })
+            .collect())
     }
 
     async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<String>> {
@@ -424,23 +609,63 @@ impl QueryRoot {
         Ok(res)
     }
 
-    async fn agro_rewind(&self, _ctx: &Context<'_>, period: String) -> async_graphql::Result<RewindReport> {
+    /// The account's listening, aggregated across every device that reports to it.
+    ///
+    /// `period` is DAY, WEEK, MONTH, YEAR or ALL. `deviceName` narrows it to one device's plays,
+    /// which is how a client answers "what did *I* listen to" while still holding the fleet total.
+    async fn listening_stats(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        period: Option<String>,
+        device_name: Option<String>,
+    ) -> async_graphql::Result<ListeningStats> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let now = chrono::Utc::now().timestamp();
+        let since = crate::stats::period_start(period.as_deref().unwrap_or("ALL"), now);
+
+        let rows = db.scrobble_rows(
+            &user_id,
+            device_name.as_deref().filter(|d| !d.is_empty()),
+            since.as_deref(),
+        )?;
+        Ok(to_listening_stats(crate::stats::compute(&rows, 10, now)))
+    }
+
+    /// The year-in-review summary, over the same data as `listeningStats`.
+    ///
+    /// This returned hardcoded sample figures — a fixed 4280 minutes of Daft Punk — for as long as
+    /// it existed, because nothing wrote to the `scrobbles` table for it to read. It now reports
+    /// what actually happened.
+    async fn agro_rewind(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        period: String,
+    ) -> async_graphql::Result<RewindReport> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let now = chrono::Utc::now().timestamp();
+        let since = crate::stats::period_start(&period, now);
+        let rows = db.scrobble_rows(&user_id, None, since.as_deref())?;
+        let stats = crate::stats::compute(&rows, 5, now);
+
+        let peak_hour = stats
+            .by_hour
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, secs)| **secs)
+            .map(|(hour, _)| hour as i32)
+            .unwrap_or(0);
+
         Ok(RewindReport {
             period,
-            total_listen_time_minutes: 4280,
-            total_tracks_played: 1142,
-            top_artists: vec![
-                TopStatItem { name: "Daft Punk".to_string(), count: 320, percentage: 28.0 },
-                TopStatItem { name: "M83".to_string(), count: 210, percentage: 18.4 },
-                TopStatItem { name: "HOME".to_string(), count: 185, percentage: 16.2 },
-                TopStatItem { name: "Gorillaz".to_string(), count: 140, percentage: 12.3 },
-            ],
-            top_genres: vec![
-                TopStatItem { name: "Synthwave".to_string(), count: 450, percentage: 39.4 },
-                TopStatItem { name: "French House".to_string(), count: 380, percentage: 33.2 },
-                TopStatItem { name: "Indie Electronic".to_string(), count: 210, percentage: 18.4 },
-            ],
-            peak_hour: 22,
+            total_listen_time_minutes: stats.secs_total / 60,
+            total_tracks_played: stats.plays_total,
+            top_artists: to_top_items(&stats.top_artists, stats.plays_total),
+            top_genres: to_top_items(&stats.top_genres, stats.plays_total),
+            peak_hour,
         })
     }
 
@@ -688,6 +913,51 @@ impl QueryRoot {
         }))
     }
 }
+
+fn to_listening_stats(stats: crate::stats::Stats) -> ListeningStats {
+    ListeningStats {
+        secs_today: stats.secs_today,
+        secs_week: stats.secs_week,
+        secs_total: stats.secs_total,
+        plays_total: stats.plays_total,
+        streak: stats.streak,
+        top_artists: to_entries(stats.top_artists),
+        top_albums: to_entries(stats.top_albums),
+        top_tracks: to_entries(stats.top_tracks),
+        top_genres: to_entries(stats.top_genres),
+        by_day: stats.by_day,
+        heatmap: stats.heatmap,
+        by_hour: stats.by_hour,
+        by_device: to_entries(stats.by_device),
+    }
+}
+
+fn to_entries(pairs: Vec<(String, i64)>) -> Vec<StatEntry> {
+    pairs
+        .into_iter()
+        .map(|(name, value)| StatEntry { name, value })
+        .collect()
+}
+
+fn to_top_items(pairs: &[(String, i64)], total: i64) -> Vec<TopStatItem> {
+    pairs
+        .iter()
+        .map(|(name, count)| TopStatItem {
+            name: name.clone(),
+            count: *count,
+            // Guarded because an account with no plays at all reaches here on first launch.
+            percentage: if total > 0 {
+                (*count as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect()
+}
+
+/// A very stale client outbox should arrive in batches rather than in one request the server has
+/// to hold in memory whole.
+const MAX_SCROBBLE_BATCH: usize = 500;
 
 /// The address clients should be told to connect to. `localhost` was hardcoded here, which made
 /// the pairing QR unusable from a phone — and the QR carried no `server` parameter at all, which
@@ -963,12 +1233,22 @@ impl MutationRoot {
     }
 
     /// Creates a short UID for a share URL. Returns the short link UID (e.g. "aB3x9Q").
+    ///
+    /// `source` records which backend minted the underlying share — `"navidrome"` when the link
+    /// points at a Navidrome share, so deleting it later can also revoke it there.
     async fn create_short_link(
         &self,
         ctx: &Context<'_>,
         user_id: Option<String>,
         target_url: String,
+        source: Option<String>,
     ) -> async_graphql::Result<String> {
+        // A link attributed to an account has to be authorised as that account. This was missing:
+        // any valid token could mint links in anyone's name, and those links then appear in that
+        // account's link manager as if they had made them.
+        if let Some(owner) = user_id.as_deref() {
+            authorize(ctx, owner)?;
+        }
         let db = ctx.data::<Db>()?;
         let target_url = target_url.trim();
         if target_url.is_empty() {
@@ -984,8 +1264,77 @@ impl MutationRoot {
             })
             .collect();
 
-        db.create_short_link(&uid, target_url, user_id.as_deref())?;
+        db.create_short_link(&uid, target_url, user_id.as_deref(), source.as_deref())?;
         Ok(uid)
+    }
+
+    /// Ingests a batch of plays from one device.
+    ///
+    /// Batched because clients hold an outbox and drain it when they next have a connection — a
+    /// phone that spent a day on aeroplane mode sends a day of listening in one request. Idempotent
+    /// on (account, artist, title, time), so a client unsure whether its last upload landed can
+    /// simply send it again. Returns how many rows were genuinely new.
+    async fn record_scrobbles(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        device_name: String,
+        client_type: Option<String>,
+        entries: Vec<ScrobbleInput>,
+    ) -> async_graphql::Result<i32> {
+        authorize(ctx, &user_id)?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        if entries.len() > MAX_SCROBBLE_BATCH {
+            return Err(format!("at most {MAX_SCROBBLE_BATCH} plays per request").into());
+        }
+
+        let rows: Vec<crate::db::ScrobbleEntry> = entries
+            .into_iter()
+            .map(|entry| crate::db::ScrobbleEntry {
+                track_title: entry.track_title,
+                artist_name: entry.artist_name,
+                album_name: entry.album_name,
+                genre: entry.genre,
+                duration_secs: entry.duration_secs.max(0),
+                played_at: entry.played_at,
+            })
+            .collect();
+
+        let db = ctx.data::<Db>()?;
+        let inserted = db.record_scrobbles(&user_id, &device_name, client_type.as_deref(), &rows)?;
+        Ok(inserted as i32)
+    }
+
+    /// Removes a link so it stops resolving.
+    ///
+    /// `kind` is the discriminator from `links` — `SHORT` or `EPHEMERAL`. Deleting is scoped to the
+    /// owning account inside the statement itself, so a link belonging to somebody else is a
+    /// not-found rather than a deletion.
+    async fn delete_link(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        id: String,
+        kind: String,
+    ) -> async_graphql::Result<DeleteLinkPayload> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let kind = match kind.to_ascii_uppercase().as_str() {
+            "SHORT" => LinkKind::Short,
+            "EPHEMERAL" => LinkKind::Ephemeral,
+            other => return Err(format!("Unknown link kind: {other}").into()),
+        };
+
+        let source = db
+            .delete_link(&user_id, &id, kind)
+            .map_err(|_| async_graphql::Error::new("No such link on this account"))?;
+
+        Ok(DeleteLinkPayload {
+            deleted: true,
+            navidrome_cleanup_required: source.as_deref() == Some("navidrome"),
+        })
     }
 
     async fn create_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<AccountPayload> {
@@ -1240,7 +1589,9 @@ impl MutationRoot {
         let db = ctx.data::<Db>()?;
         let ttl = ttl_hours.unwrap_or(24);
         let token = db.create_ephemeral_share(&user_id, &track_title, &artist_name, album_name.as_deref(), &audio_url, ttl)?;
-        let share_url = format!("http://localhost:8700/share/{}", token);
+        // Was hardcoded to localhost, which made every ephemeral share unopenable from any device
+        // but the server itself.
+        let share_url = format!("{}/share/{}", public_url().trim_end_matches('/'), token);
         let expires_at = (chrono::Utc::now() + chrono::Duration::hours(ttl)).to_rfc3339();
 
         Ok(SharePayload {

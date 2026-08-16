@@ -198,6 +198,9 @@ fn resolve(params: &ListenParams, state: &AppState) -> Option<String> {
                     .iter()
                     .any(|host| *host == url.host);
             if allowed {
+                // Aggregate only: the owner learns the link is being used, and nothing is recorded
+                // about who used it. See migration 6 in `db.rs`.
+                state.db.record_short_link_click(id);
                 return Some(url.full);
             }
         }
@@ -328,7 +331,7 @@ mod tests {
     #[test]
     fn resolves_short_link_uid_when_allowed() {
         let db = crate::db::Db::new(":memory:").unwrap();
-        db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None).unwrap();
+        db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None).unwrap();
         let retrieved = db.get_short_link("testUid").unwrap();
         assert_eq!(retrieved.as_deref(), Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
     }
