@@ -28,6 +28,14 @@ export default function StatsTab({ username, onUnauthorized }) {
   const [period, setPeriod] = useState('MONTH');
   const [device, setDevice] = useState('');
   const [stats, setStats] = useState(null);
+  // The dropdown's options, kept separately from `stats.byDevice`.
+  //
+  // They cannot come from the response being displayed: that response is filtered by the very
+  // device selected, so it comes back listing only that one and the dropdown collapses to a single
+  // choice — you could pick a device, but never a different one without going via "All devices"
+  // first. Only an unfiltered response knows the whole fleet, so only an unfiltered response is
+  // allowed to update this.
+  const [deviceOptions, setDeviceOptions] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -37,7 +45,11 @@ export default function StatsTab({ username, onUnauthorized }) {
         device: device || null
       });
       const body = await res.json();
-      setStats(body?.data?.listeningStats ?? null);
+      const next = body?.data?.listeningStats ?? null;
+      setStats(next);
+      if (!device && next) {
+        setDeviceOptions(next.byDevice.map(entry => entry.name));
+      }
     } catch (error) {
       if (error.unauthorized) onUnauthorized?.();
     }
@@ -92,9 +104,9 @@ export default function StatsTab({ username, onUnauthorized }) {
             onChange={event => setDevice(event.target.value)}
           >
             <option value="">All devices</option>
-            {stats.byDevice.map(entry => (
-              <option key={entry.name} value={entry.name}>
-                {entry.name}
+            {deviceOptions.map(name => (
+              <option key={name} value={name}>
+                {name}
               </option>
             ))}
           </select>
