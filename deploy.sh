@@ -27,6 +27,27 @@ docker run --rm \
     rust:1-bookworm \
     cargo build --release
 
+# The schema migration is one-way: there is no downgrade path to a binary that predates it, and
+# from v9 onwards the credential columns are rewritten in place. A copy of the database comes home
+# before anything is replaced, so a bad deploy costs a restore rather than the listening history.
+echo "==> Backing up the remote database"
+BACKUP_DIR="backups"
+mkdir -p "$BACKUP_DIR"
+BACKUP="$BACKUP_DIR/agro_data.$(date -u +%Y%m%dT%H%M%SZ).db"
+# `.backup` rather than `cp`: the server is still running, and copying a live SQLite file can
+# capture a torn write. The command is part of sqlite3 itself and takes a consistent snapshot.
+if ssh "$HOST" "command -v sqlite3 >/dev/null 2>&1"; then
+    ssh "$HOST" "sqlite3 $REMOTE_PATH/agro_data.db \".backup '/tmp/agro_backup.db'\""
+    scp -q "$HOST:/tmp/agro_backup.db" "$BACKUP"
+    ssh "$HOST" "rm -f /tmp/agro_backup.db"
+else
+    echo "    sqlite3 not on the server; stopping the service for a clean file copy"
+    ssh "$HOST" "systemctl stop agro"
+    scp -q "$HOST:$REMOTE_PATH/agro_data.db" "$BACKUP"
+    ssh "$HOST" "systemctl start agro"
+fi
+echo "    saved $BACKUP ($(du -h "$BACKUP" | cut -f1))"
+
 echo "==> Uploading to $HOST"
 scp -q target-deb/release/agro "$HOST:$REMOTE_PATH/agro.new"
 

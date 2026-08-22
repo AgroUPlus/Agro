@@ -138,7 +138,7 @@ fn rank(entries: impl Iterator<Item = (String, i64)>, top_n: usize) -> Vec<(Stri
     entries
 }
 
-fn parse_time(value: &str) -> Option<i64> {
+pub(crate) fn parse_time(value: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|dt| dt.timestamp())

@@ -4,8 +4,12 @@ Background sync daemon for [Wander](https://github.com/Kolbxyz/wander) (Linux TU
 [Wanda](https://github.com/Kolbxyz/Wanda) (Android). It keeps one playback handoff and a set of registered nodes per user, so a
 session started on one device can be picked up on another, and serves its own dashboard.
 
+With more than one account it is also the social layer: profiles, friends, a live "what your friends
+are playing" feed, and listen-along. All of it is off until each account opts in — see
+*Friends, and what a friendship reveals*.
+
 - GraphQL API — `POST /graphql`
-- Live push — `GET /ws/sync` (WebSocket; broadcasts `HANDOFF`, `NODE_UPDATE`, `SETTINGS_SYNC`)
+- Live push — `GET /ws/sync` (WebSocket; `HANDOFF`, `NODE_UPDATE`, `SETTINGS_SYNC`, `LIBRARY_UPDATED`, `SYNC_OFFER`, `FRIEND_PRESENCE`, `FRIEND_REQUEST`, `LISTEN_ALONG`)
 - Dashboard — served at `/`, compiled into the binary
 - Storage — SQLite, single file, no external database
 
@@ -44,6 +48,8 @@ database to live in — under systemd, set `WorkingDirectory`.
 | `AGRO_SPOOL_MAX_BYTES` | Spool budget, oldest evicted first. Default 2 GiB. |
 | `AGRO_SPOOL_TTL_HOURS` | How long a spooled file waits to be collected. Default 72. |
 | `AGRO_ARCHIVE_HOOK` | Optional shell command run after a file is filed. Default: nothing. |
+| `AGRO_ALLOWED_ORIGIN` | CORS origin for the dashboard. No wildcard. |
+| `AGRO_SIGNUP` | `approval` (default), `invite` or `closed`. See *Opening the server to other people*. |
 
 Agro writes to `AGRO_LIBRARY_ROOT` as a plain directory — no assumptions beyond that, and no
 integration with whatever else reads it. If something *does* keep its own index of that directory,
@@ -101,43 +107,45 @@ idles at 20–30 MB RSS, so a build-once container can be dialled back to 1 GB a
 
 ## Quickstart — setting up a new user
 
-The server starts with no accounts. While there are none, the API is open — that window exists so
-you can create the first account, and it closes the moment that account exists.
+The server starts with no accounts. On a database with none, it prints a **one-time setup token** to
+its log at boot; that token is the only thing that can create the first administrator, it is never
+stored, and a restart replaces it.
 
-**1. Start the server** and open the dashboard (`http://<host>:1674/`, or your proxy's domain).
+**1. Start the server** and read the token out of the log:
 
-**2. Create the account.** From the dashboard's user menu, or from a terminal:
-
-```bash
-curl -s -X POST https://agro.example.com/graphql \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"mutation{ createAccount(username:\"alpha\"){ username passphrase qrData } }"}'
+```
+journalctl -u agro | grep -A2 'setup token'
 ```
 
-The response contains the **passphrase**. Save it — it is the account credential, and the only
-thing that can create app passwords. There is no recovery: if you lose it, delete the row from
-`users` and start again.
-
-**3. Unlock the dashboard.** Reload it; it now asks for the passphrase. It is stored in your
-browser's localStorage, so a reload does not sign you out.
-
-**4. Issue one app password per device.** Give each client its own credential, so a lost phone can
-be revoked without changing what every other device uses:
+**2. Create the administrator.**
 
 ```bash
-curl -s -X POST https://agro.example.com/graphql \
+curl -s -X POST https://agro.example.com/api/v1/bootstrap \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <passphrase>' \
-  -d '{"query":"mutation{ createAppPassword(userId:\"alpha\", label:\"Pixel 10\"){ token } }"}'
+  -d '{"setup_token":"<from the log>","username":"alpha"}'
 ```
 
-The token is shown **once**. `appPasswords(userId:)` lists labels and last-used times afterwards,
-never the tokens themselves. `revokeAppPassword(userId:, label:)` removes one.
+The response carries the **passphrase** and a device token, both shown once. Save the passphrase —
+the server keeps an Argon2 hash and cannot show it again, and there is no reset.
 
-**5. Point the clients at it.**
+**3. Unlock the dashboard.** Reload it and sign in with the username and passphrase. It trades them
+for a device token of its own and keeps that in localStorage.
 
-Wanda (Android) — Settings → Agro Device → server `agro.example.com`, username `alpha`, passphrase
-= that device's app password.
+**4. Pair each device.** A client never uses the passphrase as a credential. It sends it once to
+`/api/v1/login`, which returns a token scoped to that device:
+
+```bash
+curl -s -X POST https://agro.example.com/api/v1/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alpha","passphrase":"<your passphrase>","label":"Pixel 10"}'
+```
+
+Wanda (Android) does this for you: **Settings → Agro Device**, enter the server, username and
+passphrase. The dashboard's **Pairing** tab does the same thing as a QR code.
+
+`appPasswords(userId:)` lists labels and last-used times, never the tokens. `revokeAppPassword(userId:,
+label:)` removes one — a lost phone is revoked on its own, without changing what every other device
+uses.
 
 Wander (TUI) — `~/.config/wander/config.toml`:
 
@@ -146,10 +154,45 @@ Wander (TUI) — `~/.config/wander/config.toml`:
 enabled = true
 server = "https://agro.example.com"
 username = "alpha"
-passphrase = "<that device's app password>"
+passphrase = "<that device's token>"
 device_id = "wander-desktop"
 sync_settings = true
 ```
+
+## Opening the server to other people
+
+Set `AGRO_SIGNUP` and `POST /api/v1/signup` starts accepting strangers:
+
+| `AGRO_SIGNUP` | |
+|---|---|
+| `approval` | Default. Anyone may register; the account is created `pending` and cannot sign in until you let it in from the dashboard's **People** tab. An invite code, if one is offered, skips the queue. |
+| `invite` | A valid code is required, and spending one lets the account straight in. Codes are minted under **People**. |
+| `closed` | Registrations are refused. |
+
+Signup is rate-limited per client address, like `/api/v1/login`: ten attempts per five minutes.
+It also refuses outright until the server has an administrator, whatever `AGRO_SIGNUP` says — the
+first account has to be the one bootstrap creates. A stranger who got in first would occupy the
+empty database that `/api/v1/bootstrap` requires, leaving an instance with a pending account and
+nobody entitled to approve it.
+
+### Friends, and what a friendship reveals
+
+Nothing, by itself. A friendship is a door, not a window — each surface is gated on its own switch
+on the account being looked at, and **every switch defaults off**:
+
+| | |
+|---|---|
+| `showNowPlaying` | Accepted friends may see what you are playing, and may follow it with listen-along. |
+| `showStats` | Accepted friends may see your listening statistics and how far your taste overlaps theirs. |
+| `discoverable` | You appear in `searchUsers`, which is the only way a stranger can find you to send a request. |
+
+Set them with `setVisibility`; Wanda exposes them under **Settings → Privacy**. Search is
+prefix-anchored and lists only discoverable, active accounts, so the directory cannot be walked.
+Blocking is symmetric in effect and never disclosed to the account it was applied to.
+
+Every refusal on this path — not a friend, switch is off, no such account — is deliberately the same
+refusal, so an error message cannot be used as the directory that `discoverable` exists to opt out
+of. `src/social_boundary_tests.rs` is where those guarantees are written down.
 
 ## Share links on your own domain
 
@@ -180,19 +223,40 @@ here. It records nothing — no log line, no counter, no cookie.
 
 ## Authentication
 
-Every `/graphql` and `/ws/sync` request needs `Authorization: Bearer <passphrase or app password>`.
-Browsers cannot set headers on a WebSocket handshake, so `/ws/sync` also accepts `?token=`.
+Every `/graphql` and `/ws/sync` request needs `Authorization: Bearer <device token>`. Browsers
+cannot set headers on a WebSocket handshake, so `/ws/sync` also accepts `?token=`.
 
-Two endpoints stay public by design: the dashboard's static files, and `/share/{token}` — a share
-link is a capability URL whose token *is* the credential.
+A **passphrase is not a bearer token.** It is Argon2-hashed, it is accepted only by
+`/api/v1/login`, and what that returns is a per-device credential you can revoke on its own. The two
+used to be the same string, which meant photographing a pairing QR handed over the whole account.
+
+Four routes are reachable without a token, each for a reason it could not work otherwise:
+
+| | |
+|---|---|
+| `POST /api/v1/bootstrap` | Creates the first admin. Needs the setup token from the log, and refuses once any account exists. |
+| `POST /api/v1/login` | Trades a passphrase for a device token. |
+| `POST /api/v1/signup` | Registers a stranger, when `AGRO_SIGNUP` allows it. |
+| `GET /share/{token}`, `GET /listen` | Capability URLs — the token in the path *is* the credential. |
+
+The first three are rate-limited per client address. The dashboard's static files are public too;
+it holds no data of its own.
 
 ## Security
 
-Requests are authenticated (see above). Credentials are stored as plain tokens in SQLite, so the
-database file is sensitive — it is gitignored, and `agro_data.db` should not be world-readable.
+Requests are authenticated (see above). Passphrases are stored as Argon2 hashes and device tokens as
+SHA-256 hashes, so the database no longer holds a credential that can be replayed — but it still
+holds everyone's listening history, and `agro_data.db` should not be world-readable. It is
+gitignored.
 
 A token is scoped to the account it belongs to: every GraphQL field that names a `userId` checks it
-against the identity the token resolved to, and answers `Forbidden` otherwise.
+against the identity the token resolved to, and answers `Forbidden` otherwise. The social fields are
+the one deliberate exception, and they are gated by the per-surface switches described above rather
+than by friendship alone.
+
+Two test suites exist to keep those boundaries from quietly reopening — `guest_boundary_tests.rs`
+for what a hostile account cannot reach, and `social_boundary_tests.rs` for what a friendship must
+still refuse. Both run under `cargo test`.
 
 The archive hook runs a shell command as the service user. Treat `AGRO_ARCHIVE_HOOK` as trusted
 configuration — the file paths it is given arrive in the environment rather than in the command

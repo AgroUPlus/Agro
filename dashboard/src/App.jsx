@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
-  Radio, Smartphone, Terminal, Server, 
+  Smartphone, Terminal, Server, 
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
   User, Users, ChevronDown, Plus, Library, HardDrive, Trash2,
-  Music, Database, Activity, ShieldCheck, Link2, BarChart3
-} from 'lucide-react';
+  Music, Database, Activity, ShieldCheck, Link2 as LinkIcon, BarChart3, UserPlus, Pencil, Inbox } from 'lucide-react';
 import LinksTab from './tabs/LinksTab.jsx';
+import FeedTab from './tabs/FeedTab.jsx';
+import InboxTab from './tabs/InboxTab.jsx';
 import LibraryBrowser from './tabs/LibraryBrowser.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
+import PeopleTab from './tabs/PeopleTab.jsx';
+import AuthScreen from './AuthScreen.jsx';
+import DevicesTab from './tabs/DevicesTab.jsx';
+import Avatar from './Avatar.jsx';
 
 /** Bytes as something readable. The library totals are the only place this is needed. */
 function formatBytes(bytes) {
@@ -50,9 +55,9 @@ const FALLBACK_RULES = [
     isEnabled: true
   },
   {
-    id: 'jam-session',
-    name: 'Democratic Jam Session Synchronizer',
-    description: 'Maintains collaborative voting queues and sub-millisecond playback clock synchronization for active shared room sessions.',
+    id: 'listen-along',
+    name: 'Listen Along',
+    description: 'Pushes a host\'s track and position to the friends following them, so a session can be joined rather than merely watched. Gated on the host\'s "show now playing" switch.',
     target: 'Multi-device',
     isEnabled: true
   }
@@ -83,6 +88,27 @@ export function setToken(value) {
  * into a query string is an injection waiting to happen, and it breaks outright on any value
  * containing a quote.
  */
+/**
+ * Exchanges a passphrase for a device token and stores it.
+ *
+ * The passphrase used to *be* the token: whatever you typed was put straight into the
+ * `Authorization` header. It no longer is — it buys a revocable per-device credential from
+ * `/api/v1/login`, which is one of only two routes reachable without a token.
+ */
+export async function login(username, passphrase) {
+  const res = await fetch('/api/v1/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: username.trim(), passphrase, label: 'dashboard' })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.token) {
+    throw new Error(body.error || 'Those credentials were not accepted');
+  }
+  setToken(body.token);
+  return body;
+}
+
 export async function gql(query, variables) {
   const res = await fetch('/graphql', {
     method: 'POST',
@@ -100,18 +126,50 @@ export async function gql(query, variables) {
   return res;
 }
 
+/**
+ * The navigation, as data.
+ *
+ * The sidebar renders this and the page heading reads from it, so a tab cannot be labelled one
+ * thing in the nav and another at the top of its own page. `adminOnly` hides what a member's token
+ * would be refused anyway — showing a control that always errors is worse than not showing it.
+ */
+const NAV_ITEMS = [
+  { id: 'feed', label: 'Feed', icon: Activity },
+  { id: 'inbox', label: 'Inbox', icon: Inbox },
+  { id: 'nodes', label: 'Devices', icon: Server },
+  { id: 'library', label: 'Library', icon: Library },
+  { id: 'stats', label: 'Stats', icon: BarChart3 },
+  { id: 'links', label: 'Links', icon: LinkIcon },
+  { id: 'pairing', label: 'Sign-ins', icon: KeyRound },
+  { id: 'people', label: 'People', icon: UserPlus, adminOnly: true },
+  { id: 'rules', label: 'Plugins & Settings', icon: Layers, adminOnly: true },
+  { id: 'logs', label: 'Logs', icon: ScrollText, adminOnly: true }
+];
+
 export default function App() {
   // Null until the first request tells us whether the stored token works. Rendering the
   // dashboard before then would flash real-looking empty data at someone who is not signed in.
   const [locked, setLocked] = useState(!getToken());
-  const [tokenInput, setTokenInput] = useState('');
-  const [tokenError, setTokenError] = useState('');
   const [activeTab, setActiveTab] = useState('nodes');
-  const [username, setUsername] = useState('alpha');
-  const [usersList, setUsersList] = useState(['alpha']);
+  // Drops that have arrived over the socket since this page was opened.
+  //
+  // A badge, not a source of truth: the server's `unreadDropCount` is the real number, and opening
+  // the Inbox clears this so the two cannot drift apart on screen.
+  const [unreadDrops, setUnreadDrops] = useState(0);
+  // Empty, not a guess. This used to start at 'alpha', which was then interpolated into the very
+  // first query — so signing in as anyone else asked `me(username: "alpha")`, got refused, and
+  // left the page displaying a name that was not yours over a session that was.
+  const [username, setUsername] = useState('');
+  const [role, setRole] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [newUsernameInput, setNewUsernameInput] = useState('');
-  const [passphrase, setPassphrase] = useState('tempest-omega-pioneer-terra');
+  // Administrator-only surfaces. A member asking for `users` or `plugins` fails the whole
+  // document, so this gates the query as well as the navigation.
+  const isAdmin = role === 'admin';
+  const [deviceNameInput, setDeviceNameInput] = useState('');
+  // The pairing payload, minted on demand. It used to be built here from the account passphrase,
+  // which meant the QR on screen *was* the account: photographing it handed over everything,
+  // permanently. Each scan now gets its own revocable device token.
+  const [pairing, setPairing] = useState(null);
   const [copied, setCopied] = useState(false);
   const [rules, setRules] = useState(FALLBACK_RULES);
   const [nodes, setNodes] = useState([]);
@@ -146,24 +204,36 @@ export default function App() {
     { time: new Date().toLocaleTimeString(), event: '[DAEMON] Agro background sync daemon active on port 8700' }
   ]);
 
+  // Who is signed in. Asked first and on its own, because every other query has to name an
+  // account and there is nothing to name until this answers.
+  useEffect(() => {
+    if (locked) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await gql(`{ me { username role state } }`);
+        const { data } = await res.json();
+        if (!cancelled && data?.me?.username) {
+          setUsername(data.me.username);
+          setRole(data.me.role || '');
+        }
+      } catch (e) {
+        if (e.unauthorized) setLocked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [locked]);
+
   // Query live user passphrase, plugins, nodes, and handoff from Agro GraphQL backend
   useEffect(() => {
+    // Nothing can be keyed on an account before we know which one.
+    if (!username) return;
     async function loadBackendData() {
       try {
         const res = await gql(`
               query LoadInitialState {
-                users
-                me(username: "${username}") {
-                  username
-                  passphrase
-                }
-                plugins {
-                  id
-                  name
-                  description
-                  target
-                  isEnabled
-                }
+                ${isAdmin ? `plugins { id name description target isEnabled }` : ''}
+                me { username role }
                 activeNodes(userId: "${username}") {
                   deviceId
                   petname
@@ -203,12 +273,8 @@ export default function App() {
 
         if (res.ok) {
           const { data } = await res.json();
-          if (data?.users && data.users.length > 0) {
-            setUsersList(data.users);
-          }
           if (data?.me) {
             setUsername(data.me.username);
-            setPassphrase(data.me.passphrase);
           }
           if (data?.plugins && data.plugins.length > 0) {
             setRules(data.plugins.map(p => ({
@@ -355,6 +421,22 @@ export default function App() {
               { time: new Date().toLocaleTimeString(), event: `[HANDOFF] Transfer state from ${p.petname || p.deviceId}: "${p.trackTitle}" (${Math.floor((p.positionMs || 0) / 1000)}s)` },
               ...logs
             ]);
+          } else if (parsed.msg_type === 'TRACK_DROP' && parsed.payload) {
+            const p = parsed.payload;
+            // Counted here rather than re-queried: the frame carries everything the badge needs,
+            // and the Inbox tab reads the authoritative number when it opens. A badge that had to
+            // round-trip would lag behind the notification that caused it.
+            setUnreadDrops(count => count + 1);
+            setSyncLogs(logs => [
+              { time: new Date().toLocaleTimeString(), event: `[DROP] ${p.from} sent "${p.trackTitle}" by ${p.artistName}` },
+              ...logs
+            ]);
+          } else if (parsed.msg_type === 'FRIEND_PRESENCE' && parsed.payload) {
+            const p = parsed.payload;
+            setSyncLogs(logs => [
+              { time: new Date().toLocaleTimeString(), event: `[FRIEND] ${p.username} ${p.isPlaying ? 'is playing' : 'paused'} "${p.trackTitle}"` },
+              ...logs
+            ]);
           } else if (parsed.msg_type === 'NODE_UPDATE' && parsed.payload) {
             setSyncLogs(logs => [
               { time: new Date().toLocaleTimeString(), event: `[PRESENCE] Node "${parsed.payload.petname}" (${parsed.payload.deviceId}) updated` },
@@ -387,37 +469,38 @@ export default function App() {
         : window.location.origin)
     : 'http://127.0.0.1:8700';
 
-  const qrPayload = `agro://connect?username=${encodeURIComponent(username)}&passphrase=${encodeURIComponent(passphrase)}&server=${encodeURIComponent(serverHost)}`;
+  const qrPayload = pairing?.qrData || '';
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(passphrase);
+    if (!qrPayload) return;
+    navigator.clipboard.writeText(qrPayload);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleRegenerate = async () => {
+  /** Mints a fresh pairing token. Nothing is on screen until this is asked for. */
+  const handlePair = async () => {
+    // Named by the person pairing, because only they know what the device is. Unnamed tokens all
+    // arrived called "paired device", which is no help at all in a list of eight of them.
+    const name = deviceNameInput.trim();
+    if (!name) return;
     try {
-      const res = await gql(`
-            mutation RotateAccount {
-              createAccount(username: "${username}") {
-                passphrase
-              }
-            }
-          `);
-      if (res.ok) {
-        const { data } = await res.json();
-        if (data?.createAccount?.passphrase) {
-          const newPass = data.createAccount.passphrase;
-          setPassphrase(newPass);
-          setSyncLogs(prev => [
-            { time: new Date().toLocaleTimeString(), event: `[AUTH] Rotated natural passphrase: "${newPass}"` },
-            ...prev
-          ]);
-          return;
-        }
+      const res = await gql(
+        `mutation PairDevice($u: String!, $label: String) { pairDevice(userId: $u, label: $label) { qrData token label } }`,
+        { u: username, label: name }
+      );
+      const { data } = await res.json();
+      if (data?.pairDevice) {
+        setPairing(data.pairDevice);
+        setDeviceNameInput('');
+        setSyncLogs((prev) => [
+          { time: new Date().toLocaleTimeString(), event: `[AUTH] Issued a pairing token named “${name}”` },
+          ...prev
+        ]);
       }
     } catch (e) { if (e.unauthorized) setLocked(true); }
   };
+
 
   const toggleRule = async (id) => {
     const targetRule = rules.find(r => r.id === id);
@@ -470,6 +553,35 @@ export default function App() {
     } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
+  /**
+   * Renames a device.
+   *
+   * Until now the only way to change a device's name was to make the client send a different one —
+   * which for a name the server invented meant there was no way at all, and left people staring at
+   * a "Caffeinated Panda" they never chose.
+   */
+  const handleRenameNode = async (node) => {
+    const typed = window.prompt(`What should this device be called?`, node.petname);
+    if (typed === null) return;
+    const petname = typed.trim();
+    if (!petname) return;
+    try {
+      const res = await gql(
+        `mutation RenameNode($u: String!, $d: String!, $p: String!) {
+           renameNode(userId: $u, deviceId: $d, petname: $p)
+         }`,
+        { u: username, d: node.deviceId, p: petname }
+      );
+      const body = await res.json();
+      if (body?.errors?.length) throw new Error(body.errors[0].message);
+      setNodes((prev) => prev.map((n) =>
+        n.deviceId === node.deviceId ? { ...n, petname } : n
+      ));
+    } catch (e) {
+      if (e.unauthorized) setLocked(true);
+    }
+  };
+
   const handleDeleteNode = async (deviceId) => {
     try {
       await gql(`
@@ -485,230 +597,102 @@ export default function App() {
     } catch (e) { if (e.unauthorized) setLocked(true); }
   };
 
-  const handleCreateUser = async () => {
-    const clean = newUsernameInput.trim().toLowerCase();
-    if (!clean) return;
-    try {
-      // createAccount, not me(): looking an account up must not conjure one into existence.
-      const res = await gql(`
-            mutation CreateUser {
-              createAccount(username: "${clean}") {
-                username
-                passphrase
-              }
-            }
-          `);
-      if (res.ok) {
-        setUsername(clean);
-        setNewUsernameInput('');
-        setShowUserMenu(false);
-        if (!usersList.includes(clean)) {
-          setUsersList(prev => [...prev, clean]);
-        }
-      }
-    } catch (e) { if (e.unauthorized) setLocked(true); }
-  };
-
-  /**
-   * Deleting an account takes its devices, session and app passwords with it, and deleting the
-   * last one reopens first-run — so this asks for the name to be typed rather than accepting a
-   * single click on a menu the user is otherwise just browsing.
-   */
-  const handleDeleteUser = async () => {
-    const typed = window.prompt(
-      `Delete the account "${username}"?\n\n` +
-      'This removes its devices, its saved session, its synced settings and every app password. ' +
-      'It cannot be undone.\n\n' +
-      `Type ${username} to confirm.`
-    );
-    if (typed !== username) return;
-    try {
-      const res = await gql(`
-            mutation DeleteUser {
-              deleteAccount(username: "${username}")
-            }
-          `);
-      if (res.ok) {
-        const remaining = usersList.filter(u => u !== username);
-        setUsersList(remaining);
-        setUsername(remaining[0] || '');
-        setShowUserMenu(false);
-        // The token just deleted may have been this account's own, so re-authenticate rather than
-        // leaving the dashboard making requests as a user that no longer exists.
-        setToken('');
-        setLocked(true);
-      }
-    } catch (e) { if (e.unauthorized) setLocked(true); }
-  };
-
   const positionSec = Math.floor(lastHandoff.positionMs / 1000);
   const durationSec = Math.floor(lastHandoff.durationMs / 1000);
 
   if (locked) {
     return (
-      <div className="app-wrapper">
-        <div className="content-container" style={{ maxWidth: '420px', marginTop: '18vh' }}>
-          <header className="top-header">
-            <div className="brand-title"><Radio size={16} /> AGRO</div>
-          </header>
-          <div className="panel" style={{ padding: '24px' }}>
-            <p style={{ marginTop: 0, opacity: 0.8 }}>
-              Enter your account passphrase, or an app password.
-            </p>
-            <form
-              onSubmit={async (event) => {
-                event.preventDefault();
-                setToken(tokenInput);
-                try {
-                  const res = await gql('{ health }');
-                  if (!res.ok) throw new Error('rejected');
-                  setTokenError('');
-                  setLocked(false);
-                  window.location.reload();
-                } catch (_) {
-                  setToken('');
-                  setTokenError('That passphrase was not accepted.');
-                }
-              }}
-            >
-              <input
-                type="password"
-                autoFocus
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="four-word-pass-phrase"
-                style={{ width: '100%', padding: '10px', marginBottom: '12px' }}
-              />
-              <button type="submit" style={{ width: '100%', padding: '10px' }}>Unlock</button>
-            </form>
-            {tokenError && (
-              <p style={{ color: 'var(--status-error, #f7768e)' }}>{tokenError}</p>
-            )}
-          </div>
-        </div>
-      </div>
+      <AuthScreen
+        onSignedIn={() => {
+          setLocked(false);
+          window.location.reload();
+        }}
+      />
     );
   }
 
   return (
-    <div className="app-wrapper">
-      <div className="content-container">
-        {/* Top Header with Multi-User Switcher */}
-        <header className="top-header">
-          <div className="brand-row" style={{ width: '100%', justifyContent: 'space-between', padding: '0 4px' }}>
-            <div style={{ width: '110px' }} />
-            <div className="brand-title">
-              <Radio size={16} />
-              <span>AGRO</span>
-            </div>
-            <div className="user-dropdown-container">
-              <button className="user-badge-btn" onClick={() => setShowUserMenu(!showUserMenu)} title="Active User Tenant">
-                <User size={13} />
-                <span>{username}</span>
-                <ChevronDown size={12} />
-              </button>
-              {showUserMenu && (
-                <div className="user-dropdown-menu">
-                  <div className="user-dropdown-title">User Tenant</div>
-                  {usersList.map(u => (
-                    <button 
-                      key={u} 
-                      className={`user-item ${u === username ? 'active' : ''}`}
-                      onClick={() => { setUsername(u); setShowUserMenu(false); }}
-                    >
-                      <span>{u}</span>
-                      {u === username && <Check size={12} />}
-                    </button>
-                  ))}
-                  <div className="user-dropdown-divider" />
-                  <div style={{ padding: '6px 8px', display: 'flex', gap: '6px' }}>
-                    <input 
-                      type="text" 
-                      placeholder="Add user" 
-                      value={newUsernameInput} 
-                      onChange={e => setNewUsernameInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleCreateUser(); }}
-                      style={{ width: '110px', padding: '4px 6px', fontSize: '11px', background: 'var(--bg-app)', border: '1px solid var(--border-strong)', borderRadius: '4px', color: 'var(--text-primary)' }}
-                    />
-                    <button className="btn btn-secondary" onClick={handleCreateUser} style={{ padding: '4px 8px', fontSize: '11px' }}>
-                      <Plus size={12} />
-                    </button>
-                  </div>
-                  <div className="user-dropdown-divider" />
-                  <div style={{ padding: '6px 8px' }}>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={handleDeleteUser}
-                      style={{ width: '100%', padding: '4px 8px', fontSize: '11px', color: 'var(--status-error, #f7768e)' }}
-                    >
-                      Delete "{username}"
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+    <div className="app-shell">
+      {/* Persistent navigation. A sidebar rather than a pill row: the tab list has grown to eight
+          and a centred row of pills had started wrapping and shrinking its own labels. */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">Agro</div>
 
-          {/* Centered Pill Bar Navigation */}
-          <nav className="nav-pill-bar">
-            <button 
-              className={`nav-pill-btn ${activeTab === 'nodes' ? 'active' : ''}`}
-              onClick={() => setActiveTab('nodes')}
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
+            <button
+              key={item.id}
+              className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab(item.id);
+                // Opening the Inbox is what makes its badge stale, so it is also what clears it.
+                if (item.id === 'inbox') setUnreadDrops(0);
+              }}
             >
-              <Server size={14} />
-              <span>Nodes</span>
+              <item.icon size={18} />
+              <span>{item.label}</span>
+              {item.id === 'inbox' && unreadDrops > 0 && (
+                <span className="nav-badge">{unreadDrops}</span>
+              )}
             </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'rules' ? 'active' : ''}`}
-              onClick={() => setActiveTab('rules')}
-            >
-              <Layers size={14} />
-              <span>Plugins & Settings</span>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="user-dropdown-container">
+            <button className="user-badge-btn" onClick={() => setShowUserMenu(!showUserMenu)}>
+              <Avatar username={username} size={22} />
+              <span className="user-badge-name">{username || '…'}</span>
+              {isAdmin && <span className="role-chip">admin</span>}
+              <ChevronDown size={14} />
             </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'pairing' ? 'active' : ''}`}
-              onClick={() => setActiveTab('pairing')}
-            >
-              <KeyRound size={14} />
-              <span>Pairing</span>
-            </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'library' ? 'active' : ''}`}
-              onClick={() => setActiveTab('library')}
-            >
-              <Library size={14} />
-              <span>Library</span>
-            </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'stats' ? 'active' : ''}`}
-              onClick={() => setActiveTab('stats')}
-            >
-              <BarChart3 size={14} />
-              <span>Stats</span>
-            </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'links' ? 'active' : ''}`}
-              onClick={() => setActiveTab('links')}
-            >
-              <Link2 size={14} />
-              <span>Links</span>
-            </button>
-            <button 
-              className={`nav-pill-btn ${activeTab === 'logs' ? 'active' : ''}`}
-              onClick={() => setActiveTab('logs')}
-            >
-              <ScrollText size={14} />
-              <span>Logs</span>
-            </button>
-          </nav>
+            {showUserMenu && (
+              <div className="user-dropdown-menu">
+                {/* No account switcher. It set a local variable and re-keyed every query to
+                    someone else's name, which the server then refused — you cannot act as another
+                    account by choosing it from a menu, and a control that implies you can is worse
+                    than no control. You are whoever the token says you are.
+
+                    No "create account" either: accounts come from /api/v1/signup and the approval
+                    queue, so that the same checks apply to everyone. */}
+                <div className="user-dropdown-row">
+                  <button
+                    className="btn btn-secondary btn-block"
+                    onClick={() => { setToken(''); setLocked(true); }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      <main className="main-area">
+        <header className="page-header">
+          <h1>{NAV_ITEMS.find((item) => item.id === activeTab)?.label ?? 'Agro'}</h1>
         </header>
 
+        <div className="page-content">
+        {activeTab === 'feed' && (
+          <FeedTab onUnauthorized={() => setLocked(true)} />
+        )}
+
+        {activeTab === 'inbox' && (
+          <InboxTab onUnauthorized={() => setLocked(true)} />
+        )}
+
         {activeTab === 'stats' && (
-          <StatsTab username={username} onUnauthorized={() => setLocked(true)} />
+          <StatsTab username={username} nodes={nodes} onUnauthorized={() => setLocked(true)} />
         )}
 
         {activeTab === 'links' && (
           <LinksTab username={username} onUnauthorized={() => setLocked(true)} />
+        )}
+
+        {activeTab === 'people' && (
+          <PeopleTab me={username} onUnauthorized={() => setLocked(true)} />
         )}
 
         {/* Tab 1: Nodes & Playback State */}
@@ -716,7 +700,10 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="card">
               <div className="card-header">
-                <div className="card-title">Nodes ({nodes.length})</div>
+                <div>
+                  <div className="card-title">Devices ({nodes.length})</div>
+                  <div className="card-subtitle">Apps signed in and reporting what they play</div>
+                </div>
               </div>
 
               {nodes.length === 0 ? (
@@ -745,6 +732,21 @@ export default function App() {
                           }}>
                             {node.isOnline ? 'ONLINE' : 'AWAY'}
                           </span>
+                          <button
+                            onClick={() => handleRenameNode(node)}
+                            title="Rename this device"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <Pencil size={13} />
+                          </button>
                           <button
                             onClick={() => handleDeleteNode(node.deviceId)}
                             title="Remove device"
@@ -879,9 +881,9 @@ export default function App() {
               </div>
 
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-                Sends share links from Wanda and Wander out on a domain of yours instead of the
-                backend&rsquo;s own, forwarded by this server at <code>/listen</code>. Off, each
-                player shares its backend&rsquo;s link &mdash; the same as with no Agro at all.
+                When enabled, share links generated by players (like Wanda and Wander) will use your
+                custom domain routed through <code>/listen</code> instead of pointing directly to the
+                backend music server.
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -951,44 +953,71 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 3: Passphrase & Pairing */}
+        {/* Tab 3: Pairing */}
         {activeTab === 'pairing' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div className="card">
             <div className="card-header">
               <div className="card-title">Pairing</div>
-              <button className="btn btn-secondary" onClick={handleRegenerate} title="Rotate 4-word passphrase">
-                <RefreshCw size={13} />
-                <span>Rotate Passphrase</span>
-              </button>
-            </div>
-
-            <div className="pairing-container">
-              <div className="qr-box">
-                <QRCodeSVG value={qrPayload} size={150} level="M" />
-              </div>
-
-              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Natural Passphrase
-                </div>
-                <div className="passphrase-display">
-                  <span>{passphrase}</span>
-                  <button className="btn btn-secondary" onClick={handleCopy} style={{ padding: '4px 8px' }}>
-                    {copied ? <Check size={13} color="var(--status-active)" /> : <Copy size={13} />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="code-snippet">
-                <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}># Wander TUI (~/.config/wander/config.toml)</div>
-                <div>[agro]</div>
-                <div>enabled = true</div>
-                <div>server = "http://127.0.0.1:8700"</div>
-                <div>username = "{username}"</div>
-                <div>passphrase = "{passphrase}"</div>
+              <div className="pair-issue">
+                <input
+                  type="text"
+                  placeholder="Device name, e.g. Living room laptop"
+                  value={deviceNameInput}
+                  onChange={(e) => setDeviceNameInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handlePair(); }}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={handlePair}
+                  disabled={!deviceNameInput.trim()}
+                  title="Issue a device token under this name"
+                >
+                  <RefreshCw size={15} />
+                  <span>Issue token</span>
+                </button>
               </div>
             </div>
+
+            {!pairing ? (
+              <p className="empty-hint" style={{ padding: '24px' }}>
+                Generate a token above to pair a new device. Each device gets its own token that can
+                be revoked individually at any time.
+              </p>
+            ) : (
+              <div className="pairing-container">
+                <div className="qr-box">
+                  <QRCodeSVG value={qrPayload} size={150} level="M" />
+                </div>
+
+                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Device token — shown once
+                  </div>
+                  <div className="passphrase-display">
+                    <span style={{ wordBreak: 'break-all' }}>{pairing.token}</span>
+                    <button className="btn btn-secondary" onClick={handleCopy} style={{ padding: '4px 8px' }}>
+                      {copied ? <Check size={13} color="var(--status-active)" /> : <Copy size={13} />}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Revoke it any time under app passwords, as “{pairing.label}”.
+                  </div>
+                </div>
+
+                <div className="code-snippet">
+                  <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}># Wander TUI (~/.config/wander/config.toml)</div>
+                  <div>[agro]</div>
+                  <div>enabled = true</div>
+                  <div>server = "{serverHost}"</div>
+                  <div>username = "{username}"</div>
+                  <div>token = "{pairing.token}"</div>
+                </div>
+              </div>
+            )}
           </div>
+          <DevicesTab username={username} onUnauthorized={() => setLocked(true)} />
+        </div>
         )}
 
         {/* Tab 4: Library */}
@@ -1128,7 +1157,32 @@ export default function App() {
             </div>
           </div>
         )}
-      </div>
+        </div>
+      </main>
+
+      {/* Now playing, as a bar across the bottom of the shell rather than a card inside one tab:
+          it is the one piece of state that stays true whichever screen you are looking at. */}
+      <footer className="now-bar">
+        <div className="now-bar-track">
+          <div className="now-bar-title">{lastHandoff.title}</div>
+          <div className="now-bar-meta">
+            {lastHandoff.artist}
+            {lastHandoff.album ? ` — ${lastHandoff.album}` : ''}
+          </div>
+        </div>
+        <div className="now-bar-status">
+          <span className={`status-dot ${lastHandoff.isPlaying ? 'is-on' : ''}`} />
+          <span>{lastHandoff.isPlaying ? 'Playing' : 'Idle'}</span>
+          {lastHandoff.isPlaying && (
+            <span className="now-bar-time">
+              {Math.floor(positionSec / 60)}:{String(positionSec % 60).padStart(2, '0')}
+            </span>
+          )}
+          <span className="now-bar-device">
+            {nodes.find((n) => n.deviceId === lastHandoff.deviceId)?.petname || lastHandoff.deviceId}
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }

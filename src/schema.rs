@@ -1,13 +1,36 @@
 use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject};
 use crate::auth::AuthedUser;
 use crate::db::{Db, LinkKind};
+use crate::db_identity::{AccountState, Role};
 use crate::db_library::BrowseKind;
 use crate::passphrase::generate_passphrase;
 use crate::plugins::AgroPlugin;
 use crate::ws::WsHub;
 use std::sync::Arc;
 
-pub type AgroSchema = Schema<QueryRoot, MutationRoot, async_graphql::EmptySubscription>;
+/// The schema roots, each merged from a core half and a social half.
+///
+/// `schema.rs` was already 1700 lines before friends existed; `MergedObject` lets the social
+/// resolvers live in their own file without becoming a separate top-level field that clients would
+/// have to reach through.
+#[derive(async_graphql::MergedObject, Default)]
+pub struct Query(
+    QueryRoot,
+    crate::schema_social::SocialQuery,
+    crate::schema_jam::JamQuery,
+    crate::schema_feed::FeedQuery,
+    crate::schema_drops::DropsQuery,
+);
+
+#[derive(async_graphql::MergedObject, Default)]
+pub struct Mutation(
+    MutationRoot,
+    crate::schema_social::SocialMutation,
+    crate::schema_jam::JamMutation,
+    crate::schema_drops::DropsMutation,
+);
+
+pub type AgroSchema = Schema<Query, Mutation, async_graphql::EmptySubscription>;
 
 /// Checks the account a caller *named* against the account its token actually proved.
 ///
@@ -16,40 +39,157 @@ pub type AgroSchema = Schema<QueryRoot, MutationRoot, async_graphql::EmptySubscr
 /// settings, devices and library. The argument is kept (both clients send it, and it reads well in
 /// the schema) but it is now checked rather than trusted.
 ///
-/// Returns `Ok` when there is no authenticated identity at all: that is the first-run window
-/// `require_token` deliberately leaves open while the database has no accounts, and there is
-/// nothing to protect yet. It closes the moment the first account exists.
+/// **Fails closed.** This used to return `Ok` when there was no authenticated identity at all, to
+/// leave room for a first-run window in the middleware. Both halves of that are gone: setup now
+/// needs a token the operator reads from the log, and no identity means no.
 fn authorize(ctx: &Context<'_>, user_id: &str) -> async_graphql::Result<()> {
-    let Some(authed) = ctx.data_opt::<AuthedUser>() else {
-        return Ok(());
-    };
-    if authed.username.eq_ignore_ascii_case(user_id.trim()) {
+    let authed = caller(ctx)?;
+    if authed.username().eq_ignore_ascii_case(user_id.trim()) {
         Ok(())
     } else {
         // Deliberately does not name the account that *was* authenticated — an error message is
         // not the place to disclose it.
-        Err(async_graphql::Error::new(
-            "Forbidden: that token does not belong to the requested account",
-        ))
+        Err(forbidden("that token does not belong to the requested account"))
     }
 }
 
-#[derive(SimpleObject, Clone)]
-pub struct AuthPayload {
-    pub success: bool,
-    pub username: String,
-    pub token: String,
-    pub message: String,
+/// The authenticated caller, or an error. The single place an identity enters a resolver.
+pub(crate) fn caller<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a AuthedUser> {
+    ctx.data_opt::<AuthedUser>()
+        .ok_or_else(|| forbidden("this request carries no authenticated account"))
 }
 
+/// Requires the caller to own the deployment.
+///
+/// Guards everything that is the server's rather than an account's: other people's accounts, the
+/// plugin registry, the share-forwarding allowlist, and the library itself.
+pub(crate) fn require_admin<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a AuthedUser> {
+    let authed = caller(ctx)?;
+    if authed.is_admin() {
+        Ok(authed)
+    } else {
+        Err(forbidden("this account is not an administrator"))
+    }
+}
+
+/// Requires that `device_id` belongs to the caller.
+///
+/// Several resolvers take a device id and passed it straight into SQL that filtered on the device
+/// alone. Device ids are chosen by the client, so that let one account read another's holdings,
+/// browse its library view, and delete its holding rows. `authorize` cannot catch this on its own:
+/// the `userId` argument is the caller's own, and the *device* is the smuggled part.
+fn require_own_device(ctx: &Context<'_>, device_id: &str) -> async_graphql::Result<()> {
+    let authed = caller(ctx)?;
+    let db = ctx.data::<Db>()?;
+    let owns = db
+        .device_belongs_to(authed.username(), device_id.trim())
+        .unwrap_or(false);
+    if owns {
+        Ok(())
+    } else {
+        Err(forbidden("that device does not belong to this account"))
+    }
+}
+
+/// One shape for every refusal, so no error message accidentally becomes an oracle.
+pub(crate) fn forbidden(detail: &str) -> async_graphql::Error {
+    async_graphql::Error::new(format!("Forbidden: {detail}"))
+}
+
+/// A comma-separated allowlist, checked host by host.
+fn validate_share_hosts(raw: &str) -> async_graphql::Result<()> {
+    if raw.chars().count() > MAX_URL_LEN {
+        return Err("That host list is too long".into());
+    }
+    for host in raw.split(',').map(str::trim).filter(|h| !h.is_empty()) {
+        validate_host(host)?;
+    }
+    Ok(())
+}
+
+/// A bare hostname — no scheme, no path, no credentials, no wildcard.
+///
+/// Anything looser than this stops being a hostname and starts being a URL the forwarder would
+/// happily paste into a `Location` header.
+fn validate_host(raw: &str) -> async_graphql::Result<()> {
+    let host = raw.trim();
+    if host.is_empty() || host.len() > 253 {
+        return Err(format!("`{host}` is not a valid hostname").into());
+    }
+    let shaped = host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && !host.starts_with(['.', '-'])
+        && !host.ends_with(['.', '-'])
+        && host.contains('.');
+    if !shaped {
+        return Err(format!("`{host}` is not a valid hostname").into());
+    }
+    Ok(())
+}
+
+/// The longest a URL may be, anywhere it is accepted.
+const MAX_URL_LEN: usize = 2048;
+
+/// The longest any free-text tag may be. Every one of these is stored and rendered somewhere.
+const MAX_TAG_LEN: usize = 512;
+
+/// Rejects an over-long string rather than silently truncating it.
+pub(crate) fn bounded(raw: &str, max: usize, field: &str) -> async_graphql::Result<String> {
+    let clean = raw.trim();
+    if clean.chars().count() > max {
+        return Err(format!("{field} may be at most {max} characters").into());
+    }
+    Ok(clean.to_string())
+}
+
+/// The longest a username may be. Nothing here had a length limit, and every one of these strings
+/// is stored, indexed, and rendered in a dashboard table.
+const MAX_USERNAME_LEN: usize = 32;
+
+/// Lower-cases and validates a username.
+///
+/// Restrictive on purpose: usernames are compared case-insensitively, appear in a URL as a pairing
+/// parameter, and are the join key for nearly every table. Allowing whitespace or punctuation
+/// invites two accounts that look identical to a human.
+pub(crate) fn normalise_username(raw: &str) -> async_graphql::Result<String> {
+    let clean = raw.trim().to_lowercase();
+    if clean.is_empty() {
+        return Err("An account needs a username".into());
+    }
+    if clean.chars().count() > MAX_USERNAME_LEN {
+        return Err(format!("A username may be at most {MAX_USERNAME_LEN} characters").into());
+    }
+    if !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        return Err("A username may only contain letters, digits, dot, dash and underscore".into());
+    }
+    Ok(clean)
+}
+
+
 #[derive(SimpleObject, Clone)]
+/// An account as its owner sees it.
+///
+/// Carries **no credential**. It used to return `apiKey` and `passphrase` in cleartext, which meant
+/// a revocable device token could be traded for the permanent account passphrase just by asking —
+/// the escalation that made revoking a device pointless. A credential is shown once, by the
+/// mutation that mints it, and never again.
 pub struct AccountPayload {
     pub id: String,
     pub username: String,
-    pub api_key: String,
-    pub passphrase: String,
+    pub role: String,
+    pub state: String,
+    pub quota_bytes: i64,
     pub connection_url: String,
+}
+
+/// Everything a newly created account needs, shown exactly once.
+/// A scannable pairing payload, shown once.
+#[derive(SimpleObject, Clone)]
+pub struct PairingPayload {
     pub qr_data: String,
+    pub token: String,
+    pub label: String,
 }
 
 #[derive(SimpleObject, Clone, serde::Serialize)]
@@ -135,33 +275,8 @@ pub struct HandoffTrackInput {
     pub artwork_url: Option<String>,
 }
 
-#[derive(SimpleObject, Clone)]
-pub struct TrackItem {
-    pub id: String,
-    pub title: String,
-    pub artist: String,
-    pub album: Option<String>,
-    pub duration_secs: i64,
-    pub stream_url: String,
-    pub artwork_url: Option<String>,
-}
 
-#[derive(SimpleObject, Clone)]
-pub struct TopStatItem {
-    pub name: String,
-    pub count: i64,
-    pub percentage: f64,
-}
 
-#[derive(SimpleObject, Clone)]
-pub struct RewindReport {
-    pub period: String,
-    pub total_listen_time_minutes: i64,
-    pub total_tracks_played: i64,
-    pub top_artists: Vec<TopStatItem>,
-    pub top_genres: Vec<TopStatItem>,
-    pub peak_hour: i32,
-}
 
 #[derive(SimpleObject, Clone)]
 pub struct SharePayload {
@@ -274,12 +389,6 @@ pub struct DeleteLinkPayload {
     pub navidrome_cleanup_required: bool,
 }
 
-#[derive(SimpleObject, Clone)]
-pub struct DuplicateCluster {
-    pub group_id: String,
-    pub reason: String,
-    pub tracks: Vec<TrackItem>,
-}
 
 #[derive(SimpleObject, Clone)]
 pub struct LyricsAndCoverPayload {
@@ -288,21 +397,7 @@ pub struct LyricsAndCoverPayload {
     pub is_synced: bool,
 }
 
-#[derive(SimpleObject, Clone)]
-pub struct JamTrack {
-    pub id: i64,
-    pub title: String,
-    pub artist: String,
-    pub submitted_by: String,
-    pub votes: i32,
-}
 
-#[derive(SimpleObject, Clone)]
-pub struct JamRoomState {
-    pub room_id: String,
-    pub currently_playing: Option<JamTrack>,
-    pub queue: Vec<JamTrack>,
-}
 
 #[derive(InputObject)]
 pub struct HandoffInput {
@@ -368,6 +463,8 @@ fn plugin_context(db: &Db) -> crate::plugins::PluginContext {
 /// shown once, when it is created, and is not recoverable afterwards.
 #[derive(SimpleObject, Clone)]
 pub struct AppPassword {
+    /// Stable handle for this one credential. Labels repeat; this does not.
+    pub id: i64,
     pub label: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
@@ -380,6 +477,7 @@ pub struct AppPasswordCreated {
     pub token: String,
 }
 
+#[derive(Default)]
 pub struct QueryRoot;
 
 #[Object]
@@ -389,7 +487,12 @@ impl QueryRoot {
     }
 
     /// Looks up the target URL for a short link UID.
+    ///
+    /// Authenticated: the public half of this lives at `/listen`, which is the capability URL
+    /// people without an account open. This resolver is the dashboard's, and took no token, so any
+    /// caller could walk other accounts' links.
     async fn resolve_short_link(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<String>> {
+        caller(ctx)?;
         let db = ctx.data::<Db>()?;
         let target = db.get_short_link(&id)?;
         Ok(target)
@@ -410,7 +513,10 @@ impl QueryRoot {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> async_graphql::Result<Vec<LibraryItem>> {
-        authorize(ctx, &user_id)?;
+        let include_archive = authorize_library(ctx, &user_id)?;
+        if let Some(device) = device_id.as_deref() {
+            require_own_device(ctx, device)?;
+        }
         let db = ctx.data::<Db>()?;
         let kind = match kind {
             LibraryBrowseKind::Artist => BrowseKind::Artist,
@@ -431,6 +537,7 @@ impl QueryRoot {
                 search.as_deref(),
                 limit,
                 offset,
+                include_archive,
             )?
             .into_iter()
             .map(|item| LibraryItem {
@@ -477,56 +584,44 @@ impl QueryRoot {
             .collect())
     }
 
-    async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<String>> {
+    /// Every account on the server. Administrators only — this is the guest list, and a guest
+    /// enumerating the other guests is the first step of anything else they might try.
+    async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AccountPayload>> {
+        require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
-        Ok(db.list_users()?)
-    }
-
-    async fn authenticate(&self, ctx: &Context<'_>, username: String, passphrase: String) -> async_graphql::Result<AuthPayload> {
-        let db = ctx.data::<Db>()?;
-        let clean_user = username.trim().to_lowercase();
-        let clean_pass = passphrase.trim();
-        if clean_user.is_empty() || clean_pass.is_empty() {
-            return Ok(AuthPayload {
-                success: false,
-                username: clean_user,
-                token: String::new(),
-                message: "Username and passphrase cannot be empty".to_string(),
-            });
-        }
-        let valid = db.authenticate_user(&clean_user, clean_pass)?;
-        if valid {
-            Ok(AuthPayload {
-                success: true,
-                username: clean_user,
-                token: clean_pass.to_string(),
-                message: "Authenticated successfully".to_string(),
-            })
-        } else {
-            Ok(AuthPayload {
-                success: false,
-                username: clean_user,
-                token: String::new(),
-                message: "Invalid passphrase for this user".to_string(),
-            })
-        }
+        Ok(db.list_accounts()?.iter().map(account_payload).collect())
     }
 
     /// Looks an account up. **Does not create one** — it used to, through `get_or_create_user`,
     /// which made a read-only-looking query mint accounts as a side effect: opening the dashboard
     /// recreated a deleted account, with a new passphrase, and closed the first-run setup window
     /// behind it. Accounts come from `createAccount` and nowhere else.
-    async fn me(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<Option<AccountPayload>> {
-        authorize(ctx, &username)?;
+    /// The caller's own account. `username` is optional and defaults to whoever is asking.
+    ///
+    /// It has to be optional, because a client's first question is "who am I?" and it cannot name
+    /// itself to ask. The dashboard used to guess — it started from a hard-coded `alpha` and asked
+    /// `me(username: "alpha")` — so signing in as anyone else produced a refused query, no
+    /// correction, and a page that went on displaying somebody else's name.
+    async fn me(
+        &self,
+        ctx: &Context<'_>,
+        username: Option<String>,
+    ) -> async_graphql::Result<Option<AccountPayload>> {
+        let caller = ctx.data::<AuthedUser>().map_err(|_| forbidden("Unauthorized"))?;
+        let subject = username
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| caller.account.username.clone());
+        authorize(ctx, &subject)?;
         let db = ctx.data::<Db>()?;
-        let clean_user = username.trim().to_lowercase();
-        let Some((id, _, key)) = db.get_user_by_username(&clean_user)? else {
-            return Ok(None);
-        };
-        Ok(Some(account_payload(id, clean_user, key)))
+        Ok(db.account(subject.trim())?.as_ref().map(account_payload))
     }
 
+    /// The plugin registry. Administrators only: `plugin_context` reads whichever account owns the
+    /// first registered node to decide what is "connected", so for a guest this answered with the
+    /// admin's Navidrome address and username.
     async fn plugins(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgroPlugin>> {
+        require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
         let saved_states = db.get_plugin_states().unwrap_or_default();
         let mut plugins = crate::plugins::get_plugins(&plugin_context(db));
@@ -562,53 +657,6 @@ impl QueryRoot {
         }))
     }
 
-    async fn smart_cache_tracks(&self, _ctx: &Context<'_>, limit: Option<i32>) -> async_graphql::Result<Vec<TrackItem>> {
-        let count = limit.unwrap_or(15);
-        let sample_tracks = vec![
-            TrackItem {
-                id: "trk-1".to_string(),
-                title: "Midnight City".to_string(),
-                artist: "M83".to_string(),
-                album: Some("Hurry Up, We're Dreaming".to_string()),
-                duration_secs: 243,
-                stream_url: "/api/v1/stream/trk-1".to_string(),
-                artwork_url: Some("https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300".to_string()),
-            },
-            TrackItem {
-                id: "trk-2".to_string(),
-                title: "Get Lucky".to_string(),
-                artist: "Daft Punk".to_string(),
-                album: Some("Random Access Memories".to_string()),
-                duration_secs: 248,
-                stream_url: "/api/v1/stream/trk-2".to_string(),
-                artwork_url: Some("https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300".to_string()),
-            },
-            TrackItem {
-                id: "trk-3".to_string(),
-                title: "Resonance".to_string(),
-                artist: "HOME".to_string(),
-                album: Some("Odyssey".to_string()),
-                duration_secs: 212,
-                stream_url: "/api/v1/stream/trk-3".to_string(),
-                artwork_url: Some("https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300".to_string()),
-            },
-        ];
-        let mut res = Vec::new();
-        for i in 0..count {
-            let base = &sample_tracks[i as usize % sample_tracks.len()];
-            res.push(TrackItem {
-                id: format!("trk-{}", i + 1),
-                title: base.title.clone(),
-                artist: base.artist.clone(),
-                album: base.album.clone(),
-                duration_secs: base.duration_secs,
-                stream_url: base.stream_url.clone(),
-                artwork_url: base.artwork_url.clone(),
-            });
-        }
-        Ok(res)
-    }
-
     /// The account's listening, aggregated across every device that reports to it.
     ///
     /// `period` is DAY, WEEK, MONTH, YEAR or ALL. `deviceName` narrows it to one device's plays,
@@ -620,7 +668,14 @@ impl QueryRoot {
         period: Option<String>,
         device_name: Option<String>,
     ) -> async_graphql::Result<ListeningStats> {
-        authorize(ctx, &user_id)?;
+        // Your own always; a friend's only when they have opened their statistics. This used to be
+        // `authorize`, which is self-only — so `showStats` was a switch with nothing on the other
+        // side of it and a friend's listening could never be read however open they set it.
+        crate::schema_social::require_visible(
+            ctx,
+            &user_id,
+            crate::schema_social::Surface::Stats,
+        )?;
         let db = ctx.data::<Db>()?;
         let now = chrono::Utc::now().timestamp();
         let since = crate::stats::period_start(period.as_deref().unwrap_or("ALL"), now);
@@ -631,100 +686,6 @@ impl QueryRoot {
             since.as_deref(),
         )?;
         Ok(to_listening_stats(crate::stats::compute(&rows, 10, now)))
-    }
-
-    /// The year-in-review summary, over the same data as `listeningStats`.
-    ///
-    /// This returned hardcoded sample figures — a fixed 4280 minutes of Daft Punk — for as long as
-    /// it existed, because nothing wrote to the `scrobbles` table for it to read. It now reports
-    /// what actually happened.
-    async fn agro_rewind(
-        &self,
-        ctx: &Context<'_>,
-        user_id: String,
-        period: String,
-    ) -> async_graphql::Result<RewindReport> {
-        authorize(ctx, &user_id)?;
-        let db = ctx.data::<Db>()?;
-        let now = chrono::Utc::now().timestamp();
-        let since = crate::stats::period_start(&period, now);
-        let rows = db.scrobble_rows(&user_id, None, since.as_deref())?;
-        let stats = crate::stats::compute(&rows, 5, now);
-
-        let peak_hour = stats
-            .by_hour
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, secs)| **secs)
-            .map(|(hour, _)| hour as i32)
-            .unwrap_or(0);
-
-        Ok(RewindReport {
-            period,
-            total_listen_time_minutes: stats.secs_total / 60,
-            total_tracks_played: stats.plays_total,
-            top_artists: to_top_items(&stats.top_artists, stats.plays_total),
-            top_genres: to_top_items(&stats.top_genres, stats.plays_total),
-            peak_hour,
-        })
-    }
-
-    async fn duplicates_report(&self, _ctx: &Context<'_>) -> async_graphql::Result<Vec<DuplicateCluster>> {
-        Ok(vec![
-            DuplicateCluster {
-                group_id: "dup-1".to_string(),
-                reason: "Exact AcoustID Chromaprint Match (99.8%)".to_string(),
-                tracks: vec![
-                    TrackItem {
-                        id: "dup-1a".to_string(),
-                        title: "Get Lucky (FLAC 24bit)".to_string(),
-                        artist: "Daft Punk".to_string(),
-                        album: Some("Random Access Memories".to_string()),
-                        duration_secs: 248,
-                        stream_url: "/music/Daft_Punk/Get_Lucky.flac".to_string(),
-                        artwork_url: None,
-                    },
-                    TrackItem {
-                        id: "dup-1b".to_string(),
-                        title: "Get Lucky (MP3 320k)".to_string(),
-                        artist: "Daft Punk feat Pharrell".to_string(),
-                        album: Some("Random Access Memories".to_string()),
-                        duration_secs: 248,
-                        stream_url: "/music/Downloads/Get_Lucky.mp3".to_string(),
-                        artwork_url: None,
-                    },
-                ],
-            }
-        ])
-    }
-
-    async fn jam_room_state(&self, _ctx: &Context<'_>, room_id: String) -> async_graphql::Result<JamRoomState> {
-        Ok(JamRoomState {
-            room_id,
-            currently_playing: Some(JamTrack {
-                id: 1,
-                title: "Starboy".to_string(),
-                artist: "The Weeknd".to_string(),
-                submitted_by: "Alice".to_string(),
-                votes: 5,
-            }),
-            queue: vec![
-                JamTrack {
-                    id: 2,
-                    title: "One More Time".to_string(),
-                    artist: "Daft Punk".to_string(),
-                    submitted_by: "Bob".to_string(),
-                    votes: 8,
-                },
-                JamTrack {
-                    id: 3,
-                    title: "Blinding Lights".to_string(),
-                    artist: "The Weeknd".to_string(),
-                    submitted_by: "Charlie".to_string(),
-                    votes: 3,
-                },
-            ],
-        })
     }
 
     async fn active_nodes(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<NodePayload>> {
@@ -760,6 +721,7 @@ impl QueryRoot {
             .list_app_passwords(&user_id)?
             .into_iter()
             .map(|record| AppPassword {
+                id: record.id,
                 label: record.label,
                 created_at: record.created_at,
                 last_used_at: record.last_used_at,
@@ -776,8 +738,8 @@ impl QueryRoot {
         ctx: &Context<'_>,
         user_id: String,
     ) -> async_graphql::Result<LibraryStatsPayload> {
-        authorize(ctx, &user_id)?;
-        let stats = ctx.data::<Db>()?.library_stats(&user_id)?;
+        let include_archive = authorize_library(ctx, &user_id)?;
+        let stats = ctx.data::<Db>()?.library_stats(&user_id, include_archive)?;
         Ok(LibraryStatsPayload {
             track_count: stats.track_count,
             archived_count: stats.archived_count,
@@ -794,7 +756,8 @@ impl QueryRoot {
         device_id: String,
     ) -> async_graphql::Result<Vec<String>> {
         authorize(ctx, &user_id)?;
-        Ok(ctx.data::<Db>()?.device_holding_hashes(&device_id)?)
+        require_own_device(ctx, &device_id)?;
+        Ok(ctx.data::<Db>()?.device_holding_hashes(&user_id, &device_id)?)
     }
 
     /// Tracks another of this account's devices holds that this one does not.
@@ -939,21 +902,6 @@ fn to_entries(pairs: Vec<(String, i64)>) -> Vec<StatEntry> {
         .collect()
 }
 
-fn to_top_items(pairs: &[(String, i64)], total: i64) -> Vec<TopStatItem> {
-    pairs
-        .iter()
-        .map(|(name, count)| TopStatItem {
-            name: name.clone(),
-            count: *count,
-            // Guarded because an account with no plays at all reaches here on first launch.
-            percentage: if total > 0 {
-                (*count as f64 / total as f64) * 100.0
-            } else {
-                0.0
-            },
-        })
-        .collect()
-}
 
 /// A very stale client outbox should arrive in batches rather than in one request the server has
 /// to hold in memory whole.
@@ -963,28 +911,72 @@ const MAX_SCROBBLE_BATCH: usize = 500;
 /// the pairing QR unusable from a phone — and the QR carried no `server` parameter at all, which
 /// is the one field the Android client needs to know where to connect.
 fn public_url() -> String {
-    std::env::var("AGRO_PUBLIC_URL").unwrap_or_default()
+    std::env::var("AGRO_PUBLIC_URL")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://agro.kolbxyz.xyz".to_string())
 }
 
-fn account_payload(id: String, username: String, key: String) -> AccountPayload {
+fn account_payload(account: &crate::db_identity::Account) -> AccountPayload {
+    AccountPayload {
+        id: account.id.clone(),
+        username: account.username.clone(),
+        role: account.role.as_str().to_string(),
+        state: account.state.as_str().to_string(),
+        quota_bytes: account.quota_bytes,
+        connection_url: public_url(),
+    }
+}
+
+/// The pairing payload a device scans.
+///
+/// Carries a freshly minted **device token**, not the account passphrase. The old QR embedded the
+/// passphrase, so photographing it once handed over the account permanently rather than one
+/// revocable device.
+/// Who may look at `subject`'s library, and whether the server's archive counts as part of it.
+///
+/// Three answers, in order:
+///   * your own library — always, and for an administrator that includes the server archive,
+///     which belongs to whoever runs the instance;
+///   * an accepted friend's, but only the tracks their devices actually hold, and only when they
+///     have turned `shareLibrary` on;
+///   * otherwise nothing.
+///
+/// Being an administrator deliberately does *not* grant a view of somebody else's library. Running
+/// the server is a reason to see the server's own archive, not a reason to read the collections of
+/// the people using it.
+fn authorize_library(ctx: &Context<'_>, subject: &str) -> async_graphql::Result<bool> {
+    let caller = ctx.data::<AuthedUser>().map_err(|_| forbidden("Unauthorized"))?;
+    let db = ctx.data::<Db>()?;
+    let subject = subject.trim();
+
+    if caller.account.username.eq_ignore_ascii_case(subject) {
+        // The archive is the operator's own copy of the fleet's music.
+        return Ok(caller.account.role == Role::Admin);
+    }
+
+    let shared = db
+        .profile(subject)?
+        .map(|profile| profile.share_library)
+        .unwrap_or(false);
+    if shared && db.are_friends(&caller.account.username, subject)? {
+        return Ok(false);
+    }
+    Err(forbidden("that library is not shared with you"))
+}
+
+fn pairing_qr(username: &str, device_token: &str) -> String {
     let server = public_url();
-    let qr_data = if server.is_empty() {
-        format!("agro://connect?username={}&passphrase={}", username, key)
+    if server.is_empty() {
+        format!("agro://connect?username={username}&token={device_token}")
     } else {
         format!(
-            "agro://connect?username={}&passphrase={}&server={}",
+            "agro://connect?username={}&token={}&server={}",
             username,
-            key,
+            device_token,
             urlencoding::encode(&server)
         )
-    };
-    AccountPayload {
-        id,
-        username,
-        api_key: key.clone(),
-        passphrase: key,
-        connection_url: server,
-        qr_data,
     }
 }
 
@@ -1084,6 +1076,7 @@ fn to_library_payload(t: crate::db_library::LibraryTrack) -> LibraryTrackPayload
 /// Most a diff returns in one go. The offer is a prompt, not a migration plan.
 const MAX_MISSING: i64 = 200;
 
+#[derive(Default)]
 pub struct MutationRoot;
 
 #[Object]
@@ -1108,10 +1101,20 @@ impl MutationRoot {
         };
 
         let existing_nodes = db.get_active_nodes(&user_id).unwrap_or_default();
+        // Best name first. The invented one is the last resort, not the default: a device that was
+        // named when it was paired now keeps that name here too, instead of appearing as a random
+        // animal alongside a token labelled something else. One device, one name.
         let petname = if let Some(custom) = device_name.filter(|s| !s.trim().is_empty()) {
             custom
         } else if let Some(existing) = existing_nodes.iter().find(|n| n.device_id == device_id) {
             existing.petname.clone()
+        } else if let Some(label) = ctx
+            .data::<AuthedUser>()
+            .ok()
+            .map(|caller| caller.device_label.trim().to_string())
+            .filter(|label| !label.is_empty())
+        {
+            label
         } else {
             crate::passphrase::generate_random_petname()
         };
@@ -1181,10 +1184,25 @@ impl MutationRoot {
         input: SyncedSettingsInput,
     ) -> async_graphql::Result<SyncedSettingsPayload> {
         authorize(ctx, &input.user_id)?;
+
+        // The share fields are not ordinary preferences: `/listen` reads them to decide where it
+        // will forward a visitor, and it is served from the operator's own domain. A guest able to
+        // widen that allowlist has an open redirect wearing someone else's reputation.
+        let touches_sharing = input.share_domain.is_some()
+            || input.share_hosts.is_some()
+            || input.share_enabled.is_some();
+        if touches_sharing {
+            require_admin(ctx)?;
+            if let Some(hosts) = input.share_hosts.as_deref() {
+                validate_share_hosts(hosts)?;
+            }
+            if let Some(domain) = input.share_domain.as_deref() {
+                validate_host(domain)?;
+            }
+        }
+
         let db = ctx.data::<Db>()?;
-        let passphrase = db.get_user_by_username(&input.user_id)?
-            .map(|(_, _, p)| p)
-            .unwrap_or_else(|| "default".to_string());
+        let passphrase = db.settings_key(&input.user_id)?;
 
         let enc_server_url = input.server_url.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
         let enc_server_username = input.server_username.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
@@ -1239,20 +1257,26 @@ impl MutationRoot {
     async fn create_short_link(
         &self,
         ctx: &Context<'_>,
-        user_id: Option<String>,
+        user_id: String,
         target_url: String,
         source: Option<String>,
     ) -> async_graphql::Result<String> {
-        // A link attributed to an account has to be authorised as that account. This was missing:
-        // any valid token could mint links in anyone's name, and those links then appear in that
-        // account's link manager as if they had made them.
-        if let Some(owner) = user_id.as_deref() {
-            authorize(ctx, owner)?;
-        }
+        // A link attributed to an account has to be authorised as that account. `userId` used to
+        // be optional, and omitting it skipped this check entirely — minting an unowned link that
+        // no account could then list or revoke.
+        authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let target_url = target_url.trim();
         if target_url.is_empty() {
             return Err("Target URL cannot be empty".into());
+        }
+        if target_url.chars().count() > MAX_URL_LEN {
+            return Err(format!("A URL may be at most {MAX_URL_LEN} characters").into());
+        }
+        // A forwarder that will point at any scheme is a phishing primitive wearing the operator's
+        // domain. `/listen` checks the host against an allowlist; this checks the scheme.
+        if !target_url.starts_with("https://") && !target_url.starts_with("http://") {
+            return Err("A link target must be an http or https URL".into());
         }
         use rand::Rng;
         const CHARSET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -1264,7 +1288,7 @@ impl MutationRoot {
             })
             .collect();
 
-        db.create_short_link(&uid, target_url, user_id.as_deref(), source.as_deref())?;
+        db.create_short_link(&uid, target_url, Some(user_id.as_str()), source.as_deref())?;
         Ok(uid)
     }
 
@@ -1337,18 +1361,103 @@ impl MutationRoot {
         })
     }
 
-    async fn create_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<AccountPayload> {
+    // `createAccount` used to live here: an administrator could mint an account directly, with a
+    // passphrase handed back in the response and the account active immediately. It is gone
+    // deliberately. Accounts come from `POST /api/v1/signup` and nowhere else, so that every
+    // account is subject to the same rules — the username check, the rate limiter, the approval
+    // queue — rather than those rules applying to strangers and not to the people an admin adds.
+    // An admin who wants to let someone in mints an invite code, which skips the queue without
+    // skipping the process.
+
+    /// Approves, suspends or restores an account.
+    async fn set_account_state(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        state: String,
+    ) -> async_graphql::Result<AccountPayload> {
+        let admin = require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
-        let username = username.trim().to_lowercase();
-        if username.is_empty() {
-            return Err("An account needs a username".into());
+        let target = normalise_username(&username)?;
+        let next = AccountState::parse(&state);
+
+        // An admin who suspends themselves locks the deployment out of its own controls, and
+        // nothing else can restore them.
+        if target.eq_ignore_ascii_case(admin.username()) && !next.is_active() {
+            return Err(forbidden("an administrator cannot deactivate their own account"));
         }
-        if db.get_user_by_username(&username)?.is_some() {
-            return Err("That account already exists".into());
+        if !db.set_account_state(&target, next)? {
+            return Err("No such account".into());
         }
-        let passphrase = generate_passphrase();
-        let id = db.create_user(&username, &passphrase)?;
-        Ok(account_payload(id, username, passphrase))
+        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+    }
+
+    /// Sets how much spool a guest may occupy, in bytes. `0` means unlimited.
+    async fn set_account_quota(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        quota_bytes: i64,
+    ) -> async_graphql::Result<AccountPayload> {
+        require_admin(ctx)?;
+        let db = ctx.data::<Db>()?;
+        let target = normalise_username(&username)?;
+        if !db.set_account_quota(&target, quota_bytes)? {
+            return Err("No such account".into());
+        }
+        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+    }
+
+    /// Mints a device token and returns it as a scannable pairing payload.
+    ///
+    /// The pairing QR used to be built from the account passphrase, so photographing it once handed
+    /// over the account permanently. Each scan now gets its own revocable credential, which is why
+    /// this is a mutation: it creates something.
+    async fn pair_device(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        label: Option<String>,
+    ) -> async_graphql::Result<PairingPayload> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let label = label
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .ok_or("Name the device, so its token can be told apart from the others")?
+            .to_string();
+        let token = db.mint_device_token(&user_id, &label)?;
+        Ok(PairingPayload {
+            qr_data: pairing_qr(&user_id, &token),
+            token,
+            label,
+        })
+    }
+
+    /// Renames a device.
+    ///
+    /// Scoped to devices the caller owns. A name is what makes a device list usable, and until now
+    /// the only way to change one was to make the client send a different `deviceName` — which for
+    /// a name the *server* invented meant there was no way at all.
+    async fn rename_node(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        device_id: String,
+        petname: String,
+    ) -> async_graphql::Result<bool> {
+        authorize(ctx, &user_id)?;
+        require_own_device(ctx, &device_id)?;
+        let petname = petname.trim();
+        if petname.is_empty() {
+            return Err("A device needs a name".into());
+        }
+        if petname.chars().count() > 64 {
+            return Err("That name is too long".into());
+        }
+        let db = ctx.data::<Db>()?;
+        Ok(db.rename_node(&user_id, &device_id, petname)?)
     }
 
     /// Issues a credential for one client, so that client can be revoked on its own rather than
@@ -1365,33 +1474,68 @@ impl MutationRoot {
         if label.is_empty() {
             return Err("An app password needs a label, so you can tell which device it is".into());
         }
-        let token = generate_passphrase();
-        db.create_app_password(&user_id, &label, &token)?;
+        // Minted, not generated from the passphrase wordlist, and stored as a hash. The previous
+        // form wrote a plaintext four-word token straight into the legacy column, which the
+        // hashed-token lookup cannot match — so every credential this issued was dead on arrival.
+        let token = db.mint_device_token(&user_id, &label)?;
         Ok(AppPasswordCreated { label, token })
     }
 
+    /// Revokes one credential by the id `appPasswords` reported.
+    ///
+    /// Deliberately not by label. A label is a human note, chosen by the client and freely
+    /// repeated — a client that re-logs in on every launch leaves a row each time, all of them
+    /// named the same thing. Revoking by label signed out every one of them at once, which is
+    /// precisely the opposite of the per-device revocation these credentials exist to provide.
     async fn revoke_app_password(
         &self,
         ctx: &Context<'_>,
         user_id: String,
-        label: String,
+        id: i64,
     ) -> async_graphql::Result<bool> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
-        Ok(db.revoke_app_password(&user_id, &label)?)
+        Ok(db.revoke_app_password(&user_id, id)?)
     }
 
     /// Deletes an account with its nodes, session, settings and app passwords.
     ///
     /// Irreversible, and it can lock you out: deleting the last account puts the server back into
     /// first-run, where anyone who can reach it may create the next one. The caller confirms.
+    /// Removes an account and everything belonging to it.
+    ///
+    /// An administrator may remove anyone; anyone else may only remove themselves. Only the first
+    /// half of that used to be true — the check was `authorize`, which compares the caller to the
+    /// named account, so the admin could delete nobody but themselves and a guest account could
+    /// never be got rid of at all.
+    ///
+    /// The last administrator is protected. Deleting them would leave a server whose accounts
+    /// nobody can administer, and which no setup token can recover: one is only minted for a
+    /// database with *no* accounts, and the guests would still be there.
     async fn delete_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<bool> {
-        authorize(ctx, &username)?;
+        let authed = caller(ctx)?;
+        let target = normalise_username(&username)?;
+        let is_self = authed.username().eq_ignore_ascii_case(&target);
+
+        if !is_self && !authed.is_admin() {
+            return Err(forbidden("only an administrator can remove another account"));
+        }
+
         let db = ctx.data::<Db>()?;
-        Ok(db.delete_user(&username.trim().to_lowercase())?)
+        let Some(account) = db.account(&target)? else {
+            return Ok(false);
+        };
+        if account.is_admin() && db.admin_count()? <= 1 {
+            return Err(forbidden("the last administrator cannot be removed"));
+        }
+
+        Ok(db.delete_user(&target)?)
     }
 
+    /// Enables or disables a plugin. Administrators only: `plugins_state` has no user column, so
+    /// this writes server-global configuration and every account sees the result.
     async fn toggle_plugin(&self, ctx: &Context<'_>, plugin_id: String, is_enabled: bool) -> async_graphql::Result<bool> {
+        require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
         db.set_plugin_enabled(&plugin_id, is_enabled)?;
         Ok(true)
@@ -1457,6 +1601,7 @@ impl MutationRoot {
                     "petname": petname,
                 }),
             );
+            crate::schema_social::fan_out_presence(db, ws_hub, &input.user_id);
         }
 
         Ok(true)
@@ -1539,7 +1684,8 @@ impl MutationRoot {
         hashes: Vec<String>,
     ) -> async_graphql::Result<i32> {
         authorize(ctx, &user_id)?;
-        Ok(ctx.data::<Db>()?.forget_holdings(&device_id, &hashes)? as i32)
+        require_own_device(ctx, &device_id)?;
+        Ok(ctx.data::<Db>()?.forget_holdings(&user_id, &device_id, &hashes)? as i32)
     }
 
     /// Nudges one device to look at what it is missing.
@@ -1603,8 +1749,15 @@ impl MutationRoot {
         })
     }
 
-    async fn fetch_lyrics_and_cover(&self, _ctx: &Context<'_>, artist: String, title: String) -> async_graphql::Result<LyricsAndCoverPayload> {
-        // Query LRCLIB API dynamically
+    /// Looks a track's lyrics up at LRCLIB.
+    ///
+    /// Authenticated, and the inputs are bounded. This took no token at all and made an outbound
+    /// HTTP request per call with strings the caller chose — an unauthenticated amplification
+    /// primitive pointed at someone else's server.
+    async fn fetch_lyrics_and_cover(&self, ctx: &Context<'_>, artist: String, title: String) -> async_graphql::Result<LyricsAndCoverPayload> {
+        caller(ctx)?;
+        let artist = bounded(&artist, MAX_TAG_LEN, "artist")?;
+        let title = bounded(&title, MAX_TAG_LEN, "title")?;
         let client = reqwest::Client::new();
         let url = format!("https://lrclib.net/api/get?artist_name={}&track_name={}", urlencoding::encode(&artist), urlencoding::encode(&title));
         

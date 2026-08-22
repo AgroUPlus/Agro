@@ -190,25 +190,64 @@ impl Db {
         Ok(())
     }
 
-    pub fn forget_holdings(&self, device_id: &str, hashes: &[String]) -> Result<usize> {
+    /// Forgets holdings, scoped to the account that owns them.
+    ///
+    /// `user_id` is not decoration: this filtered on `device_id` alone, and device ids are chosen
+    /// by the client, so any account could delete another account's holding rows by naming its
+    /// device. The resolver's own check is not enough on its own — it verifies the *caller*, while
+    /// the device id is the part that was smuggled.
+    pub fn forget_holdings(
+        &self,
+        user_id: &str,
+        device_id: &str,
+        hashes: &[String],
+    ) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let mut removed = 0;
         for hash in hashes {
             removed += conn.execute(
-                "DELETE FROM device_holdings WHERE device_id = ?1 AND content_hash = ?2",
-                params![device_id, hash],
+                "DELETE FROM device_holdings
+                  WHERE user_id = ?1 AND device_id = ?2 AND content_hash = ?3",
+                params![user_id, device_id, hash],
             )?;
         }
         Ok(removed)
     }
 
-    pub fn device_holding_hashes(&self, device_id: &str) -> Result<Vec<String>> {
+    /// What a device holds. Scoped by account for the same reason [`Self::forget_holdings`] is.
+    pub fn device_holding_hashes(&self, user_id: &str, device_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT content_hash FROM device_holdings WHERE device_id = ?1 ORDER BY content_hash",
+            "SELECT content_hash FROM device_holdings
+              WHERE user_id = ?1 AND device_id = ?2 ORDER BY content_hash",
         )?;
-        let rows = stmt.query_map(params![device_id], |row| row.get(0))?;
+        let rows = stmt.query_map(params![user_id, device_id], |row| row.get(0))?;
         rows.collect()
+    }
+
+    /// How many spool bytes this account currently occupies.
+    ///
+    /// The one number a quota can honestly be checked against. `library_stats.total_bytes` cannot
+    /// be used for it: that counts every archived track in the deployment into every account's
+    /// total, so it reads the same for a guest holding nothing as for the admin.
+    pub fn spool_bytes_for(&self, user_id: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM spool_items WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+    }
+
+    /// Whether this account registered this device. Backs `require_own_device`.
+    pub fn device_belongs_to(&self, user_id: &str, device_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM registered_nodes WHERE user_id = ?1 AND device_id = ?2",
+            params![user_id, device_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     /// Tracks another device of this account holds that [`device_id`] does not.
@@ -293,7 +332,12 @@ impl Db {
         rows.collect()
     }
 
-    pub fn library_stats(&self, user_id: &str) -> Result<LibraryStats> {
+    /// Totals for one account's library.
+    ///
+    /// `include_archive` is what separates "my music" from "everything on this server". With it
+    /// always on — which is how this behaved — a member opening the dashboard was shown the
+    /// operator's whole archive as their own fleet total.
+    pub fn library_stats(&self, user_id: &str, include_archive: bool) -> Result<LibraryStats> {
         let conn = self.conn.lock().unwrap();
         let (track_count, archived_count, total_bytes) = conn.query_row(
             "SELECT COUNT(*),
@@ -302,8 +346,8 @@ impl Db {
              FROM library_tracks t
              WHERE EXISTS (SELECT 1 FROM device_holdings h
                            WHERE h.content_hash = t.content_hash AND h.user_id = ?1)
-                OR t.archived_path IS NOT NULL",
-            params![user_id],
+                OR (?2 AND t.archived_path IS NOT NULL)",
+            params![user_id, include_archive],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         let spool_bytes: i64 = conn.query_row(
@@ -340,15 +384,25 @@ impl Db {
         search: Option<&str>,
         limit: i64,
         offset: i64,
+        include_archive: bool,
     ) -> Result<Vec<BrowseItem>> {
         let conn = self.conn.lock().unwrap();
 
         // The scope and the search, written once because all three kinds need the same ones and
         // three copies of them would drift.
-        let scope = "FROM library_tracks t
+        // `include_archive` decides whether the server's own archive counts as part of this
+        // account's library. It used to be unconditional — `OR t.archived_path IS NOT NULL` —
+        // which handed every account the operator's entire collection as though it were theirs.
+        let archive_clause = if include_archive {
+            "OR t.archived_path IS NOT NULL"
+        } else {
+            ""
+        };
+        let scope = format!(
+            "FROM library_tracks t
              WHERE (EXISTS (SELECT 1 FROM device_holdings h
                             WHERE h.content_hash = t.content_hash AND h.user_id = :user)
-                    OR t.archived_path IS NOT NULL)
+                    {archive_clause})
                -- ESCAPE is not optional: SQLite has no default escape character, so without it
                -- the backslashes the search term is escaped with are matched literally and a
                -- search containing % or _ finds nothing at all.
@@ -356,7 +410,8 @@ impl Db {
                     OR t.title LIKE :like ESCAPE '\\'
                     OR t.artist LIKE :like ESCAPE '\\'
                     OR COALESCE(t.album, '') LIKE :like ESCAPE '\\'
-                    OR COALESCE(t.album_artist, '') LIKE :like ESCAPE '\\')";
+                    OR COALESCE(t.album_artist, '') LIKE :like ESCAPE '\\')"
+        );
 
         // Present when *this* device holds it. With no device selected nothing is greyed out, so
         // the expression is a constant rather than a join that would always be false.
@@ -657,28 +712,43 @@ impl Db {
 
     /// Spool entries to remove, oldest first — expired ones always, then whatever else it takes to
     /// get back under [`budget`].
-    pub fn spool_evictable(&self, budget: i64) -> Result<Vec<(String, i64)>> {
+    /// What to evict from **one account's** spool, oldest first, to bring it inside `budget`.
+    ///
+    /// Scoped to an account on purpose. This used to take one global budget and evict oldest-first
+    /// across everybody, so one account filling the spool evicted another's staged files — a guest
+    /// could push the admin's pending transfers off the disk just by uploading.
+    ///
+    /// Expired rows go regardless of the budget; that is the TTL, not the quota.
+    pub fn spool_evictable_for(&self, user_id: &str, budget: i64) -> Result<Vec<(String, i64)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT content_hash, size_bytes, expires_at FROM spool_items ORDER BY created_at ASC",
+            "SELECT content_hash, size_bytes, expires_at FROM spool_items
+              WHERE user_id = ?1 ORDER BY created_at ASC",
         )?;
         let now = chrono::Utc::now().to_rfc3339();
         let rows: Vec<(String, i64, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .query_map(params![user_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
             .collect::<Result<_>>()?;
 
         let mut total: i64 = rows.iter().map(|(_, size, _)| size).sum();
         let mut doomed = Vec::new();
         for (hash, size, expires_at) in rows {
-            if expires_at <= now {
-                doomed.push((hash, size));
-                total -= size;
-            } else if total > budget {
+            if expires_at <= now || total > budget {
                 doomed.push((hash, size));
                 total -= size;
             }
         }
         Ok(doomed)
+    }
+
+    /// Every account with something in the spool, for the periodic sweep.
+    pub fn spool_users(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT user_id FROM spool_items")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
     }
 
     /// Which account spooled a file, so a fetch can be scoped to it.
@@ -774,7 +844,7 @@ mod tests {
         // before choosing anything, was the one that could not run.
         let db = db_with(&[(track("h1", "Nirvana", "Come As You Are", 219_000), "laptop")]);
         let items = db
-            .library_browse("alpha", None, BrowseKind::Album, None, 50, 0)
+            .library_browse("alpha", None, BrowseKind::Album, None, 50, 0, true)
             .expect("a browse with no device selected must work");
         assert_eq!(items.len(), 1);
         assert!(items[0].present_on_device, "nothing to be missing from");
@@ -788,7 +858,7 @@ mod tests {
             (track("h2", "Pixies", "Debaser", 172_000), "phone"),
         ]);
         let items = db
-            .library_browse("alpha", Some("phone"), BrowseKind::Track, None, 50, 0)
+            .library_browse("alpha", Some("phone"), BrowseKind::Track, None, 50, 0, true)
             .unwrap();
         let missing: Vec<&str> = items
             .iter()
@@ -802,7 +872,7 @@ mod tests {
     fn browsing_by_artist_has_no_cover_to_point_at() {
         let db = db_with(&[(track("h1", "Nirvana", "Come As You Are", 219_000), "laptop")]);
         let items = db
-            .library_browse("alpha", None, BrowseKind::Artist, None, 50, 0)
+            .library_browse("alpha", None, BrowseKind::Artist, None, 50, 0, true)
             .unwrap();
         assert_eq!(items.len(), 1);
         assert!(items[0].cover_key.is_none(), "an artist has no one album to borrow art from");
@@ -815,7 +885,7 @@ mod tests {
             (track("h2", "Artist", "100% Real", 100_000), "laptop"),
         ]);
         let items = db
-            .library_browse("alpha", None, BrowseKind::Track, Some("%"), 50, 0)
+            .library_browse("alpha", None, BrowseKind::Track, Some("%"), 50, 0, true)
             .unwrap();
         assert_eq!(items.len(), 1, "`%` must match the track with a percent sign, not everything");
         assert_eq!(items[0].title, "100% Real");
@@ -886,8 +956,41 @@ mod tests {
         ]);
         assert!(db.missing_on_device("alpha", "phone", 10).unwrap().is_empty());
 
-        db.forget_holdings("phone", &["h1".to_string()]).unwrap();
+        db.forget_holdings("alpha", "phone", &["h1".to_string()]).unwrap();
         assert_eq!(db.missing_on_device("alpha", "phone", 10).unwrap().len(), 1);
+    }
+
+    /// `forget_holdings` filtered on the device alone, and device ids are chosen by the client —
+    /// so naming someone else's device deleted their rows.
+    #[test]
+    fn forgetting_a_holding_cannot_reach_another_account() {
+        let db = Db::new_in_memory().unwrap();
+        let t = track("h1", "A", "B", 100_000);
+        db.upsert_library_track(&t).unwrap();
+        db.upsert_holding("alpha", "admin-desktop", "h1", None).unwrap();
+
+        let removed = db
+            .forget_holdings("guest", "admin-desktop", &["h1".to_string()])
+            .unwrap();
+        assert_eq!(removed, 0, "a guest deleted the admin's holding");
+        assert_eq!(
+            db.device_holding_hashes("alpha", "admin-desktop").unwrap().len(),
+            1
+        );
+    }
+
+    /// The same smuggled device id, on the read side.
+    #[test]
+    fn device_holdings_cannot_be_read_across_accounts() {
+        let db = Db::new_in_memory().unwrap();
+        let t = track("h1", "A", "B", 100_000);
+        db.upsert_library_track(&t).unwrap();
+        db.upsert_holding("alpha", "admin-desktop", "h1", None).unwrap();
+
+        assert!(db
+            .device_holding_hashes("guest", "admin-desktop")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -916,15 +1019,36 @@ mod tests {
         }
         assert_eq!(db.spool_total_bytes().unwrap(), 300);
 
-        let doomed = db.spool_evictable(150).unwrap();
+        let doomed = db.spool_evictable_for("alpha", 150).unwrap();
         assert_eq!(doomed.len(), 2, "two must go to get under 150");
         assert_eq!(doomed[0].0, "a", "oldest first");
+    }
+
+    /// One account filling the spool used to evict another's staged files: the budget was global
+    /// and eviction ran oldest-first across everybody.
+    #[test]
+    fn spool_eviction_never_reaches_another_account() {
+        let db = Db::new_in_memory().unwrap();
+        db.spool_insert("admin-file", 100, "desktop", "alpha", 72).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        for (hash, size) in [("guest-1", 100), ("guest-2", 100)] {
+            db.spool_insert(hash, size, "phone", "guest", 72).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        let doomed = db.spool_evictable_for("guest", 100).unwrap();
+        assert!(
+            doomed.iter().all(|(hash, _)| hash.starts_with("guest")),
+            "a guest's eviction reached the admin's spool: {doomed:?}"
+        );
+        assert_eq!(db.spool_bytes_for("alpha").unwrap(), 100);
+        assert_eq!(db.spool_bytes_for("guest").unwrap(), 200);
     }
 
     #[test]
     fn spool_keeps_everything_when_under_budget() {
         let db = Db::new_in_memory().unwrap();
         db.spool_insert("a", 100, "laptop", "alpha", 72).unwrap();
-        assert!(db.spool_evictable(1_000).unwrap().is_empty());
+        assert!(db.spool_evictable_for("alpha", 1_000).unwrap().is_empty());
     }
 }

@@ -179,6 +179,262 @@ const MIGRATIONS: &[&str] = &[
         ON scrobbles(user_id, artist_name, track_title, played_at);
     CREATE INDEX IF NOT EXISTS idx_scrobbles_user_time ON scrobbles(user_id, played_at);
     ",
+    // 9 — one admin, and guests who cannot reach past themselves.
+    //
+    // Every account used to be identical in power, which was correct for one household on a LAN
+    // and is not correct for a server on the public internet. Three facts about an account now
+    // exist that did not:
+    //
+    // - `role`: exactly one account owns the deployment. The oldest account is promoted here,
+    //   because on an existing database that is the operator by construction.
+    // - `state`: an account can exist without being allowed to do anything, which is what makes an
+    //   approval queue a real gate rather than a label.
+    // - `quota_bytes`: how much spool a guest may occupy. `0` means unlimited, which is what the
+    //   admin gets — a cap on the person who owns the disk would be theatre.
+    //
+    // `passphrase_hash` and the token columns start empty and are filled in by
+    // `migrate_credentials` at startup, because hashing cannot be done in SQL. Empty hashes never
+    // verify, so every credential minted under the old plaintext scheme is dead the moment this
+    // runs — which is the intended clean break.
+    "
+    ALTER TABLE users ADD COLUMN passphrase_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
+    ALTER TABLE users ADD COLUMN state TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE users ADD COLUMN quota_bytes INTEGER NOT NULL DEFAULT 10485760;
+
+    UPDATE users SET role = 'admin', quota_bytes = 0
+     WHERE id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1);
+
+    -- The settings fields in `synced_settings` are encrypted with the account passphrase. That
+    -- passphrase is now an Argon2 hash and cannot be read back, so the key moves to its own
+    -- column. Existing rows keep decrypting because the old plaintext `api_key` *was* that key.
+    ALTER TABLE users ADD COLUMN settings_key TEXT NOT NULL DEFAULT '';
+    UPDATE users SET settings_key = api_key WHERE settings_key = '';
+
+    ALTER TABLE app_passwords ADD COLUMN token_prefix TEXT NOT NULL DEFAULT '';
+    ALTER TABLE app_passwords ADD COLUMN token_hash TEXT NOT NULL DEFAULT '';
+    CREATE INDEX IF NOT EXISTS idx_app_passwords_prefix ON app_passwords(token_prefix);
+    ",
+    // 10 — device ids belong to an account.
+    //
+    // `registered_nodes.device_id` was the primary key on its own, but device ids are chosen by
+    // the client. Two accounts could therefore collide on one, and `registerNode` — plus the
+    // implicit node upsert inside `updateHandoff` — would let a guest overwrite the admin's node
+    // row, including the `current_track` and `ip_address` shown in the dashboard.
+    //
+    // SQLite cannot alter a primary key in place, so the table is rebuilt. Rows that collided
+    // under the old key are already lost; this only stops it happening again.
+    "
+    CREATE TABLE registered_nodes_v2 (
+        device_id     TEXT NOT NULL,
+        user_id       TEXT NOT NULL,
+        petname       TEXT NOT NULL,
+        client_type   TEXT NOT NULL,
+        ip_address    TEXT,
+        version       TEXT,
+        current_track TEXT,
+        last_seen_at  TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id)
+    );
+    INSERT OR IGNORE INTO registered_nodes_v2
+        (device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at)
+        SELECT device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at
+          FROM registered_nodes;
+    DROP TABLE registered_nodes;
+    ALTER TABLE registered_nodes_v2 RENAME TO registered_nodes;
+    CREATE INDEX IF NOT EXISTS idx_nodes_user ON registered_nodes(user_id);
+    ",
+    // 11 — invitations, and the queue an invited account waits in.
+    "
+    CREATE TABLE IF NOT EXISTS invites (
+        code       TEXT PRIMARY KEY,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        max_uses   INTEGER NOT NULL DEFAULT 1,
+        used_count INTEGER NOT NULL DEFAULT 0,
+        revoked    INTEGER NOT NULL DEFAULT 0
+    );
+    ",
+    // 12 — friendships, and the visibility that gates what they reveal.
+    //
+    // Both columns default to 0. A privacy setting that defaults open has already leaked by the
+    // time the user finds it.
+    "
+    CREATE TABLE IF NOT EXISTS friendships (
+        user_id    TEXT NOT NULL,
+        friend_id  TEXT NOT NULL,
+        state      TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, friend_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_friendships_friend ON friendships(friend_id);
+
+    ALTER TABLE users ADD COLUMN show_now_playing INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users ADD COLUMN show_stats INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users ADD COLUMN private_until TEXT;
+    ",
+    // 13 — the profile a friend actually sees, and who is tuned in to whom.
+    //
+    // `discoverable` joins the two visibility columns from 12 and defaults closed for the same
+    // reason they do: being listed in a public directory is a thing to opt into, not out of.
+    //
+    // `listen_along` is keyed on the listener alone. You can be followed by many people and follow
+    // at most one — a second row for the same listener is not a state worth representing, it is two
+    // players fighting over one output.
+    "
+    ALTER TABLE users ADD COLUMN display_name TEXT;
+    ALTER TABLE users ADD COLUMN bio TEXT;
+    ALTER TABLE users ADD COLUMN avatar_url TEXT;
+    ALTER TABLE users ADD COLUMN discoverable INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS listen_along (
+        listener_id TEXT PRIMARY KEY,
+        host_id     TEXT NOT NULL,
+        started_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_listen_along_host ON listen_along(host_id);
+    
+    ",
+    // 14 — a library is private until its owner says otherwise.
+    //
+    // `library_stats` and `library_browse` both scoped their results as "tracks this user holds
+    // OR anything archived on the server", which meant every account saw the operator's whole
+    // archive counted and listed as its own library. This adds the switch that makes sharing a
+    // decision: off by default, and only ever consulted for someone who is already an accepted
+    // friend.
+    "
+    ALTER TABLE users ADD COLUMN share_library INTEGER NOT NULL DEFAULT 0;
+    ",
+    // 15 — jam sessions: a queue several people build together.
+    //
+    // Distinct from listen-along, which mirrors one person's playback. A jam has no single source:
+    // anyone in it can add, and in `democracy` mode the order is decided by votes rather than by
+    // whoever added first. The creator is its host — the only member who can change the mode, drop
+    // somebody else's track, or end it.
+    //
+    // `code` is the whole credential for joining, so it is unique and indexed. Votes are one per
+    // person per track, enforced by the primary key rather than by a check that could be raced.
+    "
+    CREATE TABLE IF NOT EXISTS jams (
+        id         TEXT PRIMARY KEY,
+        code       TEXT NOT NULL UNIQUE,
+        host       TEXT NOT NULL,
+        mode       TEXT NOT NULL DEFAULT 'democracy',
+        created_at TEXT NOT NULL,
+        ended_at   TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS jam_members (
+        jam_id    TEXT NOT NULL,
+        username  TEXT NOT NULL,
+        joined_at TEXT NOT NULL,
+        PRIMARY KEY (jam_id, username)
+    );
+
+    CREATE TABLE IF NOT EXISTS jam_tracks (
+        id          TEXT PRIMARY KEY,
+        jam_id      TEXT NOT NULL,
+        added_by    TEXT NOT NULL,
+        track_uri   TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        artist      TEXT NOT NULL,
+        artwork_url TEXT,
+        added_at    TEXT NOT NULL,
+        played      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_jam_tracks_jam ON jam_tracks(jam_id);
+
+    CREATE TABLE IF NOT EXISTS jam_votes (
+        jam_id   TEXT NOT NULL,
+        track_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        PRIMARY KEY (track_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_jam_votes_track ON jam_votes(track_id);
+    ",
+    // 16 — the jam session becomes the server's, not the clients'.
+    //
+    // Two changes, both of which move a decision out of the apps:
+    //
+    // `state` replaces the `played` flag. A flag could say "done" but not "waiting for the room to
+    // accept it", so in democracy mode a track had nowhere to sit between being suggested and being
+    // queued — votes ended up *sorting* the queue instead of deciding what got into it.
+    //
+    // `now_playing_id` and `started_at` make the server the clock. Every device used to pick the
+    // top of the queue and start it whenever it happened to resolve, so a room played the same
+    // order at different times and nothing could say what was being heard *now*. With a start time
+    // held here, everyone plays the same track from the same offset and someone joining late is
+    // dropped in at the right place.
+    "
+    ALTER TABLE jam_tracks ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jam_tracks ADD COLUMN state TEXT NOT NULL DEFAULT 'queued';
+    UPDATE jam_tracks SET state = 'played' WHERE played = 1;
+    CREATE INDEX IF NOT EXISTS idx_jam_tracks_state ON jam_tracks(jam_id, state);
+
+    ALTER TABLE jams ADD COLUMN now_playing_id TEXT;
+    ALTER TABLE jams ADD COLUMN started_at TEXT;
+    ",
+    // 17 — skipping, and jams a friend can find.
+    //
+    // `visibility` is how a jam stops being a secret. A code is the whole credential for joining,
+    // which is right for a room you invite people into by hand, but it means a friend cannot join
+    // something you are happy for them to join without you sending them a string. `friends` opens
+    // it to accepted friends only — never to the instance at large.
+    //
+    // `jam_skips` is one vote per person per track, keyed the same way approvals are. Skipping is
+    // deliberately not the same act as approving: an approval decides what enters the queue and is
+    // one-way, a skip decides that the thing playing *now* should stop, and dies with the track.
+    "
+    ALTER TABLE jams ADD COLUMN visibility TEXT NOT NULL DEFAULT 'code';
+
+    CREATE TABLE IF NOT EXISTS jam_skips (
+        jam_id   TEXT NOT NULL,
+        track_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        PRIMARY KEY (track_id, username)
+    );
+    CREATE INDEX IF NOT EXISTS idx_jam_skips_track ON jam_skips(track_id);
+    ",
+    // 18 — songs handed to a friend, and the consent that lets a history be read.
+    //
+    // A drop is a message that happens to be about a track, so it stores the track by *description*
+    // rather than by reference. There is no foreign key to `library_tracks` because the sender may
+    // not have the file here at all — a drop from YouTube or a streaming backend is still a drop —
+    // and a key that only sometimes resolves is worse than an honest copy of the metadata.
+    // `content_hash` and `track_uri` ride along when the sender happens to have them, so a
+    // recipient can be offered the file rather than only the name.
+    //
+    // Nothing here cascades on the sender. A song someone gave you is yours: unfriending them, or
+    // their account being deleted, is not a reason to take it back out of your inbox.
+    "
+    CREATE TABLE IF NOT EXISTS track_drops (
+        id           TEXT PRIMARY KEY,
+        from_user    TEXT NOT NULL,
+        to_user      TEXT NOT NULL,
+        track_title  TEXT NOT NULL,
+        artist_name  TEXT NOT NULL,
+        album_name   TEXT,
+        artwork_url  TEXT,
+        content_hash TEXT,
+        track_uri    TEXT,
+        note         TEXT,
+        created_at   TEXT NOT NULL,
+        read_at      TEXT,
+        archived     INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_drops_inbox
+        ON track_drops(to_user, archived, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_drops_sent
+        ON track_drops(from_user, created_at DESC);
+
+    -- The activity feed gets its own switch rather than reusing `show_now_playing`. Letting
+    -- someone see what you are playing at this moment and letting them read what you have been
+    -- into for the last month are different consents, and the second is much the more revealing
+    -- of the two: it is a history, and it keeps being true after the moment has passed. Defaults
+    -- off, like every other switch on this account.
+    ALTER TABLE users ADD COLUMN show_activity INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
 
 #[derive(Clone)]
@@ -498,27 +754,32 @@ impl Db {
     pub fn list_app_passwords(&self, username: &str) -> Result<Vec<AppPasswordRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT a.label, a.created_at, a.last_used_at FROM app_passwords a
+            "SELECT a.rowid, a.label, a.created_at, a.last_used_at FROM app_passwords a
              JOIN users u ON u.id = a.user_id
-             WHERE u.username = ?1 ORDER BY a.created_at DESC",
+             WHERE u.username = ?1 COLLATE NOCASE ORDER BY a.created_at DESC",
         )?;
-        let rows = stmt.query_map(params![username], |row| {
+        let rows = stmt.query_map(params![username.trim()], |row| {
             Ok(AppPasswordRecord {
-                label: row.get(0)?,
-                created_at: row.get(1)?,
-                last_used_at: row.get(2)?,
+                id: row.get(0)?,
+                label: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used_at: row.get(3)?,
             })
         })?;
         rows.collect()
     }
 
-    pub fn revoke_app_password(&self, username: &str, label: &str) -> Result<bool> {
+    /// Revokes one credential, identified by the id [`list_app_passwords`] reported.
+    ///
+    /// Scoped to the account in the same statement rather than checked beforehand: an id is just a
+    /// number, and a caller who guesses someone else's must not have it deleted for them.
+    pub fn revoke_app_password(&self, username: &str, id: i64) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let removed = conn.execute(
-            "DELETE FROM app_passwords WHERE label = ?1 AND user_id = (
-                 SELECT id FROM users WHERE username = ?2
+            "DELETE FROM app_passwords WHERE rowid = ?1 AND user_id = (
+                 SELECT id FROM users WHERE username = ?2 COLLATE NOCASE
              )",
-            params![label, username],
+            params![id, username.trim()],
         )?;
         Ok(removed > 0)
     }
@@ -693,13 +954,17 @@ impl Db {
     ) -> Result<Vec<ScrobbleRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT track_title, artist_name, album_name, genre, duration_secs, device_name,
-                    played_at
-             FROM scrobbles
-             WHERE user_id = ?1
-               AND (?2 IS NULL OR device_name = ?2)
-               AND (?3 IS NULL OR played_at >= ?3)
-             ORDER BY played_at",
+            "SELECT s.track_title, s.artist_name, s.album_name, s.genre, s.duration_secs,
+                    COALESCE(NULLIF(rn.petname, ''), s.device_name) AS device_name,
+                    s.played_at
+             FROM scrobbles s
+             LEFT JOIN registered_nodes rn
+                    ON rn.user_id = s.user_id COLLATE NOCASE
+                   AND (rn.device_id = s.device_name OR rn.petname = s.device_name)
+             WHERE s.user_id = ?1
+               AND (?2 IS NULL OR s.device_name = ?2 OR rn.petname = ?2 OR rn.device_id = ?2)
+               AND (?3 IS NULL OR s.played_at >= ?3)
+             ORDER BY s.played_at",
         )?;
         let mut rows = stmt.query(params![user_id, device_name, since])?;
         let mut out = Vec::new();
@@ -770,8 +1035,7 @@ impl Db {
         conn.execute(
             "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(device_id) DO UPDATE SET
-             user_id = excluded.user_id,
+             ON CONFLICT(user_id, device_id) DO UPDATE SET
              petname = CASE WHEN excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
              client_type = excluded.client_type,
              ip_address = COALESCE(excluded.ip_address, registered_nodes.ip_address),
@@ -804,6 +1068,40 @@ impl Db {
             })
         })?;
         rows.collect()
+    }
+
+    /// Renames one device.
+    ///
+    /// The name is the only handle a person has on a device — `device_id` is opaque and the client
+    /// picks it — so being stuck with an auto-generated one until the client happens to send a new
+    /// name is a poor place to leave someone.
+    pub fn rename_node(&self, user_id: &str, device_id: &str, petname: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let old_petname: Option<String> = conn
+            .query_row(
+                "SELECT petname FROM registered_nodes WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
+                params![user_id.trim(), device_id.trim()],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let changed = conn.execute(
+            "UPDATE registered_nodes SET petname = ?3
+              WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
+            params![user_id.trim(), device_id.trim(), petname.trim()],
+        )?;
+
+        if let Some(old) = old_petname {
+            if !old.is_empty() {
+                let _ = conn.execute(
+                    "UPDATE scrobbles SET device_name = ?3
+                     WHERE user_id = ?1 COLLATE NOCASE AND (device_name = ?2 OR device_name = ?4)",
+                    params![user_id.trim(), device_id.trim(), petname.trim(), old.trim()],
+                );
+            }
+        }
+
+        Ok(changed > 0)
     }
 
     pub fn get_active_nodes(&self, user_id: &str) -> Result<Vec<NodeRecord>> {
@@ -1201,6 +1499,13 @@ pub struct HandoffRecord {
 }
 
 pub struct AppPasswordRecord {
+    /// The row's `rowid`, used as the public handle for one credential.
+    ///
+    /// Labels are chosen by the client and are not unique — several devices calling themselves
+    /// `wander-desktop` are the normal case, not an edge one — so a label cannot identify which
+    /// credential to revoke. The token itself obviously cannot be the handle. `rowid` is stable,
+    /// unique and reveals nothing.
+    pub id: i64,
     pub label: String,
     pub created_at: String,
     pub last_used_at: Option<String>,

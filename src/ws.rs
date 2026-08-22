@@ -54,6 +54,17 @@ impl WsHub {
         });
     }
 
+    /// Sends the same message to several accounts.
+    ///
+    /// One send per recipient rather than a broadcast with a recipient list, because the socket
+    /// side filters on `user_id` alone — a list in the payload would arrive at everyone and rely on
+    /// each client to ignore what is not theirs, which is not a boundary.
+    pub fn notify_users(&self, user_ids: &[String], msg_type: &str, payload: serde_json::Value) {
+        for user_id in user_ids {
+            self.notify_user(user_id, msg_type, payload.clone());
+        }
+    }
+
     /// Sends to exactly one device.
     pub fn notify_device(
         &self,
@@ -86,7 +97,7 @@ pub async fn ws_handler(
     user: Option<axum::Extension<AuthedUser>>,
     Query(query): Query<SocketQuery>,
 ) -> Response {
-    let username = user.map(|u| u.username.clone());
+    let username = user.map(|u| u.username().to_string());
     let device = query.device;
     ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub, username, device))
 }

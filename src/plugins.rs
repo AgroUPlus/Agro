@@ -43,15 +43,6 @@ fn meta(key: &str, value: impl Into<String>) -> PluginMetaItem {
     PluginMetaItem { key: key.to_string(), value: value.into() }
 }
 
-/// Marks the features whose resolvers still answer with sample data. Saying so in the list is the
-/// difference between a roadmap and a lie about what is running.
-fn preview(mut plugin: AgroPlugin) -> AgroPlugin {
-    plugin.is_connected = false;
-    plugin.latency_ms = None;
-    plugin.metadata.insert(0, meta("Status", "Preview — resolver returns sample data"));
-    plugin
-}
-
 pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
     vec![
         AgroPlugin {
@@ -124,19 +115,6 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
                 meta("Fetched by", "The client, not the server"),
             ],
         },
-        preview(AgroPlugin {
-            id: "acoustid-dedup".to_string(),
-            name: "Duplicate detection".to_string(),
-            description: "Finds the same recording held in several formats. The `duplicatesReport` query is scaffolded and answers with sample data.".to_string(),
-            version: "0.0.0".to_string(),
-            category: "Curation".to_string(),
-            target: "Core".to_string(),
-            is_enabled: false,
-            is_connected: false,
-            latency_ms: None,
-            endpoint: None,
-            metadata: vec![meta("Query", "duplicatesReport")],
-        }),
         AgroPlugin {
             id: "ephemeral-share".to_string(),
             name: "Ephemeral share links".to_string(),
@@ -153,18 +131,23 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
                 meta("Token", "UUIDv4"),
             ],
         },
-        preview(AgroPlugin {
-            id: "jam-session".to_string(),
-            name: "Jam collaborative listening".to_string(),
-            description: "Shared listening room with a voted queue. The `jamRoomState` query is scaffolded and answers with sample data.".to_string(),
-            version: "0.0.0".to_string(),
+        AgroPlugin {
+            id: "listen-along".to_string(),
+            name: "Listen along".to_string(),
+            description: "Follow a friend's playback in real time. Supersedes the jam-session \
+                placeholder, which advertised a query that no longer exists."
+                .to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Social".to_string(),
             target: "Core".to_string(),
-            is_enabled: false,
-            is_connected: false,
+            is_enabled: true,
+            is_connected: true,
             latency_ms: None,
-            endpoint: None,
-            metadata: vec![meta("Query", "jamRoomState")],
-        }),
+            endpoint: Some("/ws/sync".to_string()),
+            metadata: vec![
+                meta("Started by", "startListenAlong"),
+                meta("Pushed as", "LISTEN_ALONG"),
+            ],
+        },
     ]
 }

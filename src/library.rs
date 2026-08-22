@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio_util::io::StreamReader;
 
 use crate::auth::AuthedUser;
@@ -91,7 +91,7 @@ pub async fn begin_upload(
     user: axum::Extension<AuthedUser>,
     Json(body): Json<BeginUpload>,
 ) -> Response {
-    let user_id = user.username.clone();
+    let user_id = user.username().to_string();
 
     if !is_sha256_hex(&body.content_hash) {
         return bad_request("contentHash must be a lowercase hex SHA-256");
@@ -133,14 +133,23 @@ pub async fn begin_upload(
         return server_error(&format!("could not record that holding: {err}"));
     }
 
-    // Already archived, or already spooled: the bytes are here, so there is nothing to send. This
-    // is the single biggest saving in the whole feature — a re-upload of a known library moves no
-    // audio at all.
-    let archived = matches!(
-        state.db.library_track(&body.content_hash),
-        Ok(Some(ref t)) if t.archived_path.is_some()
+    // Already here, so there is nothing to send. This is the single biggest saving in the whole
+    // feature — a re-upload of a known library moves no audio at all.
+    //
+    // Scoped to what *this* account may legitimately have. Both halves used to be global: a guest
+    // could declare any hash and be told it already existed, which turned this endpoint into an
+    // oracle for the admin's library — and handed the guest a holding row on the admin's file
+    // without a byte moving. The archive is the admin's, so only the admin can dedup against it,
+    // and a spooled file only counts for the account it was spooled for.
+    let archived = user.is_admin()
+        && matches!(
+            state.db.library_track(&body.content_hash),
+            Ok(Some(ref t)) if t.archived_path.is_some()
+        );
+    let spooled = matches!(
+        state.db.spool_owner(&body.content_hash),
+        Ok(Some(ref owner)) if owner == &user_id
     );
-    let spooled = state.db.spool_contains(&body.content_hash).unwrap_or(false);
     if archived || spooled {
         return Json(BeginUploadResponse::Exists {
             content_hash: body.content_hash,
@@ -169,8 +178,25 @@ pub async fn begin_upload(
         .into_response();
     }
 
+    // Only the admin's uploads are filed into the library. A guest's bytes go to the spool, where
+    // they are capped and expire — so `archive()` is unreachable for them, and with it the shared
+    // library tree, its filename collisions and the archive hook.
+    let target = if state.storage.archives() && user.is_admin() {
+        "archive"
+    } else {
+        "spool"
+    };
+
+    // Checked before a byte is accepted, and again while they arrive: this is only the declared
+    // size, and the declaration is the client's.
+    if let Some(quota) = user.account.effective_quota() {
+        let used = state.db.spool_bytes_for(&user_id).unwrap_or(0);
+        if used + body.size_bytes > quota {
+            return quota_exceeded(used, quota);
+        }
+    }
+
     let upload_id = uuid::Uuid::new_v4().to_string();
-    let target = if state.storage.archives() { "archive" } else { "spool" };
     if let Err(err) = state.db.create_upload(
         &upload_id,
         &user_id,
@@ -191,6 +217,22 @@ pub async fn begin_upload(
     .into_response()
 }
 
+/// Refuses an upload that would not fit, and says by how much.
+///
+/// A number rather than a bare "no": a client that cannot see the ceiling cannot show the user
+/// what to delete.
+fn quota_exceeded(used: i64, quota: i64) -> Response {
+    (
+        StatusCode::from_u16(507).unwrap_or(StatusCode::INSUFFICIENT_STORAGE),
+        Json(json!({
+            "error": "quota exceeded",
+            "usedBytes": used,
+            "quotaBytes": quota,
+        })),
+    )
+        .into_response()
+}
+
 /// Streams the bytes in.
 ///
 /// The body is copied straight to disk in fixed-size chunks. It is never collected into a `Vec`:
@@ -206,7 +248,7 @@ pub async fn put_upload(
     let Ok(Some(session)) = state.db.upload_session(&upload_id) else {
         return (StatusCode::NOT_FOUND, "no such upload").into_response();
     };
-    if session.user_id != user.username {
+    if session.user_id != user.username() {
         return (StatusCode::FORBIDDEN, "that upload is not yours").into_response();
     }
 
@@ -251,10 +293,24 @@ pub async fn put_upload(
         return server_error(&format!("could not seek the part file: {err}"));
     }
 
+    // How many more bytes this request may write.
+    //
+    // The declared `sizeBytes` was the *only* thing ever checked, at the moment the upload was
+    // declared, while the copy below was unbounded — so a client could declare ten megabytes and
+    // then send ten gigabytes. The ceiling is whichever is tighter: what was declared, or what is
+    // left of the account's quota.
+    let mut allowance = (session.size_bytes - offset).max(0);
+    if let Some(quota) = user.account.effective_quota() {
+        let used = state.db.spool_bytes_for(user.username()).unwrap_or(0);
+        allowance = allowance.min((quota - used - offset).max(0));
+    }
+
     let stream = body
         .into_data_stream()
         .map_err(|err| std::io::Error::other(err.to_string()));
-    let mut reader = StreamReader::new(stream);
+    // `take` is the enforcement: the reader simply ends at the allowance, so an over-long body is
+    // truncated rather than trusted, and the hash check in `finish_upload` then rejects it.
+    let mut reader = StreamReader::new(stream).take(allowance as u64 + 1);
 
     let written = match tokio::io::copy(&mut reader, &mut file).await {
         Ok(n) => n as i64,
@@ -268,6 +324,21 @@ pub async fn put_upload(
                 .into_response();
         }
     };
+
+    // One byte past the allowance means the client was sending more than it declared or more than
+    // it may hold. The part file goes with it: a truncated body is not something to resume from,
+    // and leaving it on disk is the unattributed sink this is meant to prevent.
+    if written > allowance {
+        let _ = file.flush().await;
+        drop(file);
+        let _ = tokio::fs::remove_file(&part_path).await;
+        let _ = state.db.delete_upload(&upload_id);
+        let used = state.db.spool_bytes_for(user.username()).unwrap_or(0);
+        return match user.account.effective_quota() {
+            Some(quota) => quota_exceeded(used, quota),
+            None => bad_request("that upload sent more bytes than it declared"),
+        };
+    }
     if let Err(err) = file.flush().await {
         return server_error(&format!("could not flush the part file: {err}"));
     }
@@ -517,7 +588,7 @@ async fn spool(
         return server_error(&format!("could not record the spooled file: {err}"));
     }
 
-    evict_spool(state).await;
+    evict_spool(state, &session.user_id).await;
 
     state.ws_hub.notify_user(
         &session.user_id,
@@ -529,13 +600,41 @@ async fn spool(
 }
 
 /// Drops expired spool entries, then the oldest, until the spool is back under its budget.
-pub async fn evict_spool(state: &AppState) {
-    let Ok(doomed) = state.db.spool_evictable(state.storage.spool_max_bytes as i64) else {
+pub async fn evict_spool(state: &AppState, user_id: &str) {
+    // The account's own quota is the budget, falling back to the deployment-wide setting for an
+    // uncapped account — the admin, who is bounded by the disk rather than by a number.
+    let budget = state
+        .db
+        .account(user_id)
+        .ok()
+        .flatten()
+        .and_then(|a| a.effective_quota())
+        .unwrap_or(state.storage.spool_max_bytes as i64);
+
+    let Ok(doomed) = state.db.spool_evictable_for(user_id, budget) else {
         return;
     };
     for (hash, _) in doomed {
         let _ = tokio::fs::remove_file(state.storage.spool_file(&hash)).await;
         let _ = state.db.spool_delete(&hash);
+    }
+}
+
+/// Sweeps every account's spool, and reclaims uploads that were started and abandoned.
+///
+/// Eviction only ever ran as a side effect of a successful spool write, which meant it never ran
+/// at all on a deployment with a library root — every upload is archived there, so nothing was
+/// spooled and nothing was swept. Abandoned `.part` files were worse: `expired_uploads` existed
+/// with no callers whatsoever, so a client that started an upload and vanished left bytes on disk
+/// that nothing would ever attribute or remove.
+pub async fn sweep_storage(state: &AppState) {
+    for user_id in state.db.spool_users().unwrap_or_default() {
+        evict_spool(state, &user_id).await;
+    }
+
+    for upload in state.db.expired_uploads().unwrap_or_default() {
+        let _ = tokio::fs::remove_file(state.storage.part_file(&upload)).await;
+        let _ = state.db.delete_upload(&upload);
     }
 }
 
@@ -553,7 +652,7 @@ pub async fn fetch(
     // library (already filed). Serving the archive too is what makes this work at all in the
     // common setup — with a library root configured every upload is archived rather than spooled,
     // so a spool-only endpoint would have nothing to hand back and peer sync would never fire.
-    let path = match resolve_fetchable(&state, &user.username, &content_hash) {
+    let path = match resolve_fetchable(&state, &user, &content_hash) {
         Some(path) => path,
         // One answer for "not yours" and "not here" alike: no point confirming a hash exists to
         // someone probing for it.
@@ -586,9 +685,16 @@ pub async fn fetch(
 /// matters here because the library grid asks for a screenful of these at once.
 pub async fn cover(
     State(state): State<AppState>,
-    _user: axum::Extension<AuthedUser>,
+    user: axum::Extension<AuthedUser>,
     AxumPath(album_key): AxumPath<String>,
 ) -> Response {
+    // Covers belong to archived albums, and the archive is the admin's. The identity used to be
+    // bound as `_user` and discarded, which made this a picture-shaped listing of the library for
+    // anyone with a token.
+    if !user.is_admin() {
+        return (StatusCode::NOT_FOUND, "no cover for that album").into_response();
+    }
+
     // The key is generated as hex; anything else is not a key this server minted, and refusing it
     // here is what keeps the filename below from being able to express a path.
     if album_key.len() != 32 || !album_key.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -618,15 +724,26 @@ pub async fn cover(
 
 /// Where a fetchable file lives, if this account may have it.
 ///
-/// The spool is checked first because it is the cheaper lookup and the more specific claim: a
-/// spooled file was put there *for* someone. An archived file is available to any device on an
-/// account that holds it.
-fn resolve_fetchable(state: &AppState, username: &str, content_hash: &str) -> Option<PathBuf> {
-    if matches!(state.db.spool_owner(content_hash), Ok(Some(ref owner)) if owner == username) {
+/// Two stores, with two different rules.
+///
+/// **The spool** is served to the account it was staged for. That claim is specific — a spooled
+/// file was put there *for* someone — and it is what makes peer sync work.
+///
+/// **The archive is the admin's library, and only the admin may fetch from it.** This used to have
+/// no owner check at all: any authenticated account could pull any archived file it could name a
+/// hash for. Hashes are not secret — a guest learns them by declaring one and being told it
+/// already exists — so that was the whole library, readable by every guest.
+fn resolve_fetchable(state: &AppState, user: &AuthedUser, content_hash: &str) -> Option<PathBuf> {
+    if matches!(state.db.spool_owner(content_hash), Ok(Some(ref owner)) if owner == user.username())
+    {
         let path = state.storage.spool_file(content_hash);
         if path.exists() {
             return Some(path);
         }
+    }
+
+    if !user.is_admin() {
+        return None;
     }
 
     let track = state.db.library_track(content_hash).ok().flatten()?;

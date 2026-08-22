@@ -44,6 +44,18 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// An index-only configuration, for tests that need a `Storage` but touch no files.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        Storage {
+            library_root: None,
+            spool_root: std::env::temp_dir().join("agro-test-spool"),
+            spool_max_bytes: 2 * 1024 * 1024 * 1024,
+            spool_ttl_hours: 72,
+            archive_hook: None,
+        }
+    }
+
     pub fn from_env() -> Self {
         Storage {
             library_root: std::env::var("AGRO_LIBRARY_ROOT")

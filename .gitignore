@@ -10,3 +10,4 @@ agro_data.db
 # Built into the binary by rust-embed at compile time, not source.
 dashboard/dist/
 dashboard/node_modules/
+backups/

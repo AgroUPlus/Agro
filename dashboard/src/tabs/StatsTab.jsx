@@ -24,7 +24,7 @@ const STATS_QUERY = `query Stats($user: String!, $period: String, $device: Strin
 
 const PERIODS = ['WEEK', 'MONTH', 'YEAR', 'ALL'];
 
-export default function StatsTab({ username, onUnauthorized }) {
+export default function StatsTab({ username, nodes = [], onUnauthorized }) {
   const [period, setPeriod] = useState('MONTH');
   const [device, setDevice] = useState('');
   const [stats, setStats] = useState(null);
@@ -36,6 +36,12 @@ export default function StatsTab({ username, onUnauthorized }) {
   // first. Only an unfiltered response knows the whole fleet, so only an unfiltered response is
   // allowed to update this.
   const [deviceOptions, setDeviceOptions] = useState([]);
+
+  const getDisplayName = useCallback((rawName) => {
+    if (!rawName) return '';
+    const match = nodes.find(n => n.petname === rawName || n.deviceId === rawName);
+    return match?.petname || rawName;
+  }, [nodes]);
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +69,14 @@ export default function StatsTab({ username, onUnauthorized }) {
     return () => clearInterval(timer);
   }, [load]);
 
+  const availableDevices = Array.from(
+    new Set([
+      ...nodes.map(n => n.petname).filter(Boolean),
+      ...deviceOptions.map(getDisplayName),
+      ...(stats?.byDevice?.map(e => getDisplayName(e.name)) || [])
+    ])
+  );
+
   if (!stats) {
     return (
       <div className="card">
@@ -81,7 +95,7 @@ export default function StatsTab({ username, onUnauthorized }) {
           <div>
             <div className="card-title">Listening</div>
             <div className="card-subtitle">
-              {device ? `${device} only` : 'Every device on this account'}
+              {device ? `${getDisplayName(device)} only` : 'Every device on this account'}
             </div>
           </div>
         </div>
@@ -104,7 +118,7 @@ export default function StatsTab({ username, onUnauthorized }) {
             onChange={event => setDevice(event.target.value)}
           >
             <option value="">All devices</option>
-            {deviceOptions.map(name => (
+            {availableDevices.map(name => (
               <option key={name} value={name}>
                 {name}
               </option>
@@ -158,7 +172,7 @@ export default function StatsTab({ username, onUnauthorized }) {
             {stats.byDevice.map(entry => (
               <div key={entry.name} className="top-row">
                 <Radio size={13} />
-                <span className="top-name">{entry.name}</span>
+                <span className="top-name">{getDisplayName(entry.name)}</span>
                 <span className="top-value">{formatHours(entry.value)}</span>
               </div>
             ))}
@@ -197,7 +211,13 @@ function Bars({ values, labelFor }) {
           className="bar-slot"
           title={`${labelFor(index)} · ${formatHours(value)}`}
         >
-          <div className="bar-fill" style={{ height: `${(value / peak) * 100}%` }} />
+          <div
+            className="bar-fill"
+            style={{
+              height: `${(value / peak) * 100}%`,
+              transitionDelay: `${index * 12}ms`
+            }}
+          />
         </div>
       ))}
     </div>

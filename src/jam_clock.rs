@@ -1,0 +1,111 @@
+//! The jam clock: the server decides what the room is hearing, and when it moves on.
+//!
+//! This exists because every previous arrangement made some *device* the authority, and a device is
+//! the wrong thing to trust with it. Host-driven playback made whoever opened the jam a DJ, which
+//! is what voting was meant to replace. Letting every device advance for itself meant the room
+//! played the same order at different times, and whichever client finished first decided for
+//! everybody.
+//!
+//! So the server holds one track and one start time. It advances on the track's own duration,
+//! pushes the change, and every client mirrors it. Nobody reports anything back, so a paused,
+//! crashed or slow device cannot stall or skew the room — it simply falls behind and is put back in
+//! step on the next track.
+//!
+//! The cost, stated plainly: nobody can pause the room. The clock runs whether or not anyone is
+//! listening. That is the honest price of having no host, and a room-wide pause would need its own
+//! mutation rather than being smuggled in here.
+
+use std::sync::Arc;
+
+use crate::db::Db;
+use crate::db_jam::{Jam, JamTrackState};
+use crate::ws::WsHub;
+
+/// How often the clock looks. Two seconds is far below anything a listener notices at a track
+/// boundary, and cheap: it is one indexed query per live jam.
+pub const TICK_SECS: u64 = 2;
+
+/// A jam with nobody in it is swept away after this long.
+///
+/// Not immediately: leaving is also what happens when a phone loses signal mid-song, and deleting
+/// the room out from under everyone else's reconnect would be worse than a few minutes of nothing.
+const ABANDONED_AFTER_MS: i64 = 5 * 60 * 1000;
+
+/// One pass over every live jam.
+pub fn tick(db: &Db, hub: &Arc<WsHub>) {
+    let Ok(jams) = db.live_jams() else { return };
+    for jam in jams {
+        if let Err(err) = advance(db, hub, &jam) {
+            // A jam that cannot be advanced must not take the sweep down with it: the others are
+            // still playing, and this one will be looked at again in two seconds.
+            tracing::warn!("jam {} could not advance: {err}", jam.id);
+        }
+    }
+}
+
+fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
+    let members = db.jam_members(&jam.id)?;
+    if members.is_empty() {
+        if age_ms(&jam.created_at) > ABANDONED_AFTER_MS {
+            db.delete_jam(&jam.id)?;
+        }
+        return Ok(());
+    }
+
+    // Still playing: nothing to do until its duration is up.
+    if let Some(now) = db.jam_now_playing(jam)? {
+        // A track with no duration would be retired the instant it started, so it is left alone
+        // until something else moves the room on. A client that sends one is the fix, not this.
+        if now.duration_ms <= 0 || now.position_ms < now.duration_ms {
+            return Ok(());
+        }
+        db.mark_jam_track_played(&jam.id, &now.track_id)?;
+    }
+
+    let next = db
+        .jam_tracks(&jam.id, JamTrackState::Queued, &jam.host)?
+        .into_iter()
+        .next();
+
+    match next {
+        Some(track) => {
+            db.set_jam_now_playing(&jam.id, &track.id)?;
+            hub.notify_users(
+                &members,
+                "JAM_NOW_PLAYING",
+                serde_json::json!({
+                    "jamId": jam.id,
+                    "trackId": track.id,
+                    "title": track.title,
+                    "artist": track.artist,
+                    "artworkUrl": track.artwork_url,
+                    "durationMs": track.duration_ms,
+                    // Zero rather than the elapsed time: this frame *is* the start.
+                    "positionMs": 0,
+                }),
+            );
+        }
+        None => {
+            // Nothing queued. Said out loud rather than left playing the last track forever.
+            if jam.now_playing_id.is_some() {
+                db.clear_jam_now_playing(&jam.id)?;
+                hub.notify_users(
+                    &members,
+                    "JAM_NOW_PLAYING",
+                    serde_json::json!({ "jamId": jam.id, "stopped": true }),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn age_ms(timestamp: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map(|then| {
+            (chrono::Utc::now() - then.with_timezone(&chrono::Utc))
+                .num_milliseconds()
+                .max(0)
+        })
+        .unwrap_or(0)
+}
