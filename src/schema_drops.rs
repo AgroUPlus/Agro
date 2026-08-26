@@ -42,6 +42,10 @@ const RATE_WINDOW_SECS: i64 = 3600;
 /// How many drops may be asked for at once.
 const MAX_PAGE: i64 = 100;
 
+/// Long enough for a flag, a family or a skin-tone modifier — all of which are several code
+/// points — and far too short to be a message.
+const MAX_REACTION_CHARS: usize = 8;
+
 #[derive(SimpleObject, Clone)]
 pub struct DropPayload {
     pub id: String,
@@ -60,6 +64,11 @@ pub struct DropPayload {
     /// Null while unread. Only ever populated on the recipient's own view; see `sentDrops`.
     pub read_at: Option<String>,
     pub archived: bool,
+    /// The recipient's one-emoji reply, or null if they have not reacted.
+    ///
+    /// Unlike `read_at`, this *is* shown to the sender. A read receipt is something the server
+    /// observed about the recipient; a reaction is something they chose to send back.
+    pub reaction: Option<String>,
 }
 
 /// A drop as the *recipient* sees it — everything, including whether they have read it.
@@ -78,6 +87,7 @@ fn to_payload(drop: Drop) -> DropPayload {
         created_at: drop.created_at,
         read_at: drop.read_at,
         archived: drop.archived,
+        reaction: drop.reaction,
     }
 }
 
@@ -129,6 +139,40 @@ impl DropsQuery {
             .sent_drops(authed.username(), limit, offset)?
             .into_iter()
             .map(to_sender_payload)
+            .collect())
+    }
+
+    /// The whole exchange with one other account, oldest first, both directions in one list.
+    ///
+    /// This is what makes a conversation rather than a mailbox. `inbox` and `sentDrops` are two
+    /// halves of the same exchange split by direction, which is the wrong seam: what someone
+    /// wants to see is everything they and one friend have handed each other, in order.
+    ///
+    /// The sender-side blanking of `read_at` still applies, per message. A thread must not become
+    /// a way around the rule that you cannot see whether your own messages have been opened.
+    ///
+    /// Archived drops are included: archiving clears the inbox, and a record with half of it
+    /// missing would be a record that lies.
+    async fn conversation(
+        &self,
+        ctx: &Context<'_>,
+        with: String,
+        limit: Option<i64>,
+    ) -> async_graphql::Result<Vec<DropPayload>> {
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+        let me = authed.username();
+        let (limit, _) = page(limit, None);
+        Ok(db
+            .conversation(me, &with, limit)?
+            .into_iter()
+            .map(|drop| {
+                if drop.from_user.eq_ignore_ascii_case(me) {
+                    to_sender_payload(drop)
+                } else {
+                    to_payload(drop)
+                }
+            })
             .collect())
     }
 
@@ -226,6 +270,31 @@ impl DropsMutation {
         }
 
         Ok(to_sender_payload(drop))
+    }
+
+    /// Reacts to a drop the caller received, replacing any reaction already on it.
+    ///
+    /// Recipient-only, enforced in the statement: reacting to your own message is not a thing, and
+    /// allowing it would let a sender fabricate a response to themselves. A null or blank
+    /// `emoji` clears the reaction, so tapping the same one twice undoes it.
+    ///
+    /// The emoji is stored as sent but capped in length. There is no allowlist: which characters
+    /// count as "one emoji" is a moving target across Unicode versions and platforms, and a server
+    /// that guesses would reject perfectly ordinary ones. The cap is what stops the field being
+    /// used as a second, unrated message body.
+    async fn react_to_drop(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        emoji: Option<String>,
+    ) -> async_graphql::Result<bool> {
+        let authed = caller(ctx)?;
+        let reaction = emoji
+            .map(|e| e.trim().chars().take(MAX_REACTION_CHARS).collect::<String>())
+            .filter(|e| !e.is_empty());
+        Ok(ctx
+            .data::<Db>()?
+            .react_to_drop(authed.username(), &id, reaction.as_deref())?)
     }
 
     /// Marks one of the caller's own drops read. A drop addressed to somebody else is a not-found.

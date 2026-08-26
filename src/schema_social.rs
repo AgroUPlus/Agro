@@ -119,6 +119,22 @@ pub struct ListenAlongPayload {
     pub now_playing: Option<FriendNowPlaying>,
 }
 
+/// A friend code as a client renders it.
+///
+/// [`ttl_seconds`] is sent rather than left for the client to derive from [`expires_at`], because
+/// the client's clock is not the server's and a QR panel that re-mints on a drifting timer would
+/// either show a dead code or thrash. It counts down from *now* on the device that asked.
+#[derive(SimpleObject, Clone, Debug)]
+pub struct FriendCodePayload {
+    pub code: String,
+    pub expires_at: String,
+    pub ttl_seconds: i64,
+}
+
+/// Short enough that a code photographed off a screen is dead before the photographer gets home,
+/// long enough to find the camera and scan it.
+const FRIEND_CODE_TTL_MINUTES: i64 = 5;
+
 #[derive(SimpleObject, Clone)]
 pub struct InvitePayload {
     pub code: String,
@@ -586,6 +602,83 @@ impl SocialMutation {
             );
         }
         Ok(accepted)
+    }
+
+    /// Mints a short-lived code for adding the caller as a friend in person.
+    ///
+    /// For the case the username search cannot serve: two people in the same room, one of whom is
+    /// not `discoverable` and should not have to become so just to be added once. The code stands
+    /// in for the search, not for the consent — redeeming it still produces the same friend edge
+    /// the ordinary flow does.
+    ///
+    /// Any previous code for this account is dropped when a new one is minted, so only the code
+    /// currently on screen works. Clients are expected to re-mint every few minutes while the
+    /// panel is open and to call `revokeFriendCode` when it closes.
+    async fn create_friend_code(&self, ctx: &Context<'_>) -> async_graphql::Result<FriendCodePayload> {
+        let authed = caller(ctx)?;
+        let code = ctx
+            .data::<Db>()?
+            .create_friend_code(authed.username(), FRIEND_CODE_TTL_MINUTES)?;
+        Ok(FriendCodePayload {
+            code: code.code,
+            expires_at: code.expires_at,
+            ttl_seconds: FRIEND_CODE_TTL_MINUTES * 60,
+        })
+    }
+
+    /// Drops the caller's outstanding code, for a panel being closed or the app going away.
+    async fn revoke_friend_code(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
+        let authed = caller(ctx)?;
+        ctx.data::<Db>()?.revoke_friend_codes(authed.username())?;
+        Ok(true)
+    }
+
+    /// Spends a code and becomes friends with whoever minted it.
+    ///
+    /// Both directions at once, not a request to be accepted: the two people were standing
+    /// together and one of them showed the other a screen, so the consent has already happened in
+    /// a way a notification cannot improve on.
+    ///
+    /// Returns the username on success and null for every failure — unknown, expired, already
+    /// spent, or the caller's own code. Distinguishing them would turn this into an oracle for
+    /// which codes have existed.
+    async fn redeem_friend_code(
+        &self,
+        ctx: &Context<'_>,
+        code: String,
+    ) -> async_graphql::Result<Option<String>> {
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+
+        let Some(owner) = db.redeem_friend_code(&code)? else {
+            return Ok(None);
+        };
+        // Redeeming your own code is a no-op rather than an error, and the code is spent either
+        // way — a screen scanned by its own owner should not stay live for the next person.
+        if owner.eq_ignore_ascii_case(authed.username()) {
+            return Ok(None);
+        }
+        // A block from either side comes back as `Blocked` from `friend_state`, which is the one
+        // state a code must not be able to talk its way past.
+        if db.friend_state(authed.username(), &owner)? == Some(FriendState::Blocked) {
+            return Ok(None);
+        }
+
+        // Two halves of one handshake. `send_friend_request` then `accept_friend_request` reuses
+        // the paths that already know how to build the edge, rather than writing a third one that
+        // has to agree with them.
+        db.send_friend_request(&owner, authed.username())?;
+        let accepted = db.accept_friend_request(authed.username(), &owner)?;
+        if !accepted {
+            return Ok(None);
+        }
+
+        ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?.notify_user(
+            &owner,
+            "FRIEND_REQUEST",
+            serde_json::json!({ "accepted_by": authed.username() }),
+        );
+        Ok(Some(owner))
     }
 
     /// Declines a request, or ends a friendship. The same operation on the data either way.

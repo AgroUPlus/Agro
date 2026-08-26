@@ -73,6 +73,52 @@ impl Harness {
         assert!(self.db.accept_friend_request(b, a).unwrap(), "accept {b} <- {a}");
     }
 
+    /// Sends a drop through the API and answers with its id.
+    async fn drop_a_track(&self, from: &str, to: &str, title: &str) -> String {
+        let sender = match from {
+            "alpha" => &self.alpha,
+            "beta" => &self.beta,
+            _ => &self.stranger,
+        };
+        let sent = self
+            .run_as(
+                sender,
+                &format!(
+                    r#"mutation {{ dropTrack(to: "{to}", trackTitle: "{title}", artistName: "Aphex Twin") {{ id }} }}"#
+                ),
+            )
+            .await;
+        let body = sent.data.to_string();
+        body.split('"')
+            .find(|part| part.len() == 36 && part.contains('-'))
+            .expect("a uuid in the response")
+            .to_string()
+    }
+
+    /// Mints a friend code through the API and answers with the code itself.
+    async fn mint_friend_code(&self, account: &Account) -> String {
+        let minted = self
+            .run_as(account, r#"mutation { createFriendCode { code } }"#)
+            .await;
+        assert_allowed(&minted, "minting a friend code");
+        let body = minted.data.to_string();
+        body.split('"')
+            .find(|part| part.len() > 20 && !part.contains(':'))
+            .expect("a code in the response")
+            .to_string()
+    }
+
+    /// Backdates every outstanding code, standing in for five minutes passing.
+    fn expire_friend_codes(&self) {
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        self.db
+            .conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE friend_codes SET expires_at = ?1", [&past])
+            .unwrap();
+    }
+
     /// Puts a track in the server's archive, owned by nobody in particular.
     fn archive_a_track(&self, title: &str) {
         self.db
@@ -1542,4 +1588,200 @@ async fn the_unread_count_ignores_read_and_archived_drops() {
 
     let after = h.run_as(&h.beta, r#"{ unreadDropCount }"#).await;
     assert!(after.data.to_string().contains('1'), "{:?}", after.data);
+}
+
+// ── Reactions and conversations ─────────────────────────────────────────────────────────────
+
+/// Reacting is the recipient's reply. A sender must not be able to answer their own message.
+#[tokio::test]
+async fn only_the_recipient_can_react_to_a_drop() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    let id = h.drop_a_track("alpha", "beta", "Xtal").await;
+
+    let by_sender = h
+        .run_as(&h.alpha, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .await;
+    assert_allowed(&by_sender, "the call itself succeeds");
+    assert!(
+        by_sender.data.to_string().contains("false"),
+        "a sender reacted to their own drop: {:?}",
+        by_sender.data
+    );
+
+    let by_stranger = h
+        .run_as(&h.stranger, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .await;
+    assert!(
+        by_stranger.data.to_string().contains("false"),
+        "a stranger reacted to somebody else's drop: {:?}",
+        by_stranger.data
+    );
+
+    let by_recipient = h
+        .run_as(&h.beta, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .await;
+    assert!(by_recipient.data.to_string().contains("true"));
+}
+
+/// Unlike a read receipt, a reaction is something the recipient chose to send — so it goes back.
+#[tokio::test]
+async fn a_reaction_reaches_the_sender_but_a_read_receipt_still_does_not() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    let id = h.drop_a_track("alpha", "beta", "Xtal").await;
+
+    h.run_as(&h.beta, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#)).await;
+    h.run_as(&h.beta, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#)).await;
+
+    let seen = h
+        .run_as(&h.alpha, r#"{ sentDrops { reaction readAt } }"#)
+        .await;
+    let body = seen.data.to_string();
+    assert!(body.contains('🔥'), "the sender cannot see the reaction: {body}");
+    assert!(
+        body.contains("readAt\":null") || body.contains("readAt: null"),
+        "a read receipt leaked to the sender: {body}"
+    );
+}
+
+/// A thread is not a way around the read-receipt rule.
+#[tokio::test]
+async fn a_conversation_still_hides_read_receipts_on_your_own_messages() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    let id = h.drop_a_track("alpha", "beta", "Xtal").await;
+    h.run_as(&h.beta, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#)).await;
+
+    let thread = h
+        .run_as(&h.alpha, r#"{ conversation(with: "beta") { fromUser readAt } }"#)
+        .await;
+    assert_allowed(&thread, "reading your own thread");
+    let body = thread.data.to_string();
+    assert!(
+        !body.contains("readAt\":\"2") && !body.contains("readAt\":\"1"),
+        "the thread told the sender their drop was read: {body}"
+    );
+}
+
+/// A conversation is between two people. A third cannot read it by naming them.
+#[tokio::test]
+async fn a_conversation_only_ever_contains_the_callers_own_messages() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.drop_a_track("alpha", "beta", "Xtal").await;
+
+    let peeked = h
+        .run_as(&h.stranger, r#"{ conversation(with: "beta") { trackTitle } }"#)
+        .await;
+    assert_allowed(&peeked, "the query itself is not an error");
+    assert!(
+        !peeked.data.to_string().contains("Xtal"),
+        "a stranger read somebody else's conversation: {:?}",
+        peeked.data
+    );
+}
+
+// ── Friend codes ────────────────────────────────────────────────────────────────────────────
+
+/// The whole point of a five-minute code is that it cannot be used twice.
+#[tokio::test]
+async fn a_friend_code_is_single_use() {
+    let h = harness();
+    let code = h.mint_friend_code(&h.alpha).await;
+
+    let first = h
+        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .await;
+    assert!(
+        first.data.to_string().contains("alpha"),
+        "the first redemption failed: {:?}",
+        first.data
+    );
+    assert!(h.db.are_friends("alpha", "beta").unwrap());
+
+    let second = h
+        .run_as(&h.stranger, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .await;
+    assert!(
+        second.data.to_string().contains("null"),
+        "a spent code was redeemed again: {:?}",
+        second.data
+    );
+    assert!(!h.db.are_friends("alpha", "stranger").unwrap());
+}
+
+/// Minting a new code has to kill the old one, or every code ever shown stays live.
+#[tokio::test]
+async fn minting_a_friend_code_invalidates_the_previous_one() {
+    let h = harness();
+    let old = h.mint_friend_code(&h.alpha).await;
+    let new = h.mint_friend_code(&h.alpha).await;
+    assert_ne!(old, new, "re-minting returned the same code");
+
+    let stale = h
+        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{old}") }}"#))
+        .await;
+    assert!(
+        stale.data.to_string().contains("null"),
+        "a replaced code still worked: {:?}",
+        stale.data
+    );
+    assert!(!h.db.are_friends("alpha", "beta").unwrap());
+}
+
+/// Revoking is what a closed QR panel does, and it has to actually take effect.
+#[tokio::test]
+async fn a_revoked_friend_code_stops_working() {
+    let h = harness();
+    let code = h.mint_friend_code(&h.alpha).await;
+    h.run_as(&h.alpha, r#"mutation { revokeFriendCode }"#).await;
+
+    let after = h
+        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .await;
+    assert!(
+        after.data.to_string().contains("null"),
+        "a revoked code still worked: {:?}",
+        after.data
+    );
+    assert!(!h.db.are_friends("alpha", "beta").unwrap());
+}
+
+/// A code is a stand-in for the username search, not for consent. A block still wins.
+#[tokio::test]
+async fn a_friend_code_cannot_be_used_to_get_around_a_block() {
+    let h = harness();
+    h.db.block_user("alpha", "beta").unwrap();
+    let code = h.mint_friend_code(&h.alpha).await;
+
+    let blocked = h
+        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .await;
+    assert!(
+        blocked.data.to_string().contains("null"),
+        "a block was talked past with a code: {:?}",
+        blocked.data
+    );
+    assert!(!h.db.are_friends("alpha", "beta").unwrap());
+}
+
+/// An expired code is dead, which is the only reason the short lifetime is worth anything.
+#[tokio::test]
+async fn an_expired_friend_code_is_refused() {
+    let h = harness();
+    let code = h.mint_friend_code(&h.alpha).await;
+    // Reaching past the API deliberately: there is no way to wait five minutes in a test, and the
+    // expiry check is the thing being tested rather than the clock.
+    h.expire_friend_codes();
+
+    let after = h
+        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .await;
+    assert!(
+        after.data.to_string().contains("null"),
+        "an expired code still worked: {:?}",
+        after.data
+    );
+    assert!(!h.db.are_friends("alpha", "beta").unwrap());
 }

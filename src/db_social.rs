@@ -352,6 +352,19 @@ pub struct ListenAlong {
     pub started_at: String,
 }
 
+/// A short-lived, single-use code that adds the account that minted it as a friend.
+///
+/// Not stored hashed, unlike a device token: it lives for minutes, is shown on screen on purpose,
+/// and has to be matched by exact value from a QR scan. Hashing it would buy nothing that its
+/// lifetime does not already buy.
+#[derive(Clone, Debug)]
+pub struct FriendCode {
+    pub code: String,
+    pub user_id: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
 /// An invite code as the admin manages it.
 #[derive(Clone, Debug)]
 pub struct Invite {
@@ -462,6 +475,73 @@ impl Db {
             }
         }
         Ok(allowed)
+    }
+
+    /// Mints a short-lived code for adding a friend in person.
+    ///
+    /// Deliberately not an [`Invite`]. Those create *accounts*, are minted by administrators and
+    /// last for hours; this is minted by any account for itself, redeems into a friend edge and
+    /// nothing else, and expires in minutes — a code photographed off someone's screen has to stop
+    /// working before the person who photographed it gets home.
+    ///
+    /// Any earlier codes for the same account are deleted first, so only the one currently on
+    /// screen works. A code left behind by a sheet that was closed is a code nobody is watching.
+    pub fn create_friend_code(&self, user_id: &str, ttl_minutes: i64) -> Result<FriendCode> {
+        let owner = user_id.trim().to_lowercase();
+        let code = FriendCode {
+            code: crate::credentials::mint_token().secret,
+            user_id: owner.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::minutes(ttl_minutes.max(1)))
+                .to_rfc3339(),
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM friend_codes WHERE user_id = ?1", params![owner])?;
+        conn.execute(
+            "INSERT INTO friend_codes (code, user_id, created_at, expires_at, used_at)
+             VALUES (?1, ?2, ?3, ?4, NULL)",
+            params![code.code, code.user_id, code.created_at, code.expires_at],
+        )?;
+        Ok(code)
+    }
+
+    /// Drops an account's outstanding code, for a sheet being closed or the app going away.
+    pub fn revoke_friend_codes(&self, user_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM friend_codes WHERE user_id = ?1",
+            params![user_id.trim().to_lowercase()],
+        )?;
+        Ok(())
+    }
+
+    /// Spends a friend code and answers with whose it was.
+    ///
+    /// Single-use, and the claim and the read are one transaction: two people scanning the same
+    /// screen at the same moment must not both succeed. `None` covers every way a code can fail —
+    /// unknown, expired, already spent — because telling them apart would let someone probe which
+    /// codes have existed.
+    pub fn redeem_friend_code(&self, code: &str) -> Result<Option<String>> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let claimed = tx.execute(
+            "UPDATE friend_codes SET used_at = ?1
+              WHERE code = ?2 AND used_at IS NULL AND expires_at > ?1",
+            params![now, code.trim()],
+        )?;
+        let owner = if claimed > 0 {
+            tx.query_row(
+                "SELECT user_id FROM friend_codes WHERE code = ?1",
+                params![code.trim()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        } else {
+            None
+        };
+        tx.commit()?;
+        Ok(owner)
     }
 
     /// Mints an invite code. Admin-only at the resolver; this does not check.

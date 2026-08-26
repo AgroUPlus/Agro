@@ -435,6 +435,33 @@ const MIGRATIONS: &[&str] = &[
     -- off, like every other switch on this account.
     ALTER TABLE users ADD COLUMN show_activity INTEGER NOT NULL DEFAULT 0;
     ",
+    // 13 — one emoji back, and a short-lived code for adding a friend in person.
+    //
+    // `reaction` turns an inbox into a conversation. Unlike `read_at`, which is deliberately kept
+    // from the sender because a read receipt is surveillance, a reaction is something the
+    // recipient *chose* to send — so it travels both ways. One column, not a table: exactly one
+    // reaction per drop, replaced when it changes, because a row of six emoji under a song is a
+    // different feature and not this one.
+    //
+    // `friend_codes` is for adding someone standing next to you. The existing `invites` table
+    // cannot serve: those create *accounts*, are minted by administrators, and last for hours.
+    // This is minted by any account for itself, redeems into a friend edge and nothing else, and
+    // expires in minutes — a code photographed off a screen has to stop working before the person
+    // who photographed it gets home. `used_at` makes it single-use: without it a code screenshotted
+    // once could be redeemed by everyone it was ever shown to, for as long as it lived.
+    "
+    ALTER TABLE track_drops ADD COLUMN reaction TEXT;
+
+    CREATE TABLE IF NOT EXISTS friend_codes (
+        code       TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_friend_codes_user ON friend_codes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_friend_codes_expiry ON friend_codes(expires_at);
+    ",
 ];
 
 #[derive(Clone)]

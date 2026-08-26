@@ -54,10 +54,17 @@ pub struct Drop {
     /// When the recipient first read it, or `None` while it is still unread.
     pub read_at: Option<String>,
     pub archived: bool,
+    /// The recipient's one-emoji reply, or `None` if they have not reacted.
+    ///
+    /// Unlike [`read_at`], this is shown to the sender. A read receipt is something the server
+    /// observed; a reaction is something the recipient chose to send, and withholding it would
+    /// make the feature pointless.
+    pub reaction: Option<String>,
 }
 
 const DROP_COLUMNS: &str = "id, from_user, to_user, track_title, artist_name, album_name, \
-                            artwork_url, content_hash, track_uri, note, created_at, read_at, archived";
+                            artwork_url, content_hash, track_uri, note, created_at, read_at, \
+                            archived, reaction";
 
 fn drop_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Drop> {
     Ok(Drop {
@@ -74,6 +81,7 @@ fn drop_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Drop> {
         created_at: row.get(10)?,
         read_at: row.get(11)?,
         archived: row.get::<_, i64>(12)? != 0,
+        reaction: row.get(13)?,
     })
 }
 
@@ -184,6 +192,62 @@ impl Db {
             "UPDATE track_drops SET archived = 1
               WHERE id = ?1 AND to_user = ?2 COLLATE NOCASE",
             params![id, user.trim()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// One drop from either side of it — the sender's copy or the recipient's.
+    ///
+    /// [`drop_for`] is deliberately recipient-only, because everything it guards (reading,
+    /// archiving) belongs to the recipient. A conversation view is the other case: both people
+    /// are looking at the same exchange, and the sender has to be able to load a message they
+    /// sent.
+    pub fn drop_for_party(&self, user: &str, id: &str) -> Result<Option<Drop>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!(
+                "SELECT {DROP_COLUMNS} FROM track_drops
+                  WHERE id = ?1
+                    AND (to_user = ?2 COLLATE NOCASE OR from_user = ?2 COLLATE NOCASE)"
+            ),
+            params![id, user.trim()],
+            drop_from_row,
+        )
+        .optional()
+    }
+
+    /// The whole exchange between two accounts, oldest first, both directions in one list.
+    ///
+    /// Ordered ascending because this is read as a conversation rather than as an inbox: a thread
+    /// is followed downwards, and the newest message belongs at the bottom.
+    ///
+    /// Archived drops are included. Archiving takes something out of the *inbox*, which is a queue
+    /// of things to deal with; a conversation is a record, and silently dropping half of it would
+    /// make the history lie.
+    pub fn conversation(&self, user: &str, other: &str, limit: i64) -> Result<Vec<Drop>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {DROP_COLUMNS} FROM track_drops
+              WHERE (from_user = ?1 COLLATE NOCASE AND to_user = ?2 COLLATE NOCASE)
+                 OR (from_user = ?2 COLLATE NOCASE AND to_user = ?1 COLLATE NOCASE)
+              ORDER BY created_at ASC
+              LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(params![user.trim(), other.trim(), limit], drop_from_row)?;
+        rows.collect()
+    }
+
+    /// Sets, replaces or clears the recipient's reaction to a drop.
+    ///
+    /// Only the recipient may react, which is why this is scoped to `to_user`: reacting to your
+    /// own message is not a thing, and allowing it would let a sender fabricate a response.
+    /// Passing `None` removes the reaction, so tapping the same emoji twice can undo it.
+    pub fn react_to_drop(&self, user: &str, id: &str, reaction: Option<&str>) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE track_drops SET reaction = ?1
+              WHERE id = ?2 AND to_user = ?3 COLLATE NOCASE",
+            params![reaction.map(str::trim), id, user.trim()],
         )?;
         Ok(changed > 0)
     }
