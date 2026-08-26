@@ -376,6 +376,9 @@ impl JamMutation {
         artist: String,
         artwork_url: Option<String>,
         duration_ms: Option<i64>,
+        // `is_live` marks a stream with no end: it holds the room until someone skips it, rather
+        // than being retired by a clock that has no way to know a broadcast is over.
+        is_live: Option<bool>,
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -392,6 +395,7 @@ impl JamMutation {
             artist.trim(),
             artwork_url.as_deref(),
             duration_ms.unwrap_or(0),
+            is_live.unwrap_or(false),
             jam.mode,
         )?;
         announce(ctx, db, &jam);

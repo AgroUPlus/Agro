@@ -25,11 +25,11 @@ use crate::ws::WsHub;
 /// boundary, and cheap: it is one indexed query per live jam.
 pub const TICK_SECS: u64 = 2;
 
-/// How long a track of unknown length may hold the room before the clock moves on regardless.
+/// How long a track of *unknown* length may hold the room before the clock moves on regardless.
 ///
-/// Longer than any ordinary song, so a track whose duration merely failed to parse still plays to
-/// the end. Short enough that a livestream — which has no end at all — does not own the room for
-/// the rest of the evening.
+/// This is for a recording whose duration failed to parse, not for a stream: a stream says so with
+/// `is_live` and is left alone entirely. Longer than any ordinary song, so a track that is merely
+/// unmeasured still plays to the end.
 const UNKNOWN_DURATION_LEASE_MS: i64 = 12 * 60 * 1000;
 
 /// A jam with nobody in it is swept away after this long.
@@ -73,6 +73,13 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
         // The lease is a backstop, not a mechanism: a real duration is still used whenever there
         // is one. It is set well past any ordinary song, because cutting a long track short is a
         // worse failure than a few extra minutes on a stream nobody can time.
+        // A radio is endless on purpose, so it holds the room until somebody skips it — which
+        // `voteSkipJamTrack` can do, and which is the only thing that should end something with no
+        // end of its own. Cutting it off after a fixed lease would be the clock deciding a
+        // broadcast was over, which it has no way to know.
+        if now.is_live {
+            return Ok(());
+        }
         let ends_at = if now.duration_ms > 0 {
             now.duration_ms
         } else {

@@ -462,6 +462,15 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS idx_friend_codes_user ON friend_codes(user_id);
     CREATE INDEX IF NOT EXISTS idx_friend_codes_expiry ON friend_codes(expires_at);
     ",
+    // 14 — a jam track that is a livestream rather than a recording.
+    //
+    // The clock has to tell "endless on purpose" from "we could not read a duration". Both arrive
+    // as `duration_ms = 0`, and they want opposite treatment: an unmeasured recording gets a lease
+    // so it cannot park the room forever, while a radio is *supposed* to keep playing until
+    // somebody skips it.
+    //
+    // Defaults to 0, so everything already queued keeps the lease behaviour it was added under.
+    "ALTER TABLE jam_tracks ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0;",
 ];
 
 #[derive(Clone)]

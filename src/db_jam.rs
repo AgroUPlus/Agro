@@ -70,6 +70,8 @@ pub struct JamNowPlaying {
     pub artist: String,
     pub artwork_url: Option<String>,
     pub duration_ms: i64,
+    /// A stream with no end. It plays until the room skips it — see `jam_clock`.
+    pub is_live: bool,
     pub started_at: String,
     /// How far in the room is, derived from `started_at` rather than reported by anyone.
     pub position_ms: i64,
@@ -297,6 +299,7 @@ impl Db {
         artist: &str,
         artwork_url: Option<&str>,
         duration_ms: i64,
+        is_live: bool,
         mode: JamMode,
     ) -> Result<(String, JamTrackState)> {
         // Alone in the room, a proposal could never reach a majority of the people who are not
@@ -314,8 +317,8 @@ impl Db {
         conn.execute(
             "INSERT INTO jam_tracks
                (id, jam_id, added_by, track_uri, title, artist, artwork_url, added_at, played,
-                duration_ms, state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)",
+                duration_ms, state, is_live)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
             params![
                 id,
                 jam_id,
@@ -326,7 +329,8 @@ impl Db {
                 artwork_url,
                 chrono::Utc::now().to_rfc3339(),
                 duration_ms.max(0),
-                state.as_str()
+                state.as_str(),
+                is_live as i64
             ],
         )?;
         Ok((id, state))
@@ -519,7 +523,7 @@ impl Db {
         };
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT title, artist, artwork_url, duration_ms FROM jam_tracks WHERE id = ?1",
+            "SELECT title, artist, artwork_url, duration_ms, is_live FROM jam_tracks WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![track_id], |row| {
             Ok((
@@ -527,9 +531,10 @@ impl Db {
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)? != 0,
             ))
         })?;
-        let Some((title, artist, artwork_url, duration_ms)) = rows.next().transpose()? else {
+        let Some((title, artist, artwork_url, duration_ms, is_live)) = rows.next().transpose()? else {
             return Ok(None);
         };
         Ok(Some(JamNowPlaying {
@@ -538,6 +543,7 @@ impl Db {
             artist,
             artwork_url,
             duration_ms,
+            is_live,
             started_at: started_at.clone(),
             position_ms: elapsed_ms(started_at),
         }))
