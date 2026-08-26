@@ -748,6 +748,27 @@ impl QueryRoot {
         })
     }
 
+    /// What this account has used of its storage allowance.
+    ///
+    /// Derived from `effective_quota` and `spool_bytes_for` — the same two the upload path checks
+    /// against — so the bar a client draws cannot disagree with the answer an upload gets.
+    async fn storage_usage(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<StorageUsagePayload> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let account = db
+            .account(user_id.trim())?
+            .ok_or_else(|| forbidden("Unauthorized"))?;
+        Ok(StorageUsagePayload {
+            // Keyed by username, matching what the upload path checks against in `library.rs`.
+            used_bytes: db.spool_bytes_for(&account.username)?,
+            quota_bytes: account.effective_quota(),
+        })
+    }
+
     /// Every content hash a device has reported, for reconciling against what it actually holds.
     async fn device_holdings(
         &self,
@@ -1023,6 +1044,23 @@ pub enum SyncMode {
     /// No library root: the server keeps the index and relays through the spool, but never keeps
     /// the bytes. It cannot be the durable copy, so it never suggests deleting one.
     IndexOnly,
+}
+
+/// How much of an account's allowance is gone.
+///
+/// A separate field rather than two more columns on [`LibraryStatsPayload`], because it answers a
+/// different question and is computed differently. `total_bytes` counts every archived track in
+/// the deployment into every account's total, so it reads the same for a guest holding nothing as
+/// for the admin — see `Db::spool_bytes_for`. The quota is enforced against the spool, so that is
+/// what is reported here.
+///
+/// `quota_bytes` is null when the account is uncapped, which is not the same as a quota of zero:
+/// the admin owns the disk, and a quota on them is theatre. Clients must show "no limit" for null
+/// rather than a full bar.
+#[derive(SimpleObject, Clone)]
+pub struct StorageUsagePayload {
+    pub used_bytes: i64,
+    pub quota_bytes: Option<i64>,
 }
 
 #[derive(SimpleObject, Clone)]
