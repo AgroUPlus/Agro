@@ -25,6 +25,13 @@ use crate::ws::WsHub;
 /// boundary, and cheap: it is one indexed query per live jam.
 pub const TICK_SECS: u64 = 2;
 
+/// How long a track of unknown length may hold the room before the clock moves on regardless.
+///
+/// Longer than any ordinary song, so a track whose duration merely failed to parse still plays to
+/// the end. Short enough that a livestream — which has no end at all — does not own the room for
+/// the rest of the evening.
+const UNKNOWN_DURATION_LEASE_MS: i64 = 12 * 60 * 1000;
+
 /// A jam with nobody in it is swept away after this long.
 ///
 /// Not immediately: leaving is also what happens when a phone loses signal mid-song, and deleting
@@ -54,9 +61,24 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
 
     // Still playing: nothing to do until its duration is up.
     if let Some(now) = db.jam_now_playing(jam)? {
-        // A track with no duration would be retired the instant it started, so it is left alone
-        // until something else moves the room on. A client that sends one is the fix, not this.
-        if now.duration_ms <= 0 || now.position_ms < now.duration_ms {
+        // A track with no duration used to be left alone "until something else moves the room on",
+        // on the reasoning that a client sending one is the real fix. Nothing else ever moves the
+        // room on — this function is the only thing that can — so the room simply stopped, for
+        // good, and the next track never played.
+        //
+        // Zero duration is not rare either. YouTube Music's radio and queue entries often carry no
+        // length, and a livestream has none by definition, so one of those reaching a jam wedged
+        // it permanently.
+        //
+        // The lease is a backstop, not a mechanism: a real duration is still used whenever there
+        // is one. It is set well past any ordinary song, because cutting a long track short is a
+        // worse failure than a few extra minutes on a stream nobody can time.
+        let ends_at = if now.duration_ms > 0 {
+            now.duration_ms
+        } else {
+            UNKNOWN_DURATION_LEASE_MS
+        };
+        if now.position_ms < ends_at {
             return Ok(());
         }
         db.mark_jam_track_played(&jam.id, &now.track_id)?;
