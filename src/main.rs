@@ -27,6 +27,7 @@ mod social_boundary_tests;
 mod share;
 mod stats;
 mod storage;
+mod relay;
 mod ws;
 
 use async_graphql::Schema;
@@ -55,6 +56,7 @@ pub struct AppState {
     pub ws_hub: Arc<WsHub>,
     pub storage: storage::Storage,
     pub offers: offers::OfferBatcher,
+    pub relay_hub: relay::RelayHub,
     /// Live only while the server has no accounts at all. See [`auth::SetupToken`].
     pub setup_token: Arc<auth::SetupToken>,
     /// Throttles the two endpoints that can be reached without a token.
@@ -95,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ws_hub: ws_hub.clone(),
         storage: store,
         offers: offers::OfferBatcher::spawn(db.clone(), ws_hub.clone()),
+        relay_hub: relay::RelayHub::new(),
         setup_token: setup_token.clone(),
         rate_limiter: Arc::new(login::RateLimiter::new()),
     };
@@ -111,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema: AgroSchema = Schema::build(Query::default(), Mutation::default(), async_graphql::EmptySubscription)
         .data(db.clone())
         .data(ws_hub.clone())
+        .data(state.offers.clone())
         // Resolvers need to know whether this deployment archives at all, and where — that is what
         // decides which sync mode the clients are told to run in.
         .data(state.storage.clone())
@@ -180,6 +184,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/api/v1/library/fetch/{content_hash}", get(library::fetch))
         .route("/api/v1/cover/{album_key}", get(library::cover))
+        .route("/api/v1/relay/open", post(relay::open_relay))
+        .route(
+            "/api/v1/relay/{session_id}/send",
+            post(relay::send_relay).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/api/v1/relay/{session_id}/receive", get(relay::receive_relay))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,

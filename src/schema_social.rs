@@ -49,10 +49,17 @@ pub(crate) fn require_visible(ctx: &Context<'_>, subject: &str, surface: Surface
     if !db.are_friends(authed.username(), &subject)? {
         return Err(forbidden("no such account, or it is not visible to you"));
     }
+    // Incognito is folded into each `shows_*` below, but refused up front as well: it makes the
+    // rule visible at the gate, and it means a surface added here without a `shows_*` helper is
+    // still closed rather than quietly open. The refusal is the one a stranger gets, so that
+    // being quiet is itself undisclosed.
+    if profile.incognito {
+        return Err(forbidden("no such account, or it is not visible to you"));
+    }
     let open = match surface {
-        Surface::NowPlaying => profile.show_now_playing,
-        Surface::Stats => profile.show_stats,
-        Surface::Activity => profile.show_activity,
+        Surface::NowPlaying => profile.shows_now_playing(),
+        Surface::Stats => profile.shows_stats(),
+        Surface::Activity => profile.shows_activity(),
     };
     if open {
         Ok(profile)
@@ -78,6 +85,7 @@ pub struct ProfilePayload {
     pub discoverable: bool,
     pub share_library: bool,
     pub show_activity: bool,
+    pub incognito: bool,
 }
 
 /// What a friend is playing, projected from the one handoff row their account already keeps.
@@ -167,6 +175,7 @@ pub fn profile_payload(profile: &Profile, state: Option<FriendState>, outgoing: 
         discoverable: profile.discoverable,
         share_library: profile.share_library,
         show_activity: profile.show_activity,
+        incognito: profile.incognito,
     }
 }
 
@@ -225,6 +234,25 @@ pub struct SocialQuery;
 
 #[Object]
 impl SocialQuery {
+    /// Whether the signed-in account is currently quiet.
+    ///
+    /// Only ever answered for the caller. There is deliberately no version of this question about
+    /// somebody else: an incognito account is not returned to anyone at all, and saying "they have
+    /// gone quiet" would be exactly the disclosure incognito exists to prevent. A friend meets the
+    /// same refusal a stranger does.
+    ///
+    /// Needed because [`Mutation::set_incognito`] returns the new value but nothing could *read*
+    /// it — a client that has just launched has no way to learn the account is already quiet, and
+    /// would carry on recording until someone touched the switch.
+    async fn incognito(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+        Ok(db
+            .profile(authed.username())?
+            .ok_or_else(|| forbidden("this account no longer exists"))?
+            .incognito)
+    }
+
     /// One account, as the caller is allowed to see it.
     ///
     /// Not gated by [`require_visible`]: the card itself — name, bio, avatar — is what someone
@@ -294,7 +322,7 @@ impl SocialQuery {
         for profile in db.friends(authed.username())? {
             // Not an error when it is closed — a friend who has not opted in is simply a friend
             // with nothing showing, which is different from a friend who is offline.
-            let now_playing = if profile.show_now_playing {
+            let now_playing = if profile.shows_now_playing() {
                 live_now_playing(db, &profile.username)?
             } else {
                 None
@@ -335,7 +363,7 @@ impl SocialQuery {
 
         let mut playing = Vec::new();
         for profile in db.friends(authed.username())? {
-            if !profile.show_now_playing {
+            if !profile.shows_now_playing() {
                 continue;
             }
             if let Some(now) = live_now_playing(db, &profile.username)? {
@@ -547,6 +575,52 @@ impl SocialMutation {
             .profile(authed.username())?
             .ok_or_else(|| forbidden("this account no longer exists"))?;
         Ok(profile_payload(&profile, None, false))
+    }
+
+    /// Goes quiet, or stops being quiet.
+    ///
+    /// Its own mutation rather than a sixth flag on `set_visibility`, because it is a different
+    /// kind of thing: the others are standing consents, this is a temporary override of all of
+    /// them. Bundling it would mean leaving incognito had to restore the rest from a client's idea
+    /// of what they were, and a stale copy would silently turn a privacy switch back on.
+    ///
+    /// The server is the authority. Every client reads this value rather than keeping its own, so
+    /// one device going quiet takes the whole account quiet — a phone still announcing the account
+    /// from a pocket is exactly the failure a device-local incognito has.
+    async fn set_incognito(
+        &self,
+        ctx: &Context<'_>,
+        incognito: bool,
+    ) -> async_graphql::Result<bool> {
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+
+        db.set_incognito(authed.username(), incognito)?;
+
+        // Going quiet ends every session following this account, for the same reason turning
+        // now-playing off does: a listener left attached keeps receiving the thing incognito was
+        // turned on to stop.
+        if incognito {
+            for listener in db.listeners_of(authed.username())? {
+                db.clear_listen_along(&listener)?;
+                ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?.notify_user(
+                    &listener,
+                    "LISTEN_ALONG",
+                    serde_json::json!({ "stopped": true, "host": authed.username() }),
+                );
+            }
+        }
+
+        // Tells this account's *own* devices, so the switch appears flipped on all of them rather
+        // than only on the one it was touched from. Friends are told nothing: that an account went
+        // quiet is itself a disclosure, and the refusal they meet is the same one a stranger gets.
+        ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?.notify_user(
+            authed.username(),
+            "SETTINGS_SYNC",
+            serde_json::json!({ "incognito": incognito }),
+        );
+
+        Ok(incognito)
     }
 
     /// Asks to be someone's friend.
@@ -842,7 +916,7 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
 
     // The subject's own flag decides. A friend who has not opted in is not merely omitted from a
     // list here — nothing about them is sent at all.
-    if db.profile(user).ok().flatten().is_some_and(|p| p.show_now_playing) {
+    if db.profile(user).ok().flatten().is_some_and(|p| p.shows_now_playing()) {
         if let Ok(friends) = db.friends(user) {
             let audience: Vec<String> = friends.into_iter().map(|f| f.username).collect();
             if !audience.is_empty() {

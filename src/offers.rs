@@ -28,7 +28,7 @@ const DEBOUNCE: Duration = Duration::from_secs(5);
 
 /// Most tracks counted into one offer. The same ceiling the `offerSync` mutation uses — an offer
 /// is a prompt, not a manifest.
-const MAX_MISSING: i64 = 200;
+const MAX_MISSING: i64 = 1000;
 
 /// How many album names ride along in the payload, so a client can say what arrived rather than
 /// just how much.
@@ -81,12 +81,25 @@ impl OfferBatcher {
 
 /// Offers each of the account's devices whatever it is currently missing.
 fn announce(db: &Db, hub: &Arc<WsHub>, user_id: &str) {
-    let Ok(nodes) = db.get_active_nodes(user_id) else {
-        return;
-    };
+    let mut device_ids = HashSet::new();
+    if let Ok(nodes) = db.get_active_nodes(user_id) {
+        for node in nodes {
+            device_ids.insert(node.device_id);
+        }
+    }
+    // Also include any devices from device_holdings
+    if let Ok(conn) = db.conn.lock() {
+        if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT device_id FROM device_holdings WHERE user_id = ?1") {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![user_id], |r| r.get::<_, String>(0)) {
+                for r in rows.flatten() {
+                    device_ids.insert(r);
+                }
+            }
+        }
+    }
 
-    for node in nodes {
-        let Ok(missing) = db.missing_on_device(user_id, &node.device_id, MAX_MISSING) else {
+    for device_id in device_ids {
+        let Ok(missing) = db.missing_on_device(user_id, &device_id, MAX_MISSING) else {
             continue;
         };
         if missing.is_empty() {
@@ -107,7 +120,7 @@ fn announce(db: &Db, hub: &Arc<WsHub>, user_id: &str) {
 
         hub.notify_device(
             user_id,
-            &node.device_id,
+            &device_id,
             "SYNC_OFFER",
             serde_json::json!({
                 "count": missing.len(),

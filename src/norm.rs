@@ -13,6 +13,9 @@
 //!
 //! Ported from Wanda's `TrackDeduplicator`, deliberately including its conservatism: hiding a
 //! track the user wanted is far worse than showing them one they already have.
+//!
+//! Wanda is AGPL-3.0 and so is Agro, so the port is licence-clean and this file is the reason
+//! Agro carries that licence rather than being free to choose another. See `CONTRIBUTING.md`.
 
 use regex::Regex;
 use std::sync::LazyLock;

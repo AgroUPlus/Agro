@@ -5,7 +5,7 @@ import {
   Layers, KeyRound, ScrollText, Copy, 
   Check, RefreshCw, Disc, Sliders, Save,
   User, Users, ChevronDown, Plus, Library, HardDrive, Trash2,
-  Music, Database, Activity, ShieldCheck, Link2 as LinkIcon, BarChart3, UserPlus, Pencil, Inbox } from 'lucide-react';
+  Music, Database, Activity, Link2 as LinkIcon, BarChart3, UserPlus, Pencil, Inbox } from 'lucide-react';
 import LinksTab from './tabs/LinksTab.jsx';
 import FeedTab from './tabs/FeedTab.jsx';
 import InboxTab from './tabs/InboxTab.jsx';
@@ -1031,10 +1031,6 @@ export default function App() {
                     Cross-device SHA-256 track index and local server audio archive
                   </div>
                 </div>
-                <div className="daemon-pill">
-                  <ShieldCheck size={12} />
-                  <span>SYNC READY</span>
-                </div>
               </div>
 
               {libraryStats ? (
@@ -1093,38 +1089,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Archive Coverage Meter */}
-                  <div style={{ 
-                    background: 'var(--bg-surface-elevated)', 
-                    border: '1px solid var(--border-subtle)', 
-                    borderRadius: 'var(--radius-sm)', 
-                    padding: '16px',
-                    marginTop: '12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                      <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>Server Archive Coverage</span>
-                      <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--status-active)', fontWeight: '600' }}>
-                        {libraryStats.trackCount > 0 
-                          ? `${Math.min(100, Math.round((libraryStats.archivedCount / libraryStats.trackCount) * 100))}%` 
-                          : '0%'}
-                      </span>
-                    </div>
-                    <div style={{ width: '100%', height: '6px', background: 'var(--border-subtle)', borderRadius: '999px', overflow: 'hidden' }}>
-                      <div style={{ 
-                        height: '100%', 
-                        width: `${libraryStats.trackCount > 0 ? Math.min(100, (libraryStats.archivedCount / libraryStats.trackCount) * 100) : 0}%`,
-                        background: 'var(--status-active)',
-                        borderRadius: '999px',
-                        transition: 'width 0.3s ease'
-                      }} />
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      {libraryStats.archivedCount} of {libraryStats.trackCount} fleet tracks physically mirrored in Navidrome storage.
-                    </div>
-                  </div>
                 </>
               ) : (
                 <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', background: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-sm)' }}>

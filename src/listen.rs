@@ -1,5 +1,9 @@
 //! Share-link forwarding: the public half of the custom share domain.
 //!
+//! **This route implements `SHARE_LINKS.md`, which is normative.** Wanda mints these links and
+//! frwd.top forwards them too; the parameter names and bounds below are duplicated in Kotlin and
+//! JavaScript, and nothing in either toolchain will notice them drifting apart.
+//!
 //! A player rewrites its share links onto the domain the user set — `frwd.top/listen?v=<id>` for a
 //! YouTube Music track, `?u=<url>` for anything else — and this route sends whoever opens one on
 //! to the track. Point the domain's DNS at this server and the whole feature is Agro's; leave the
@@ -44,6 +48,59 @@ pub struct ListenParams {
     v: Option<String>,
     /// Any other track link, percent-encoded. Checked against the allowlist before it is used.
     u: Option<String>,
+    /// Playback rate the sharer was listening at, so the link plays what they meant.
+    s: Option<f32>,
+    /// Pitch, independent of rate. Both are bounded to what the player will accept.
+    p: Option<f32>,
+}
+
+/// What the players will accept. A link outside it is forwarded without the parameters rather
+/// than clamped: a link asking for 40x is not one whose intent can be recovered.
+const RATE_RANGE: std::ops::RangeInclusive<f32> = 0.5..=2.0;
+
+/// Escapes text for interpolation into HTML.
+///
+/// The forwarded target reaches this page as a raw query parameter and is placed into an `href`
+/// and into the page body. Its *host* is checked against an allowlist, but nothing checks its path
+/// or query — so `?u=https://youtube.com/">…` passes the host test carrying whatever it likes.
+/// Unescaped, that is script execution on this origin, which is where the dashboard keeps its
+/// device token.
+pub(crate) fn escape_html(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// JSON destined for a `<script>` block.
+///
+/// A JSON string may legally contain `</script>`, which ends the block from the parser's point of
+/// view no matter what the JSON says. Escaping the slash keeps the value identical to JavaScript
+/// while making that sequence impossible.
+fn escape_script_json(value: &str) -> String {
+    value.replace("</", "<\\/")
+}
+
+/// The `&s=…&p=…` a forwarded link carries, or an empty string.
+///
+/// `SHARE_LINKS.md` §3.2, kept as a pure function so the rule can be tested without standing up a
+/// router: both or neither, both within [`RATE_RANGE`], and **dropped rather than clamped** when
+/// out of range — a link asking for 40x is not one whose intent can be recovered.
+fn playback_suffix(speed: Option<f32>, pitch: Option<f32>) -> String {
+    match (speed, pitch) {
+        (Some(s), Some(p)) if RATE_RANGE.contains(&s) && RATE_RANGE.contains(&p) => {
+            format!("&s={}&p={}", s, p)
+        }
+        _ => String::new(),
+    }
 }
 
 pub async fn listen_handler(
@@ -55,7 +112,7 @@ pub async fn listen_handler(
         None => return refusal(),
     };
 
-    let search_params = if let Some(id) = &params.id {
+    let mut search_params = if let Some(id) = &params.id {
         format!("?id={}", id)
     } else if let Some(v) = &params.v {
         format!("?v={}", v)
@@ -64,6 +121,13 @@ pub async fn listen_handler(
     } else {
         String::new()
     };
+
+    // Rebuilt rather than passed through, so only known parameters within known bounds reach the
+    // app's URL. Forwarding the raw query string would put whatever a stranger appended into a
+    // `wanda://` link, which is the same open-redirect mistake this route avoids for `u`.
+    if !search_params.is_empty() {
+        search_params.push_str(&playback_suffix(params.s, params.p));
+    }
 
     let target_json = serde_json::to_string(&target).unwrap_or_else(|_| "\"\"".to_string());
     let search_json = serde_json::to_string(&search_params).unwrap_or_else(|_| "\"\"".to_string());
@@ -168,10 +232,10 @@ pub async fn listen_handler(
 </html>"##;
 
     let html = template
-        .replace("__SEARCH_PARAMS__", &search_params)
-        .replace("__TARGET__", &target)
-        .replace("__TARGET_JSON__", &target_json)
-        .replace("__SEARCH_JSON__", &search_json);
+        .replace("__SEARCH_PARAMS__", &escape_html(&search_params))
+        .replace("__TARGET__", &escape_html(&target))
+        .replace("__TARGET_JSON__", &escape_script_json(&target_json))
+        .replace("__SEARCH_JSON__", &escape_script_json(&search_json));
 
     (
         StatusCode::OK,
@@ -334,5 +398,65 @@ mod tests {
         db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None).unwrap();
         let retrieved = db.get_short_link("testUid").unwrap();
         assert_eq!(retrieved.as_deref(), Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+}
+
+#[cfg(test)]
+mod escaping_tests {
+    use super::*;
+
+    /// The payload that motivated this: the host passes the allowlist, the path carries the break.
+    #[test]
+    fn a_target_cannot_break_out_of_its_href() {
+        let hostile = "https://youtube.com/\"><script>alert(1)</script>";
+        let escaped = escape_html(hostile);
+        assert!(!escaped.contains('<'));
+        assert!(!escaped.contains('"'));
+        assert!(escaped.starts_with("https://youtube.com/&quot;&gt;&lt;script&gt;"));
+    }
+
+    #[test]
+    fn ordinary_urls_survive_readably() {
+        let ordinary = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
+        assert_eq!(escape_html(ordinary), ordinary);
+    }
+
+    #[test]
+    fn json_cannot_close_the_script_block() {
+        let hostile = r#""https://x.test/</script><script>alert(1)</script>""#;
+        assert!(!escape_script_json(hostile).contains("</script>"));
+    }
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+
+    #[test]
+    fn both_in_range_are_carried() {
+        assert_eq!(playback_suffix(Some(1.25), Some(0.9)), "&s=1.25&p=0.9");
+    }
+
+    #[test]
+    fn one_without_the_other_is_dropped() {
+        assert_eq!(playback_suffix(Some(1.25), None), "");
+        assert_eq!(playback_suffix(None, Some(0.9)), "");
+    }
+
+    #[test]
+    fn neither_is_the_ordinary_case() {
+        assert_eq!(playback_suffix(None, None), "");
+    }
+
+    /// Dropped, not clamped. Clamping would invent an intent the link does not carry.
+    #[test]
+    fn out_of_range_is_dropped_not_clamped() {
+        assert_eq!(playback_suffix(Some(40.0), Some(1.0)), "");
+        assert_eq!(playback_suffix(Some(1.0), Some(0.1)), "");
+    }
+
+    #[test]
+    fn the_bounds_are_inclusive() {
+        assert_eq!(playback_suffix(Some(0.5), Some(2.0)), "&s=0.5&p=2");
     }
 }

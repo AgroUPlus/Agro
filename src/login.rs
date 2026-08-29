@@ -423,6 +423,7 @@ mod tests {
             ws_hub: ws_hub.clone(),
             storage: crate::storage::Storage::for_tests(),
             offers: crate::offers::OfferBatcher::spawn(db, ws_hub),
+            relay_hub: crate::relay::RelayHub::new(),
             setup_token: crate::auth::SetupToken::for_fresh_server(1),
             rate_limiter: std::sync::Arc::new(RateLimiter::new()),
         }

@@ -2,6 +2,47 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// Takes the database away from the group and the world.
+///
+/// It holds Argon2 passphrase hashes and the SHA-256 of every device token — the whole credential
+/// store. The deployment this project documents makes that worse rather than better: the systemd
+/// unit in the README sets `UMask=0002` and a shared `SupplementaryGroups`, so that a music
+/// library can be written by two services. New files land group-writable, and the database is a
+/// new file like any other.
+///
+/// The sidecars matter as much as the database. `-wal` holds recent writes in plaintext until it
+/// is checkpointed, so a 0600 database beside a 0644 write-ahead log protects nothing.
+///
+/// Best effort: a failure here is reported and startup continues. Refusing to run because a chmod
+/// failed would take a working server down over a filesystem that may not have modes at all.
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for suffix in ["", "-wal", "-shm"] {
+        let target = if suffix.is_empty() {
+            path.to_path_buf()
+        } else {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            std::path::PathBuf::from(name)
+        };
+        if !target.exists() {
+            continue;
+        }
+        if let Err(error) = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+        {
+            eprintln!(
+                "agro: could not restrict permissions on {}: {error}",
+                target.display()
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) {}
+
 /// Schema changes, in order. **Append only** — an entry's index is its version number, so
 /// reordering or removing one silently skips it on every database that has already run it.
 const MIGRATIONS: &[&str] = &[
@@ -471,6 +512,63 @@ const MIGRATIONS: &[&str] = &[
     //
     // Defaults to 0, so everything already queued keeps the lease behaviour it was added under.
     "ALTER TABLE jam_tracks ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0;",
+    // 15 — incognito, held by the account rather than by a device.
+    "ALTER TABLE users ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;",
+    // 22 — can_archive permission and LAN addresses for direct P2P sync.
+    "
+    ALTER TABLE users ADD COLUMN can_archive INTEGER NOT NULL DEFAULT 0;
+    UPDATE users SET can_archive = 1 WHERE role = 'admin';
+    ALTER TABLE registered_nodes ADD COLUMN lan_address TEXT;
+    ",
+    // 23 — a handoff belongs to the device that reported it, not to the account.
+    //
+    // `handoff_state` was keyed on `user_id` alone, so the account held exactly one row and every
+    // device overwrote it. That is right for "where was I", which is one answer per person, and
+    // wrong for every other question asked of it — because the answer depends on *who is asking*.
+    //
+    // It is what stopped the desktop client proxying the phone's track to Discord. Pausing on the
+    // desktop wrote the desktop's own paused state over the phone's playing one, and the client
+    // filters out its own device, so the fleet's session vanished at the exact moment it became
+    // the interesting one.
+    //
+    // Rows are keyed per device now and read back most-recent-first, so `playbackHandoff` answers
+    // exactly as it did while also being able to answer "what is anyone *else* playing".
+    "
+    CREATE TABLE handoff_state_v2 (
+        user_id      TEXT NOT NULL,
+        device_id    TEXT NOT NULL,
+        track_uri    TEXT NOT NULL,
+        track_title  TEXT NOT NULL,
+        artist_name  TEXT NOT NULL,
+        album_name   TEXT,
+        artwork_url  TEXT,
+        position_ms  INTEGER NOT NULL,
+        is_playing   BOOLEAN NOT NULL,
+        updated_at   TEXT NOT NULL,
+        queue_json   TEXT,
+        queue_index  INTEGER,
+        PRIMARY KEY (user_id, device_id)
+    );
+    INSERT OR IGNORE INTO handoff_state_v2
+        (user_id, device_id, track_uri, track_title, artist_name, album_name, artwork_url,
+         position_ms, is_playing, updated_at, queue_json, queue_index)
+        SELECT user_id, device_id, track_uri, track_title, artist_name, album_name, artwork_url,
+               position_ms, is_playing, updated_at, queue_json, queue_index
+          FROM handoff_state;
+    DROP TABLE handoff_state;
+    ALTER TABLE handoff_state_v2 RENAME TO handoff_state;
+    CREATE INDEX IF NOT EXISTS idx_handoff_user ON handoff_state(user_id, updated_at DESC);
+    ",
+    // 24 — how long the track is, alongside where in it the sender was.
+    //
+    // A handoff carried a position and nothing to measure it against, so anything rendering one
+    // could only show an elapsed count: a progress bar needs both ends. Every sender already knows
+    // the length — it is the player telling us — so this is a field that was simply never asked
+    // for rather than one that has to be worked out.
+    //
+    // Zero means "the sender did not say", which is also what a livestream reports, and both want
+    // the same treatment: no bar, just a running clock.
+    "ALTER TABLE handoff_state ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;",
 ];
 
 #[derive(Clone)]
@@ -482,12 +580,15 @@ pub struct Db {
 
 impl Db {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let path = path.as_ref().to_path_buf();
+        let conn = Connection::open(&path)?;
         let db = Db {
             conn: Arc::new(Mutex::new(conn)),
         };
         db.init_schema()?;
         db.migrate()?;
+        // After the schema, so the -wal and -shm SQLite creates along the way are covered too.
+        restrict_permissions(&path);
         Ok(db)
     }
 
@@ -863,6 +964,7 @@ impl Db {
         album_name: Option<&str>,
         artwork_url: Option<&str>,
         position_ms: i64,
+        duration_ms: i64,
         is_playing: bool,
         device_id: &str,
         queue_json: Option<&str>,
@@ -871,31 +973,70 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-             ON CONFLICT(user_id) DO UPDATE SET
+            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(user_id, device_id) DO UPDATE SET
              track_uri = excluded.track_uri,
              track_title = excluded.track_title,
              artist_name = excluded.artist_name,
              album_name = excluded.album_name,
              artwork_url = excluded.artwork_url,
              position_ms = excluded.position_ms,
+             -- A sender that does not know the length must not erase one that did: a livestream
+             -- and a length not measured yet both arrive as 0, and only one of them is an answer.
+             duration_ms = CASE WHEN excluded.duration_ms > 0
+                                THEN excluded.duration_ms
+                                ELSE handoff_state.duration_ms END,
              is_playing = excluded.is_playing,
-             device_id = excluded.device_id,
              updated_at = excluded.updated_at,
              -- A heartbeat that carries no queue must not erase the one already stored: only a
              -- client that actually sent a queue replaces it.
              queue_json = COALESCE(excluded.queue_json, handoff_state.queue_json),
              queue_index = COALESCE(excluded.queue_index, handoff_state.queue_index)",
-            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index],
+            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms],
         )?;
         Ok(())
     }
 
+    /// Where the account left off — the most recent report from any of its devices.
+    ///
+    /// One row per device since migration 23, so "the account's handoff" is now a choice rather
+    /// than the only row there is. This keeps the original answer: whatever happened last.
     pub fn get_handoff(&self, user_id: &str) -> Result<Option<HandoffRecord>> {
+        self.latest_handoff(user_id, None)
+    }
+
+    /// The same, from any device *except* one.
+    ///
+    /// What a client asks when it is looking for the rest of the fleet rather than for itself: a
+    /// desktop player proxying the phone's track to Discord has to be able to tell the two apart,
+    /// and its own paused state is the one answer that is never useful to it.
+    pub fn get_handoff_excluding(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<Option<HandoffRecord>> {
+        self.latest_handoff(user_id, Some(device_id))
+    }
+
+    fn latest_handoff(
+        &self,
+        user_id: &str,
+        exclude_device: Option<&str>,
+    ) -> Result<Option<HandoffRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index FROM handoff_state WHERE user_id = ?1")?;
-        let mut rows = stmt.query(params![user_id])?;
+        // `updated_at` is an RFC 3339 stamp written by this process, always at the same offset, so
+        // it orders lexicographically — no date parsing, which would fail silently to NULL and
+        // scramble the order rather than erroring.
+        let mut stmt = conn.prepare(
+            "SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms,
+                    is_playing, device_id, updated_at, queue_json, queue_index, duration_ms
+               FROM handoff_state
+              WHERE user_id = ?1 AND (?2 IS NULL OR device_id != ?2)
+              ORDER BY updated_at DESC
+              LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![user_id, exclude_device])?;
         if let Some(row) = rows.next()? {
             Ok(Some(HandoffRecord {
                 track_uri: row.get(0)?,
@@ -909,6 +1050,7 @@ impl Db {
                 updated_at: row.get(8)?,
                 queue_json: row.get(9)?,
                 queue_index: row.get(10)?,
+                duration_ms: row.get(11)?,
             }))
         } else {
             Ok(None)
@@ -1060,25 +1202,40 @@ impl Db {
         &self,
         device_id: &str,
         user_id: &str,
-        petname: &str,
+        petname: NodeName<'_>,
         client_type: &str,
         ip_address: Option<&str>,
+        lan_address: Option<&str>,
         version: Option<&str>,
         current_track: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
+        // The name is decided in SQL rather than by reading the row first, so a heartbeat that
+        // arrives while the user is renaming the device cannot write back the name it read.
         conn.execute(
-            "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(user_id, device_id) DO UPDATE SET
-             petname = CASE WHEN excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
+             petname = CASE WHEN ?10 AND excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
              client_type = excluded.client_type,
              ip_address = COALESCE(excluded.ip_address, registered_nodes.ip_address),
+             lan_address = COALESCE(excluded.lan_address, registered_nodes.lan_address),
              version = COALESCE(excluded.version, registered_nodes.version),
              current_track = COALESCE(excluded.current_track, registered_nodes.current_track),
              last_seen_at = excluded.last_seen_at",
-            params![device_id, user_id, petname, client_type, ip_address, version, current_track, now],
+            params![
+                device_id,
+                user_id,
+                petname.as_str(),
+                client_type,
+                ip_address,
+                lan_address,
+                version,
+                current_track,
+                now,
+                petname.overwrites(),
+            ],
         )?;
         Ok(())
     }
@@ -1088,7 +1245,7 @@ impl Db {
     pub fn get_all_nodes(&self) -> Result<Vec<NodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at
+            "SELECT device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at
              FROM registered_nodes ORDER BY last_seen_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -1098,9 +1255,10 @@ impl Db {
                 petname: row.get(2)?,
                 client_type: row.get(3)?,
                 ip_address: row.get(4)?,
-                version: row.get(5)?,
-                current_track: row.get(6)?,
-                last_seen_at: row.get(7)?,
+                lan_address: row.get(5)?,
+                version: row.get(6)?,
+                current_track: row.get(7)?,
+                last_seen_at: row.get(8)?,
             })
         })?;
         rows.collect()
@@ -1143,7 +1301,7 @@ impl Db {
     pub fn get_active_nodes(&self, user_id: &str) -> Result<Vec<NodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT device_id, user_id, petname, client_type, ip_address, version, current_track, last_seen_at
+            "SELECT device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at
              FROM registered_nodes WHERE user_id = ?1 ORDER BY last_seen_at DESC"
         )?;
         let rows = stmt.query_map(params![user_id], |row| {
@@ -1153,9 +1311,10 @@ impl Db {
                 petname: row.get(2)?,
                 client_type: row.get(3)?,
                 ip_address: row.get(4)?,
-                version: row.get(5)?,
-                current_track: row.get(6)?,
-                last_seen_at: row.get(7)?,
+                lan_address: row.get(5)?,
+                version: row.get(6)?,
+                current_track: row.get(7)?,
+                last_seen_at: row.get(8)?,
             })
         })?;
 
@@ -1493,12 +1652,38 @@ pub struct ShareSettingsInput<'a> {
     pub enabled: Option<bool>,
 }
 
+/// What an upsert should do with a node's display name.
+///
+/// A device is named once — when it is paired, or by the user afterwards — and then keeps that
+/// name. Everything else that touches the row (a WebSocket connect, a handoff heartbeat) is
+/// reporting liveness, not naming anything, and must say so: passing a freshly invented name on
+/// every reconnect renamed the device to a new random animal every time the server restarted.
+pub enum NodeName<'a> {
+    /// Name it. The caller has a name the user chose or supplied.
+    Set(&'a str),
+    /// Leave the stored name alone; use this one only if the row does not exist yet.
+    KeepOr(&'a str),
+}
+
+impl NodeName<'_> {
+    fn as_str(&self) -> &str {
+        match self {
+            NodeName::Set(name) | NodeName::KeepOr(name) => name,
+        }
+    }
+
+    fn overwrites(&self) -> bool {
+        matches!(self, NodeName::Set(_))
+    }
+}
+
 pub struct NodeRecord {
     pub device_id: String,
     pub user_id: String,
     pub petname: String,
     pub client_type: String,
     pub ip_address: Option<String>,
+    pub lan_address: Option<String>,
     pub version: Option<String>,
     pub current_track: Option<String>,
     pub last_seen_at: String,
@@ -1520,6 +1705,8 @@ pub struct SyncedSettingsRecord {
 
 pub struct HandoffRecord {
     pub track_uri: String,
+    /// How long the track is. 0 when the sender did not say, or when it is a livestream.
+    pub duration_ms: i64,
     pub track_title: String,
     pub artist_name: String,
     pub album_name: Option<String>,
@@ -1553,4 +1740,222 @@ pub struct ShareRecord {
     pub album_name: Option<String>,
     pub audio_url: String,
     pub expires_at: String,
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// The database and every sidecar SQLite writes beside it. A 0600 database next to a 0644
+    /// write-ahead log protects nothing: the `-wal` holds recent writes in plaintext.
+    #[test]
+    fn the_database_and_its_sidecars_are_owner_only() {
+        let dir = std::env::temp_dir().join(format!("agro-perm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agro_test.db");
+
+        let db = Db::new(&path).unwrap();
+        // Force a write so the -wal exists to be checked.
+        drop(db);
+
+        for suffix in ["", "-wal", "-shm"] {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(suffix);
+            let target = std::path::PathBuf::from(name);
+            if !target.exists() {
+                continue;
+            }
+            let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{} is {:o}, not 0600", target.display(), mode);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod node_naming_tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::new_in_memory().unwrap()
+    }
+
+    fn petname_of(db: &Db, user: &str, device: &str) -> String {
+        db.get_active_nodes(user)
+            .unwrap()
+            .into_iter()
+            .find(|n| n.device_id == device)
+            .expect("node")
+            .petname
+    }
+
+    /// The bug this covers: every WebSocket connect invented a name and wrote it, so a device
+    /// was renamed to a fresh random animal each time the server restarted.
+    #[test]
+    fn a_reconnect_does_not_rename_a_named_device() {
+        let db = db();
+        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None, None, None)
+            .unwrap();
+
+        db.upsert_node(
+            "pixel",
+            "alpha",
+            NodeName::KeepOr("Glitchy Alpaca"),
+            "wanda",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(petname_of(&db, "alpha", "pixel"), "Pixel 10");
+    }
+
+    #[test]
+    fn a_device_seen_for_the_first_time_takes_the_fallback_name() {
+        let db = db();
+        db.upsert_node(
+            "pixel",
+            "alpha",
+            NodeName::KeepOr("Glitchy Alpaca"),
+            "wanda",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(petname_of(&db, "alpha", "pixel"), "Glitchy Alpaca");
+    }
+
+    #[test]
+    fn naming_a_device_still_renames_it() {
+        let db = db();
+        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None, None, None)
+            .unwrap();
+        db.upsert_node("pixel", "alpha", NodeName::Set("Work phone"), "wanda", None, None, None, None)
+            .unwrap();
+
+        assert_eq!(petname_of(&db, "alpha", "pixel"), "Work phone");
+    }
+
+    /// Two accounts can choose the same device id, and one must not rename the other's device.
+    #[test]
+    fn one_account_cannot_rename_another_accounts_device() {
+        let db = db();
+        db.upsert_node("laptop", "alpha", NodeName::Set("Cachy"), "wander", None, None, None, None)
+            .unwrap();
+        db.upsert_node("laptop", "delta", NodeName::Set("Lenovo"), "wander", None, None, None, None)
+            .unwrap();
+
+        assert_eq!(petname_of(&db, "alpha", "laptop"), "Cachy");
+        assert_eq!(petname_of(&db, "delta", "laptop"), "Lenovo");
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::new_in_memory().unwrap()
+    }
+
+    fn report_with_duration(
+        db: &Db,
+        user: &str,
+        device: &str,
+        title: &str,
+        playing: bool,
+        duration_ms: i64,
+    ) {
+        db.update_handoff(
+            user,
+            &format!("uri:{title}"),
+            title,
+            "Artist",
+            None,
+            None,
+            0,
+            duration_ms,
+            playing,
+            device,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    fn report(db: &Db, user: &str, device: &str, title: &str, playing: bool) {
+        report_with_duration(db, user, device, title, playing, 0);
+    }
+
+    /// The bug this covers: one row per account meant the desktop pausing overwrote the phone's
+    /// playing session, and the desktop filters out its own device — so the fleet's track
+    /// disappeared at the moment it became the one worth showing.
+    #[test]
+    fn one_device_pausing_does_not_erase_another_ones_session() {
+        let db = db();
+        report(&db, "alpha", "phone", "Phone Song", true);
+        report(&db, "alpha", "desktop", "Desktop Song", false);
+
+        let elsewhere = db.get_handoff_excluding("alpha", "desktop").unwrap().unwrap();
+        assert_eq!(elsewhere.track_title, "Phone Song");
+        assert!(elsewhere.is_playing);
+        assert_eq!(elsewhere.device_id, "phone");
+    }
+
+    /// The original question, unchanged: whatever happened last, whoever it was.
+    #[test]
+    fn the_accounts_handoff_is_still_the_most_recent_report() {
+        let db = db();
+        report(&db, "alpha", "phone", "Phone Song", true);
+        report(&db, "alpha", "desktop", "Desktop Song", true);
+
+        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Desktop Song");
+    }
+
+    #[test]
+    fn a_device_updates_its_own_row_rather_than_adding_one() {
+        let db = db();
+        report(&db, "alpha", "phone", "First", true);
+        report(&db, "alpha", "phone", "Second", true);
+
+        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Second");
+        assert!(db.get_handoff_excluding("alpha", "phone").unwrap().is_none());
+    }
+
+    /// A position with nothing to measure it against can only ever be an elapsed count. The
+    /// length travels so whatever renders the session can draw a bar with two ends.
+    #[test]
+    fn the_track_length_travels_with_the_handoff() {
+        let db = db();
+        report_with_duration(&db, "alpha", "phone", "Song", true, 214_000);
+
+        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().duration_ms, 214_000);
+    }
+
+    /// Zero is "did not say", which is also what a livestream reports. Neither may overwrite a
+    /// length another heartbeat already established.
+    #[test]
+    fn a_heartbeat_without_a_length_keeps_the_one_already_stored() {
+        let db = db();
+        report_with_duration(&db, "alpha", "phone", "Song", true, 214_000);
+        report_with_duration(&db, "alpha", "phone", "Song", true, 0);
+
+        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().duration_ms, 214_000);
+    }
+
+    #[test]
+    fn one_account_never_sees_anothers_handoff() {
+        let db = db();
+        report(&db, "alpha", "phone", "Phone Song", true);
+        report(&db, "delta", "phone", "Someone Elses Song", true);
+
+        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Phone Song");
+        assert!(db.get_handoff_excluding("alpha", "phone").unwrap().is_none());
+    }
 }

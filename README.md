@@ -99,6 +99,92 @@ WantedBy=multi-user.target
 
 `systemctl enable --now agro` · `journalctl -fu agro`
 
+### Behind a reverse proxy
+
+Agro speaks plain HTTP on `PORT` and expects something in front of it to terminate TLS. Three of
+its routes are not ordinary request/response traffic, and a proxy's defaults will break each one in
+a way that looks like a bug in the app rather than in the proxy:
+
+| Route | What it does | What a default proxy does to it |
+|---|---|---|
+| `/ws/sync` | WebSocket | Fails to upgrade; clients silently never receive pushes |
+| `/api/v1/library/upload/{id}` | One `PUT` of the remaining bytes | Rejected at `client_max_body_size` (default 1 MB) |
+| `/api/v1/relay/{id}/send` and `/receive` | A live duplex stream between two devices | Buffered, so the receiver gets no response headers until a buffer fills — the transfer appears to hang, then times out having delivered nothing |
+
+The relay one is worth spelling out because it is silent. `receive` answers `200` immediately and
+then streams bytes as the sending device produces them. With `proxy_buffering on` — nginx's default
+— nothing reaches the client until nginx has filled a buffer, and since the sender is waiting on
+the receiver to drain, neither side moves. The client sees an open socket that never delivers.
+
+#### Nginx Proxy Manager
+
+Turn on **Websockets Support** on the proxy host (that covers `/ws/sync`), then paste this into
+**Advanced → Custom Nginx Configuration**, replacing the address with your server's:
+
+```nginx
+# Uploads are one PUT of whatever is left of the file, resumable by offset — not small chunks.
+client_max_body_size 0;
+
+location /api/v1/relay/ {
+    proxy_pass http://192.168.1.16:1674;
+    proxy_http_version 1.1;
+
+    # The two that matter. Without them the relay opens, streams nothing, and times out.
+    proxy_buffering off;
+    proxy_request_buffering off;
+
+    # A relay lasts as long as the transfer does.
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+#### Plain nginx
+
+The same thing, in a server block:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:1674;
+    proxy_http_version 1.1;
+    client_max_body_size 0;
+    proxy_set_header Host $host;
+
+    # WebSocket upgrade for /ws/sync.
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+
+location /api/v1/relay/ {
+    proxy_pass http://127.0.0.1:1674;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 1h;
+    proxy_send_timeout 1h;
+}
+```
+
+#### Caddy
+
+Caddy streams by default and sets no body limit, so it needs none of this:
+
+```caddyfile
+agro.example.com {
+    reverse_proxy 127.0.0.1:1674
+}
+```
+
+#### Checking it
+
+The relay only runs when two devices cannot reach each other directly, so the way to exercise it is
+to take one device off the local network — mobile data is enough. A working relay logs
+`Relay stream open` on the receiving client; a proxy still buffering shows the session opening and
+then nothing at all.
+
 ### Sizing
 
 Building wants ~4 GB RAM and ~12 GB disk (tokio, async-graphql, reqwest, lofty). The running server
@@ -196,6 +282,10 @@ of. `src/social_boundary_tests.rs` is where those guarantees are written down.
 
 ## Share links on your own domain
 
+The wire format is specified in [`SHARE_LINKS.md`](SHARE_LINKS.md), which is normative for all
+three implementations. Proxy settings for this and every other route are under
+[*Behind a reverse proxy*](#behind-a-reverse-proxy).
+
 Optional, and off until asked for. With it on, Wanda and Wander stop sharing their backends' own
 links — a Navidrome URL only you can reach, a YouTube link useless to someone who does not use it —
 and send out `https://your-domain/listen?v=<id>` instead. This server forwards whoever opens one to
@@ -269,3 +359,13 @@ container, so the binary matches the target's older glibc — then uploads it an
 service. You can also pass the host via the `AGRO_DEPLOY_HOST` environment variable.
 
 The target never compiles anything, which is what lets it be a small container.
+
+## Licence
+
+AGPL-3.0 — see [`LICENSE`](LICENSE).
+
+Section 13 is the part that matters for a server: run a modified Agro where other people can reach
+it, and those people must be offered its source. That is deliberate. The project is given away;
+what is sold is running it. See [`AGRO_PREMIUM.md`](AGRO_PREMIUM.md).
+
+Contributions require agreement to [`CLA.md`](CLA.md) — see [`CONTRIBUTING.md`](CONTRIBUTING.md).

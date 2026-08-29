@@ -178,10 +178,8 @@ pub async fn begin_upload(
         .into_response();
     }
 
-    // Only the admin's uploads are filed into the library. A guest's bytes go to the spool, where
-    // they are capped and expire — so `archive()` is unreachable for them, and with it the shared
-    // library tree, its filename collisions and the archive hook.
-    let target = if state.storage.archives() && user.is_admin() {
+    // Archiving is allowed for admins or users with can_archive permission.
+    let target = if state.storage.archives() && user.account.can_archive() {
         "archive"
     } else {
         "spool"
