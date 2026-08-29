@@ -238,7 +238,6 @@ export default function App() {
                   deviceId
                   petname
                   clientType
-                  ipAddress
                   version
                   currentTrack
                   lastSeenAt
@@ -336,7 +335,6 @@ export default function App() {
                   deviceId
                   petname
                   clientType
-                  ipAddress
                   version
                   currentTrack
                   lastSeenAt

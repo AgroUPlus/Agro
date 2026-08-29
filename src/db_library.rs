@@ -316,7 +316,7 @@ impl Db {
     ) -> Result<Vec<PeerSourceInfo>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT h.device_id, COALESCE(rn.petname, h.device_id), rn.lan_address, COALESCE(rn.last_seen_at, datetime('now'))
+            "SELECT h.device_id, COALESCE(rn.petname, h.device_id), COALESCE(rn.last_seen_at, datetime('now'))
              FROM device_holdings h
              LEFT JOIN registered_nodes rn
                ON rn.device_id = h.device_id
@@ -327,8 +327,8 @@ impl Db {
             Ok(PeerSourceInfo {
                 device_id: row.get(0)?,
                 petname: row.get(1)?,
-                lan_address: row.get(2)?,
-                last_seen_at: row.get(3)?,
+                lan_address: None,
+                last_seen_at: row.get(2)?,
             })
         })?;
         rows.collect()

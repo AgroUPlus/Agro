@@ -298,15 +298,23 @@ fn anthem(histories: &[(String, Vec<crate::db::ScrobbleRow>)]) -> Option<AnthemP
 /// Who in the circle tends to get to things first.
 ///
 /// For each of the circle's top tracks, the member whose earliest play precedes everyone else's
-/// wins it; whoever wins most is the trendsetter. Ties are broken by username so the answer is
-/// stable, and a track only one person played counts — being alone in liking something early is
-/// still being early.
+/// wins it; whoever wins most is the trendsetter. A track only one person played counts — being
+/// alone in liking something early is still being early.
+///
+/// A track where the earliest plays are simultaneous is awarded to nobody. This used to break the
+/// tie by username, which was harmless when play times were exact and a tie meant the same second.
+/// Play times are now stored to the hour (see `Db::record_scrobbles`), so a tie means "both of them
+/// some time that hour" and is the common case rather than a freak one — and breaking it
+/// alphabetically would hand a real, displayed credit to whoever is nearer the start of the
+/// alphabet, every time. There is no answer in the data, so the honest output is no winner for
+/// that track rather than a confident wrong one.
 fn trendsetter(histories: &[(String, Vec<crate::db::ScrobbleRow>)]) -> Option<TrendsetterPayload> {
     let top = circle_top(histories, track_key, TRENDSETTER_DEPTH);
     let mut wins: HashMap<&str, Vec<String>> = HashMap::new();
 
     for entry in &top {
         let mut earliest: Option<(&str, i64)> = None;
+        let mut tied = false;
         for (member, rows) in histories {
             let first = rows
                 .iter()
@@ -314,16 +322,20 @@ fn trendsetter(histories: &[(String, Vec<crate::db::ScrobbleRow>)]) -> Option<Tr
                 .filter_map(|row| crate::stats::parse_time(&row.played_at))
                 .min();
             let Some(at) = first else { continue };
-            let better = match earliest {
-                None => true,
-                Some((held_by, held_at)) => at < held_at || (at == held_at && member.as_str() < held_by),
-            };
-            if better {
-                earliest = Some((member.as_str(), at));
+            match earliest {
+                None => earliest = Some((member.as_str(), at)),
+                Some((_, held_at)) if at < held_at => {
+                    earliest = Some((member.as_str(), at));
+                    tied = false;
+                }
+                Some((_, held_at)) if at == held_at => tied = true,
+                Some(_) => {}
             }
         }
         if let Some((member, _)) = earliest {
-            wins.entry(member).or_default().push(entry.name.clone());
+            if !tied {
+                wins.entry(member).or_default().push(entry.name.clone());
+            }
         }
     }
 

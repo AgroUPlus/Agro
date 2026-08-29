@@ -150,11 +150,23 @@ pub async fn login(
         .filter(|l| !l.is_empty())
         .unwrap_or("device");
 
+    // The sealed vault key rides along with the token. The client has the passphrase in hand at
+    // exactly this moment and at no other — it is discarded immediately afterwards, and a device
+    // paired by QR never sees it at all — so this is the one point where it can unwrap the key that
+    // reads its settings. Both fields are null on an account that has not enrolled one yet, which
+    // is the client's cue to generate a key and enrol it.
+    let (vault_salt, vault_key_wrapped) = state
+        .db
+        .vault_envelope(&account.username)
+        .unwrap_or((None, None));
+
     match state.db.mint_device_token(&account.username, label) {
         Ok(token) => Json(json!({
             "username": account.username,
             "role": account.role.as_str(),
             "token": token,
+            "vaultSalt": vault_salt,
+            "vaultKeyWrapped": vault_key_wrapped,
         }))
         .into_response(),
         Err(err) => (

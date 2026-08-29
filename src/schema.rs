@@ -199,7 +199,6 @@ pub struct NodePayload {
     pub user_id: String,
     pub petname: String,
     pub client_type: String,
-    pub ip_address: Option<String>,
     pub lan_address: Option<String>,
     pub version: Option<String>,
     pub current_track: Option<String>,
@@ -210,9 +209,11 @@ pub struct NodePayload {
 #[derive(SimpleObject, Clone)]
 pub struct SyncedSettingsPayload {
     pub user_id: String,
-    pub server_url: Option<String>,
-    pub server_username: Option<String>,
-    pub lrclib_url: Option<String>,
+    /// The account's upstream settings, as the client sealed them. This server cannot read it and
+    /// has no key to try: it is handed back exactly as it arrived.
+    pub settings_blob: Option<String>,
+    /// Whether the blob contains a server address, which is all `syncMode` ever needed to know.
+    pub has_server_url: bool,
     pub lyrics_fetch_online: bool,
     pub stream_format: String,
     /// The domain the players rewrite share links onto, e.g. `frwd.top`. Empty means they each
@@ -228,9 +229,9 @@ pub struct SyncedSettingsPayload {
 #[derive(InputObject)]
 pub struct SyncedSettingsInput {
     pub user_id: String,
-    pub server_url: Option<String>,
-    pub server_username: Option<String>,
-    pub lrclib_url: Option<String>,
+    /// Sealed by the client before it is sent. The server stores it without looking.
+    pub settings_blob: Option<String>,
+    pub has_server_url: Option<bool>,
     pub lyrics_fetch_online: Option<bool>,
     pub stream_format: Option<String>,
     pub share_domain: Option<String>,
@@ -354,7 +355,13 @@ pub struct ScrobbleInput {
     pub duration_secs: i64,
     /// RFC3339, from the device. A phone that was offline is reporting yesterday's listening, and
     /// stamping it on arrival would pile a week of history onto one afternoon.
+    ///
+    /// Stored to the hour, not the second: see `Db::record_scrobbles`.
     pub played_at: String,
+    /// A per-play id from the client, which is what makes ingest idempotent now that the stored
+    /// timestamp is too coarse to tell two plays of one track apart. Optional, for clients that
+    /// predate it.
+    pub play_uid: Option<String>,
 }
 
 /// One tile in the library view.
@@ -433,7 +440,11 @@ const NODE_ONLINE_SECONDS: i64 = 45;
 
 /// Gathers what the server actually knows, so the plugin list describes this deployment
 /// rather than a fixed example of one.
-fn plugin_context(db: &Db) -> crate::plugins::PluginContext {
+/// `caller` is the account whose settings the overview describes. It used to be whichever account
+/// happened to own the first registered node, which meant an admin looking at the plugin list was
+/// shown someone else's deployment — and, before `plugins` became admin-only, a guest was shown the
+/// admin's. The caller is the only defensible answer to "whose settings are these".
+fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
     let nodes = db.get_all_nodes().unwrap_or_default();
     let now = chrono::Utc::now();
     let online = |last_seen: &str| {
@@ -443,26 +454,20 @@ fn plugin_context(db: &Db) -> crate::plugins::PluginContext {
     };
     let is_wander = |n: &crate::db::NodeRecord| n.client_type == "wander";
 
-    let settings = nodes
-        .first()
-        .and_then(|n| db.get_synced_settings(&n.user_id).ok().flatten());
+    let settings = db.get_synced_settings(caller).ok().flatten();
 
     crate::plugins::PluginContext {
         online_wander: nodes.iter().filter(|n| is_wander(n) && online(&n.last_seen_at)).count(),
         online_wanda: nodes.iter().filter(|n| !is_wander(n) && online(&n.last_seen_at)).count(),
         known_wander: nodes.iter().filter(|n| is_wander(n)).count(),
         known_wanda: nodes.iter().filter(|n| !is_wander(n)).count(),
-        navidrome_url: settings.as_ref().and_then(|s| s.server_url.clone()),
-        navidrome_username: settings.as_ref().and_then(|s| s.server_username.clone()),
-        lrclib_url: settings.as_ref().and_then(|s| s.lrclib_url.clone()),
+        navidrome_configured: settings.as_ref().is_some_and(|s| s.has_server_url),
         lyrics_online: settings
             .as_ref()
             .and_then(|s| s.lyrics_fetch_online)
             .unwrap_or(true),
-        has_handoff: nodes
-            .first()
-            .map(|n| db.get_handoff(&n.user_id).ok().flatten().is_some())
-            .unwrap_or(false),
+        // The caller's own session, for the same reason as the settings above.
+        has_handoff: db.get_handoff(caller).ok().flatten().is_some(),
     }
 }
 
@@ -625,14 +630,15 @@ impl QueryRoot {
         Ok(db.account(subject.trim())?.as_ref().map(account_payload))
     }
 
-    /// The plugin registry. Administrators only: `plugin_context` reads whichever account owns the
-    /// first registered node to decide what is "connected", so for a guest this answered with the
-    /// admin's Navidrome address and username.
+    /// The plugin registry. Administrators only, and described from the caller's own account:
+    /// `plugin_context` used to read whichever account owned the first registered node, so this
+    /// answered with a stranger's settings.
     async fn plugins(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<AgroPlugin>> {
         require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
+        let caller = ctx.data::<AuthedUser>()?.username().to_string();
         let saved_states = db.get_plugin_states().unwrap_or_default();
-        let mut plugins = crate::plugins::get_plugins(&plugin_context(db));
+        let mut plugins = crate::plugins::get_plugins(&plugin_context(db, &caller));
         for p in &mut plugins {
             if let Some(&enabled) = saved_states.get(&p.id) {
                 p.is_enabled = enabled;
@@ -713,6 +719,7 @@ impl QueryRoot {
     async fn active_nodes(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<NodePayload>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
+        let ws_hub = ctx.data::<Arc<WsHub>>().ok();
         let nodes = db.get_active_nodes(&user_id)?;
         let now = chrono::Utc::now();
         let payload = nodes.into_iter().map(|n| {
@@ -721,13 +728,13 @@ impl QueryRoot {
             } else {
                 false
             };
+            let lan_address = ws_hub.as_ref().and_then(|hub| hub.get_lan_address(&user_id, &n.device_id));
             NodePayload {
                 device_id: n.device_id,
                 user_id: n.user_id,
                 petname: n.petname,
                 client_type: n.client_type,
-                ip_address: n.ip_address,
-                lan_address: n.lan_address,
+                lan_address,
                 version: n.version,
                 current_track: n.current_track,
                 last_seen_at: n.last_seen_at,
@@ -818,10 +825,11 @@ impl QueryRoot {
         authorize(ctx, &user_id)?;
         let limit = limit.unwrap_or(50).clamp(1, MAX_MISSING as i32) as i64;
         let db = ctx.data::<Db>()?;
+        let ws_hub = ctx.data::<Arc<WsHub>>().ok();
         let tracks = db.missing_on_device(&user_id, &device_id, limit)?;
         Ok(tracks
             .into_iter()
-            .map(|t| to_library_payload_with_sources(db, &user_id, t))
+            .map(|t| to_library_payload_with_sources(db, ws_hub.as_deref().map(|a| a.as_ref()), &user_id, t))
             .collect())
     }
 
@@ -835,12 +843,13 @@ impl QueryRoot {
         if !ctx.data::<crate::storage::Storage>()?.archives() {
             return Ok(SyncMode::IndexOnly);
         }
-        // Presence is the whole question, so the address is never decrypted here.
+        // Presence is the whole question, and it is now the only part of the settings this server
+        // can answer: the address itself is inside a blob it has no key for. The client states the
+        // bit explicitly when it saves.
         let has_navidrome = ctx
             .data::<Db>()?
             .get_synced_settings(&user_id)?
-            .and_then(|s| s.server_url)
-            .is_some_and(|url| !url.trim().is_empty());
+            .is_some_and(|s| s.has_server_url);
 
         Ok(if has_navidrome {
             SyncMode::Navidrome
@@ -895,23 +904,20 @@ impl QueryRoot {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let settings = db.get_synced_settings(&user_id)?;
-        let passphrase = db.get_user_by_username(&user_id)?
-            .map(|(_, _, p)| p)
-            .unwrap_or_default();
 
         Ok(settings.map(|s| {
-            let server_url = s.server_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
-            let server_username = s.server_username.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
-            let lrclib_url = s.lrclib_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok());
-
             SyncedSettingsPayload {
                 user_id,
-                server_url,
-                server_username,
-                lrclib_url,
+                // Returned exactly as stored. There is no decryption step here any more, and no
+                // key on this machine that could perform one — which is the entire point of
+                // migration 27.
+                settings_blob: s.settings_blob,
+                has_server_url: s.has_server_url,
                 lyrics_fetch_online: s.lyrics_fetch_online.unwrap_or(true),
                 stream_format: s.stream_format.unwrap_or_else(|| "FLAC".to_string()),
-                // Plaintext, unlike the three above: see migration 4 in `db`.
+                // Plaintext, unlike the blob: these are the operator's forwarding policy, enforced
+                // by this server on a public route, so it has to be able to read them. See
+                // migration 4 in `db`.
                 share_domain: s.share_domain,
                 share_hosts: s.share_hosts,
                 share_enabled: s.share_enabled.unwrap_or(false),
@@ -1149,6 +1155,7 @@ fn to_library_payload(t: crate::db_library::LibraryTrack) -> LibraryTrackPayload
 
 fn to_library_payload_with_sources(
     db: &Db,
+    ws_hub: Option<&WsHub>,
     user_id: &str,
     t: crate::db_library::LibraryTrack,
 ) -> LibraryTrackPayload {
@@ -1158,10 +1165,11 @@ fn to_library_payload_with_sources(
             let is_online = chrono::DateTime::parse_from_rfc3339(&s.last_seen_at)
                 .map(|seen| (chrono::Utc::now() - seen.with_timezone(&chrono::Utc)).num_seconds() < 60)
                 .unwrap_or(false);
+            let lan_address = ws_hub.and_then(|hub| hub.get_lan_address(user_id, &s.device_id));
             peer_sources.push(PeerSourcePayload {
                 device_id: s.device_id,
                 petname: s.petname,
-                lan_address: s.lan_address,
+                lan_address,
                 is_online,
                 is_server_archive: false,
             });
@@ -1210,7 +1218,6 @@ impl MutationRoot {
         device_id: String,
         client_type: String,
         device_name: Option<String>,
-        ip_address: Option<String>,
         lan_address: Option<String>,
         version: Option<String>,
         current_track: Option<String>,
@@ -1247,8 +1254,6 @@ impl MutationRoot {
             &user_id,
             crate::db::NodeName::Set(&petname),
             &normalized_client,
-            ip_address.as_deref(),
-            lan_address.as_deref(),
             version.as_deref(),
             current_track.as_deref(),
         )?;
@@ -1258,8 +1263,7 @@ impl MutationRoot {
             user_id: user_id.clone(),
             petname: petname.clone(),
             client_type: normalized_client,
-            ip_address,
-            lan_address,
+            lan_address: lan_address.clone(),
             version,
             current_track,
             last_seen_at: chrono::Utc::now().to_rfc3339(),
@@ -1267,6 +1271,9 @@ impl MutationRoot {
         };
 
         if let Ok(ws_hub) = ctx.data::<Arc<WsHub>>() {
+            if let Some(addr) = lan_address.as_deref() {
+                ws_hub.set_lan_address(&user_id, &device_id, addr);
+            }
             // Scoped to the account. These used to go to every connected socket regardless of
             // whose device they described.
             ws_hub.notify_user(
@@ -1303,6 +1310,36 @@ impl MutationRoot {
         Ok(removed)
     }
 
+    /// Registers this account's vault key, sealed by the client under the account passphrase.
+    ///
+    /// The server takes two opaque strings and can do nothing with either: unwrapping needs the
+    /// passphrase, and it keeps only an Argon2 hash of that. What it is storing is the means for
+    /// the *user* to recover their settings on a new device, not the means for this machine to read
+    /// them.
+    ///
+    /// Enrolment is once per account. A second attempt returns `false` rather than erroring —
+    /// two devices racing to set up the same account is an ordinary thing to happen, and the loser
+    /// should fetch the winner's envelope and unwrap it, not treat the race as a failure.
+    async fn enrol_vault_key(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        vault_salt: String,
+        vault_key_wrapped: String,
+    ) -> async_graphql::Result<bool> {
+        authorize(ctx, &user_id)?;
+        // Bounded so the column cannot be used as free storage. A salt and a sealed 32-byte key
+        // are both far smaller than this; the limit only has to be obviously sufficient.
+        for (name, value) in [("vaultSalt", &vault_salt), ("vaultKeyWrapped", &vault_key_wrapped)] {
+            if value.trim().is_empty() || value.len() > 512 {
+                return Err(format!("{name} is missing or too long").into());
+            }
+        }
+        Ok(ctx
+            .data::<Db>()?
+            .enrol_vault_key(&user_id, vault_salt.trim(), vault_key_wrapped.trim())?)
+    }
+
     async fn update_synced_settings(
         &self,
         ctx: &Context<'_>,
@@ -1327,17 +1364,13 @@ impl MutationRoot {
         }
 
         let db = ctx.data::<Db>()?;
-        let passphrase = db.settings_key(&input.user_id)?;
 
-        let enc_server_url = input.server_url.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
-        let enc_server_username = input.server_username.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
-        let enc_lrclib_url = input.lrclib_url.as_deref().and_then(|u| crate::crypto::encrypt_field(u, &passphrase).ok());
-
+        // Stored as received. The client sealed the blob before sending it, and this server has
+        // neither the key nor a reason to want one.
         db.upsert_synced_settings(
             &input.user_id,
-            enc_server_url.as_deref(),
-            enc_server_username.as_deref(),
-            enc_lrclib_url.as_deref(),
+            input.settings_blob.as_deref(),
+            input.has_server_url,
             input.lyrics_fetch_online,
             input.stream_format.as_deref(),
             crate::db::ShareSettingsInput {
@@ -1350,9 +1383,8 @@ impl MutationRoot {
         let settings = db.get_synced_settings(&input.user_id)?.unwrap();
         let payload = SyncedSettingsPayload {
             user_id: input.user_id.clone(),
-            server_url: input.server_url.clone().or(settings.server_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
-            server_username: input.server_username.clone().or(settings.server_username.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
-            lrclib_url: input.lrclib_url.clone().or(settings.lrclib_url.and_then(|u| crate::crypto::decrypt_field(&u, &passphrase).ok())),
+            settings_blob: settings.settings_blob,
+            has_server_url: settings.has_server_url,
             lyrics_fetch_online: settings.lyrics_fetch_online.unwrap_or(true),
             stream_format: settings.stream_format.unwrap_or_else(|| "FLAC".to_string()),
             share_domain: settings.share_domain,
@@ -1448,6 +1480,7 @@ impl MutationRoot {
                 genre: entry.genre,
                 duration_secs: entry.duration_secs.max(0),
                 played_at: entry.played_at,
+                play_uid: entry.play_uid,
             })
             .collect();
 
@@ -1721,8 +1754,6 @@ impl MutationRoot {
             &input.user_id,
             crate::db::NodeName::KeepOr(&petname),
             client_type,
-            None,
-            None,
             None,
             Some(&track_summary),
         );

@@ -30,10 +30,10 @@ pub struct PluginContext {
     pub online_wanda: usize,
     pub known_wander: usize,
     pub known_wanda: usize,
-    /// From `synced_settings`: the Navidrome the clients agreed on, and the lyrics source.
-    pub navidrome_url: Option<String>,
-    pub navidrome_username: Option<String>,
-    pub lrclib_url: Option<String>,
+    /// Whether the account has a Navidrome address on file. Only whether, not what: since
+    /// migration 27 the address lives inside a blob the server has no key for, so "Not set" and a
+    /// full URL are the only two things it can still tell apart.
+    pub navidrome_configured: bool,
     pub lyrics_online: bool,
     /// Whether any session is currently stored for anyone.
     pub has_handoff: bool,
@@ -88,12 +88,19 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
             category: "Backend".to_string(),
             target: "Core".to_string(),
             is_enabled: true,
-            is_connected: ctx.navidrome_url.is_some(),
+            is_connected: ctx.navidrome_configured,
             latency_ms: None,
-            endpoint: ctx.navidrome_url.clone(),
+            // The server cannot name the endpoint it is syncing. It holds the address sealed and
+            // hands it to the clients unopened, so there is nothing to display here but whether
+            // one is set — which is a better description of what this plugin does than the URL
+            // was.
+            endpoint: None,
             metadata: vec![
-                meta("Server", ctx.navidrome_url.clone().unwrap_or_else(|| "Not set".to_string())),
-                meta("Username", ctx.navidrome_username.clone().unwrap_or_else(|| "Not set".to_string())),
+                meta(
+                    "Server",
+                    if ctx.navidrome_configured { "Set — readable only on your devices" } else { "Not set" },
+                ),
+                meta("Username", "Stored encrypted, alongside the address"),
                 meta("Password", "Never synced — entered on each device"),
             ],
         },
@@ -107,9 +114,10 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
             is_enabled: ctx.lyrics_online,
             is_connected: ctx.lyrics_online,
             latency_ms: None,
-            endpoint: Some(
-                ctx.lrclib_url.clone().unwrap_or_else(|| "https://lrclib.net/api".to_string()),
-            ),
+            // The default, not the account's configured value: that one is inside the sealed blob
+            // now. This is the address the clients fall back to, which is what a deployment
+            // overview is actually asking about.
+            endpoint: Some("https://lrclib.net/api".to_string()),
             metadata: vec![
                 meta("Online lookup", if ctx.lyrics_online { "Enabled" } else { "Disabled" }),
                 meta("Fetched by", "The client, not the server"),

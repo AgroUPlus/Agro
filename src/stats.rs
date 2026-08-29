@@ -175,6 +175,97 @@ mod tests {
         }
     }
 
+    /// The claim that made hour-resolution storage acceptable: every statistic on this page
+    /// buckets by hour or by day, so throwing the seconds away changes none of them.
+    ///
+    /// True for any play that is not sitting on a bucket edge, which is what this checks — a few
+    /// seconds either side of an hour boundary, mid-hour, and at several distances into the past.
+    /// The edge case is real and is pinned separately by
+    /// [`rounding_can_move_a_play_one_bucket_at_an_edge`].
+    #[test]
+    fn rounding_plays_to_the_hour_changes_no_statistic() {
+        // Midnight UTC, so "days ago" arithmetic lines up with the day boundary and the test is
+        // about the hour rounding rather than about where a day starts.
+        let now = 30 * DAY;
+        let offsets = [
+            61,            // a minute into the current hour
+            3599,          // a second before the hour rolls
+            3601,          // a second after it
+            2 * DAY + 59,  // two days back, just past the hour
+            2 * DAY + 3599,
+            7 * DAY + 1800, // mid-hour, a week back
+            29 * DAY + 1800, // near the far edge of the heatmap, but not on it
+        ];
+
+        let exact: Vec<_> = offsets
+            .iter()
+            .enumerate()
+            .map(|(i, off)| row("A", &format!("t{i}"), 240, now - off, "phone"))
+            .collect();
+        let coarse: Vec<_> = offsets
+            .iter()
+            .enumerate()
+            .map(|(i, off)| {
+                let at = now - off;
+                row("A", &format!("t{i}"), 240, at - at.rem_euclid(3600), "phone")
+            })
+            .collect();
+
+        let a = compute(&exact, 5, now);
+        let b = compute(&coarse, 5, now);
+
+        assert_eq!(a.by_hour, b.by_hour, "hour histogram");
+        assert_eq!(a.by_day, b.by_day, "sparkline");
+        assert_eq!(a.heatmap, b.heatmap, "heatmap");
+        assert_eq!(a.streak, b.streak, "streak");
+        assert_eq!(a.secs_total, b.secs_total, "total");
+        assert_eq!(a.plays_total, b.plays_total, "play count");
+        assert_eq!(a.top_artists, b.top_artists, "top artists");
+        assert_eq!(a.top_tracks, b.top_tracks, "top tracks");
+        assert_eq!(a.top_genres, b.top_genres, "top genres");
+        assert_eq!(a.by_device, b.by_device, "per-device totals");
+    }
+
+    /// The honest exception, pinned so it is a known cost rather than a surprise.
+    ///
+    /// *Every* window here is measured backwards from "now" — `secs_today` and `secs_week`
+    /// obviously so, but `by_day`, `heatmap` and `streak` too, via `(now - at) / DAY`. None of them
+    /// is aligned to a calendar day. So a play within an hour of any bucket edge can round across
+    /// it and land one bucket earlier.
+    ///
+    /// The cost is bounded and cosmetic: one play moves by one cell, and the totals it contributes
+    /// to are unchanged. Worth knowing before someone reads a heatmap as gospel.
+    #[test]
+    fn rounding_can_move_a_play_one_bucket_at_an_edge() {
+        // Mid-hour, which is the point: when "now" falls on an hour boundary every window edge
+        // does too, and rounding a play down can never carry it past one. Real clocks do not
+        // cooperate like that.
+        let now = 30 * DAY + 1800;
+        // A minute inside the 24-hour window; rounding down to the hour carries it outside.
+        let at = now - DAY + 60;
+        let exact = [row("A", "one", 300, at, "phone")];
+        let coarse = [row("A", "one", 300, at - at.rem_euclid(3600), "phone")];
+
+        let a = compute(&exact, 5, now);
+        let b = compute(&coarse, 5, now);
+
+        assert_eq!(a.secs_total, b.secs_total, "the total is never in doubt");
+        assert_eq!(a.plays_total, b.plays_total, "nor is the play count");
+        assert_eq!(
+            a.by_day.iter().sum::<i64>(),
+            b.by_day.iter().sum::<i64>(),
+            "the play stays on the sparkline, it only moves along it"
+        );
+        assert_ne!(
+            a.secs_today, b.secs_today,
+            "this is the documented edge: the play rounds out of the rolling day"
+        );
+        assert!(
+            (a.secs_today - b.secs_today).abs() <= 300,
+            "and it is bounded by one track's duration"
+        );
+    }
+
     #[test]
     fn totals_split_by_window() {
         let now = 10 * DAY;
