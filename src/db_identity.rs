@@ -99,6 +99,7 @@ pub struct Account {
     pub state: AccountState,
     /// `0` means unlimited, which is what the admin has.
     pub quota_bytes: i64,
+    pub can_archive: bool,
     pub show_now_playing: bool,
     pub show_stats: bool,
 }
@@ -106,6 +107,10 @@ pub struct Account {
 impl Account {
     pub fn is_admin(&self) -> bool {
         self.role.is_admin()
+    }
+
+    pub fn can_archive(&self) -> bool {
+        self.role.is_admin() || self.can_archive
     }
 
     /// The admin is never capped. A quota on the person who owns the disk is theatre.
@@ -119,7 +124,7 @@ impl Account {
 }
 
 const ACCOUNT_COLUMNS: &str =
-    "id, username, role, state, quota_bytes, show_now_playing, show_stats";
+    "id, username, role, state, quota_bytes, show_now_playing, show_stats, COALESCE(can_archive, 0)";
 
 fn account_from_row(row: &rusqlite::Row<'_>) -> Result<Account> {
     Ok(Account {
@@ -130,6 +135,7 @@ fn account_from_row(row: &rusqlite::Row<'_>) -> Result<Account> {
         quota_bytes: row.get(4)?,
         show_now_playing: row.get::<_, i64>(5)? != 0,
         show_stats: row.get::<_, i64>(6)? != 0,
+        can_archive: row.get::<_, i64>(7)? != 0,
     })
 }
 
@@ -248,6 +254,7 @@ impl Db {
             role,
             state,
             quota_bytes: quota,
+            can_archive: role.is_admin(),
             show_now_playing: false,
             show_stats: false,
         })
@@ -389,6 +396,15 @@ impl Db {
         Ok(changed > 0)
     }
 
+    pub fn set_can_archive(&self, username: &str, can_archive: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE users SET can_archive = ?1 WHERE username = ?2 COLLATE NOCASE",
+            params![if can_archive { 1 } else { 0 }, username.trim()],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Whether accepted friends may browse this account's library.
     ///
     /// Its own setter rather than another parameter on `set_visibility`: sharing a music
@@ -413,6 +429,21 @@ impl Db {
         let changed = conn.execute(
             "UPDATE users SET show_activity = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![show as i64, username.trim()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Turns the account quiet, or lets it speak again.
+    ///
+    /// Deliberately separate from [`Self::set_visibility`]: the switches there are standing
+    /// consents the user set once, and incognito is a temporary override of all of them. Folding
+    /// the two together would mean leaving incognito had to restore the other switches from
+    /// somewhere, which is how a privacy setting silently comes back on.
+    pub fn set_incognito(&self, username: &str, incognito: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE users SET incognito = ?1 WHERE username = ?2 COLLATE NOCASE",
+            params![incognito as i64, username.trim()],
         )?;
         Ok(changed > 0)
     }

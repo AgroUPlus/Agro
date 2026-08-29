@@ -99,6 +99,28 @@ pub async fn ws_handler(
 ) -> Response {
     let username = user.map(|u| u.username().to_string());
     let device = query.device;
+    if let (Some(u), Some(d)) = (&username, &device) {
+        // A connect is not a naming event. The invented name is only the fallback for a device
+        // that has never been seen, or the socket would rename it on every reconnect — which is
+        // every time the server is redeployed.
+        let petname = crate::passphrase::generate_random_petname();
+        let client_type = if d.to_lowercase().contains("android") || d.to_lowercase().contains("wanda") {
+            "wanda"
+        } else {
+            "wander"
+        };
+        let _ = state.db.upsert_node(
+            d,
+            u,
+            crate::db::NodeName::KeepOr(&petname),
+            client_type,
+            None,
+            None,
+            None,
+            None,
+        );
+        state.offers.note_archived(u);
+    }
     ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub, username, device))
 }
 

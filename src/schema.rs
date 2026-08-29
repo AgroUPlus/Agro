@@ -180,6 +180,7 @@ pub struct AccountPayload {
     pub role: String,
     pub state: String,
     pub quota_bytes: i64,
+    pub can_archive: bool,
     pub connection_url: String,
 }
 
@@ -199,6 +200,7 @@ pub struct NodePayload {
     pub petname: String,
     pub client_type: String,
     pub ip_address: Option<String>,
+    pub lan_address: Option<String>,
     pub version: Option<String>,
     pub current_track: Option<String>,
     pub last_seen_at: String,
@@ -239,6 +241,9 @@ pub struct SyncedSettingsInput {
 #[derive(SimpleObject, Clone)]
 pub struct HandoffState {
     pub track_uri: String,
+    /// How long the track is. 0 when the sender did not say, or when it is a livestream — both
+    /// want a running clock rather than a progress bar that finishes at the wrong moment.
+    pub duration_ms: i64,
     pub track_title: String,
     pub artist_name: String,
     pub album_name: Option<String>,
@@ -402,6 +407,9 @@ pub struct LyricsAndCoverPayload {
 #[derive(InputObject)]
 pub struct HandoffInput {
     pub user_id: String,
+    /// Optional so an older client is still a valid sender; omitted reads as "did not say", which
+    /// leaves whatever length is already stored alone.
+    pub duration_ms: Option<i64>,
     pub track_uri: String,
     pub track_title: String,
     pub artist_name: String,
@@ -633,12 +641,26 @@ impl QueryRoot {
         Ok(plugins)
     }
 
-    async fn playback_handoff(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Option<HandoffState>> {
+    /// Where the account left off.
+    ///
+    /// `excludeDevice` asks the question a client asks about *the rest of* its fleet: give me the
+    /// latest session that is not mine. Optional, so a client that only wants "where was I" —
+    /// which is most of them — is unchanged.
+    async fn playback_handoff(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        exclude_device: Option<String>,
+    ) -> async_graphql::Result<Option<HandoffState>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
-        let rec = db.get_handoff(&user_id)?;
+        let rec = match exclude_device.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+            Some(device_id) => db.get_handoff_excluding(&user_id, device_id)?,
+            None => db.get_handoff(&user_id)?,
+        };
         Ok(rec.map(|r| HandoffState {
             track_uri: r.track_uri,
+            duration_ms: r.duration_ms,
             track_title: r.track_title,
             artist_name: r.artist_name,
             album_name: r.album_name,
@@ -705,6 +727,7 @@ impl QueryRoot {
                 petname: n.petname,
                 client_type: n.client_type,
                 ip_address: n.ip_address,
+                lan_address: n.lan_address,
                 version: n.version,
                 current_track: n.current_track,
                 last_seen_at: n.last_seen_at,
@@ -794,11 +817,11 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<LibraryTrackPayload>> {
         authorize(ctx, &user_id)?;
         let limit = limit.unwrap_or(50).clamp(1, MAX_MISSING as i32) as i64;
-        Ok(ctx
-            .data::<Db>()?
-            .missing_on_device(&user_id, &device_id, limit)?
+        let db = ctx.data::<Db>()?;
+        let tracks = db.missing_on_device(&user_id, &device_id, limit)?;
+        Ok(tracks
             .into_iter()
-            .map(to_library_payload)
+            .map(|t| to_library_payload_with_sources(db, &user_id, t))
             .collect())
     }
 
@@ -946,6 +969,7 @@ fn account_payload(account: &crate::db_identity::Account) -> AccountPayload {
         role: account.role.as_str().to_string(),
         state: account.state.as_str().to_string(),
         quota_bytes: account.quota_bytes,
+        can_archive: account.can_archive(),
         connection_url: public_url(),
     }
 }
@@ -1003,6 +1027,15 @@ fn pairing_qr(username: &str, device_token: &str) -> String {
 
 // ── Library index ───────────────────────────────────────────────────────────────────────────
 
+#[derive(SimpleObject, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PeerSourcePayload {
+    pub device_id: String,
+    pub petname: String,
+    pub lan_address: Option<String>,
+    pub is_online: bool,
+    pub is_server_archive: bool,
+}
+
 /// One file in the shared library index, as the clients see it.
 #[derive(SimpleObject, Clone)]
 pub struct LibraryTrackPayload {
@@ -1024,6 +1057,8 @@ pub struct LibraryTrackPayload {
     /// the index entry — which is the whole of index-only mode, and of a track that lives on a
     /// peer.
     pub archived_path: Option<String>,
+    /// Peer devices that currently hold this track.
+    pub peer_sources: Vec<PeerSourcePayload>,
 }
 
 /// How this deployment moves music between devices.
@@ -1108,6 +1143,55 @@ fn to_library_payload(t: crate::db_library::LibraryTrack) -> LibraryTrackPayload
         format: t.format,
         bitrate_kbps: t.bitrate_kbps.map(|v| v as i32),
         archived_path: t.archived_path,
+        peer_sources: Vec::new(),
+    }
+}
+
+fn to_library_payload_with_sources(
+    db: &Db,
+    user_id: &str,
+    t: crate::db_library::LibraryTrack,
+) -> LibraryTrackPayload {
+    let mut peer_sources = Vec::new();
+    if let Ok(sources) = db.peer_sources_for_track(user_id, &t.content_hash) {
+        for s in sources {
+            let is_online = chrono::DateTime::parse_from_rfc3339(&s.last_seen_at)
+                .map(|seen| (chrono::Utc::now() - seen.with_timezone(&chrono::Utc)).num_seconds() < 60)
+                .unwrap_or(false);
+            peer_sources.push(PeerSourcePayload {
+                device_id: s.device_id,
+                petname: s.petname,
+                lan_address: s.lan_address,
+                is_online,
+                is_server_archive: false,
+            });
+        }
+    }
+    if t.archived_path.is_some() {
+        peer_sources.push(PeerSourcePayload {
+            device_id: "server".to_string(),
+            petname: "Server Archive".to_string(),
+            lan_address: None,
+            is_online: true,
+            is_server_archive: true,
+        });
+    }
+    LibraryTrackPayload {
+        content_hash: t.content_hash,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        album_artist: t.album_artist,
+        track_no: t.track_no.map(|v| v as i32),
+        disc_no: t.disc_no.map(|v| v as i32),
+        year: t.year.map(|v| v as i32),
+        genre: t.genre,
+        duration_ms: t.duration_ms,
+        size_bytes: t.size_bytes,
+        format: t.format,
+        bitrate_kbps: t.bitrate_kbps.map(|v| v as i32),
+        archived_path: t.archived_path,
+        peer_sources,
     }
 }
 
@@ -1127,6 +1211,7 @@ impl MutationRoot {
         client_type: String,
         device_name: Option<String>,
         ip_address: Option<String>,
+        lan_address: Option<String>,
         version: Option<String>,
         current_track: Option<String>,
     ) -> async_graphql::Result<NodePayload> {
@@ -1160,9 +1245,10 @@ impl MutationRoot {
         db.upsert_node(
             &device_id,
             &user_id,
-            &petname,
+            crate::db::NodeName::Set(&petname),
             &normalized_client,
             ip_address.as_deref(),
+            lan_address.as_deref(),
             version.as_deref(),
             current_track.as_deref(),
         )?;
@@ -1173,6 +1259,7 @@ impl MutationRoot {
             petname: petname.clone(),
             client_type: normalized_client,
             ip_address,
+            lan_address,
             version,
             current_track,
             last_seen_at: chrono::Utc::now().to_rfc3339(),
@@ -1446,6 +1533,22 @@ impl MutationRoot {
         Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
     }
 
+    /// Allows or disallows a user from permanently saving music into the server's archive.
+    async fn set_can_archive(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        can_archive: bool,
+    ) -> async_graphql::Result<AccountPayload> {
+        require_admin(ctx)?;
+        let db = ctx.data::<Db>()?;
+        let target = normalise_username(&username)?;
+        if !db.set_can_archive(&target, can_archive)? {
+            return Err("No such account".into());
+        }
+        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+    }
+
     /// Mints a device token and returns it as a scannable pairing payload.
     ///
     /// The pairing QR used to be built from the account passphrase, so photographing it once handed
@@ -1597,6 +1700,7 @@ impl MutationRoot {
             input.album_name.as_deref(),
             input.artwork_url.as_deref(),
             input.position_ms,
+            input.duration_ms.unwrap_or(0).max(0),
             input.is_playing,
             &input.device_id,
             queue_json.as_deref(),
@@ -1604,12 +1708,9 @@ impl MutationRoot {
         )?;
 
         let track_summary = format!("{} • {}", input.track_title, input.artist_name);
-        let existing_nodes = db.get_active_nodes(&input.user_id).unwrap_or_default();
-        let petname = if let Some(existing) = existing_nodes.iter().find(|n| n.device_id == input.device_id) {
-            existing.petname.clone()
-        } else {
-            crate::passphrase::generate_random_petname()
-        };
+        // A handoff reports what is playing, not what the device is called: the name it already
+        // has stands, and the invented one is only for a device seen here first.
+        let petname = crate::passphrase::generate_random_petname();
         let client_type = if input.device_id.to_lowercase().contains("android") || input.device_id.to_lowercase().contains("wanda") {
             "wanda"
         } else {
@@ -1618,8 +1719,9 @@ impl MutationRoot {
         let _ = db.upsert_node(
             &input.device_id,
             &input.user_id,
-            &petname,
+            crate::db::NodeName::KeepOr(&petname),
             client_type,
+            None,
             None,
             None,
             Some(&track_summary),
@@ -1701,6 +1803,9 @@ impl MutationRoot {
         }
 
         if accepted > 0 {
+            if let Ok(offers) = ctx.data::<crate::offers::OfferBatcher>() {
+                offers.note_archived(&user_id);
+            }
             if let Ok(ws_hub) = ctx.data::<Arc<WsHub>>() {
                 ws_hub.notify_user(
                     &user_id,

@@ -29,6 +29,14 @@ pub struct LibraryTrack {
     pub archived_path: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PeerSourceInfo {
+    pub device_id: String,
+    pub petname: String,
+    pub lan_address: Option<String>,
+    pub last_seen_at: String,
+}
+
 /// An upload in flight.
 #[derive(Debug, Clone)]
 pub struct UploadSession {
@@ -297,6 +305,32 @@ impl Db {
             params![user_id, device_id, DURATION_TOLERANCE_MS, limit],
             row_to_track,
         )?;
+        rows.collect()
+    }
+
+    /// Finds other registered devices of this account that hold the specified content hash.
+    pub fn peer_sources_for_track(
+        &self,
+        user_id: &str,
+        content_hash: &str,
+    ) -> Result<Vec<PeerSourceInfo>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT h.device_id, COALESCE(rn.petname, h.device_id), rn.lan_address, COALESCE(rn.last_seen_at, datetime('now'))
+             FROM device_holdings h
+             LEFT JOIN registered_nodes rn
+               ON rn.device_id = h.device_id
+              AND rn.user_id = h.user_id
+             WHERE h.content_hash = ?1 AND h.user_id = ?2",
+        )?;
+        let rows = stmt.query_map(params![content_hash, user_id], |row| {
+            Ok(PeerSourceInfo {
+                device_id: row.get(0)?,
+                petname: row.get(1)?,
+                lan_address: row.get(2)?,
+                last_seen_at: row.get(3)?,
+            })
+        })?;
         rows.collect()
     }
 
