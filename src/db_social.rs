@@ -65,6 +65,12 @@ pub struct Profile {
     /// of Aphex Twin") and a timeline ("you played this at 3am on Tuesday") are different
     /// disclosures, and someone may reasonably want the first without the second.
     pub show_activity: bool,
+    /// Whether the account has gone quiet for the moment.
+    ///
+    /// Not a consent like the switches above but a temporary override of all of them: while this
+    /// is on, every social surface is closed regardless of what the others say. Enforced in
+    /// `visible_profile`, so no caller has to remember to ask.
+    pub incognito: bool,
 }
 
 /// An edge as the *viewer* experiences it: who, and which way the unanswered request points.
@@ -79,10 +85,10 @@ pub struct FriendEdge {
 
 /// How many columns [`PROFILE_COLUMNS`] selects, so anything appended after them can be indexed
 /// relative to it rather than by a number that has to be remembered.
-const PROFILE_COLUMN_COUNT: usize = 10;
+const PROFILE_COLUMN_COUNT: usize = 11;
 
 const PROFILE_COLUMNS: &str =
-    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity";
+    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity, incognito";
 
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
     Ok(Profile {
@@ -96,7 +102,30 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         discoverable: row.get::<_, i64>(7)? != 0,
         share_library: row.get::<_, i64>(8)? != 0,
         show_activity: row.get::<_, i64>(9)? != 0,
+        incognito: row.get::<_, i64>(10)? != 0,
     })
+}
+
+impl Profile {
+    /// Whether this account currently shows what it is playing.
+    ///
+    /// The standing consent *and* incognito, together, so that no caller can read the raw flag and
+    /// forget the override. The first version of incognito checked only in `visible_profile`, and
+    /// `friends_now_playing` — which never calls it — carried on broadcasting; the boundary test
+    /// for it failed before this method existed.
+    pub fn shows_now_playing(&self) -> bool {
+        self.show_now_playing && !self.incognito
+    }
+
+    /// Whether aggregate listening statistics are open.
+    pub fn shows_stats(&self) -> bool {
+        self.show_stats && !self.incognito
+    }
+
+    /// Whether the activity timeline is open.
+    pub fn shows_activity(&self) -> bool {
+        self.show_activity && !self.incognito
+    }
 }
 
 impl Db {
