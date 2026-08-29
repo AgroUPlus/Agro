@@ -286,6 +286,13 @@ impl Db {
                ON other.content_hash = t.content_hash
               AND other.user_id = ?1
               AND other.device_id <> ?2
+             -- The holder has to still exist. `delete_node` only removes the row in
+             -- `registered_nodes`, and a client that changes its device id simply stops answering
+             -- to the old one, so holdings outlive the device that reported them either way.
+             -- Without this, every track a retired machine ever held is offered forever to every
+             -- remaining device, sourced from somewhere nothing can be fetched from.
+             JOIN registered_nodes rn
+               ON rn.user_id = other.user_id AND rn.device_id = other.device_id
              WHERE NOT EXISTS (
                  SELECT 1 FROM device_holdings mine
                  WHERE mine.device_id = ?2 AND mine.content_hash = t.content_hash)
@@ -316,9 +323,15 @@ impl Db {
     ) -> Result<Vec<PeerSourceInfo>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT h.device_id, COALESCE(rn.petname, h.device_id), COALESCE(rn.last_seen_at, datetime('now'))
+            // An inner join, and no `COALESCE` on `last_seen_at`. A holding whose device is gone
+            // is not a source that happens to be offline — it is not a source at all. The old
+            // left join listed it anyway and, worse, substituted `datetime('now')` for the missing
+            // timestamp, so a device that no longer exists was advertised as *just seen*: the
+            // caller computes `is_online` from that value. That is what offers a download which can
+            // never complete.
+            "SELECT h.device_id, COALESCE(NULLIF(rn.petname, ''), h.device_id), rn.last_seen_at
              FROM device_holdings h
-             LEFT JOIN registered_nodes rn
+             JOIN registered_nodes rn
                ON rn.device_id = h.device_id
               AND rn.user_id = h.user_id
              WHERE h.content_hash = ?1 AND h.user_id = ?2",
@@ -861,10 +874,59 @@ mod tests {
         }
     }
 
+    /// Reproduces the "download 136 tracks nobody has" report.
+    ///
+    /// A device that is unregistered — retired, re-paired, or given a new device id — leaves its
+    /// `device_holdings` rows behind, because `delete_node` only touches `registered_nodes`.
+    /// `missing_on_device` then joins against those orphans and offers every one of their tracks to
+    /// every remaining device, sourced from a machine that no longer exists.
+    #[test]
+    fn holdings_of_an_unregistered_device_are_still_offered() {
+        let db = db_with(&[
+            (track("h1", "BoC", "Roygbiv", 200_000), "old-laptop"),
+            (track("h2", "BoC", "Olson", 100_000), "old-laptop"),
+        ]);
+        db.upsert_node(
+            "old-laptop",
+            "alpha",
+            crate::db::NodeName::Set("Old laptop"),
+            "wander",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(db.missing_on_device("alpha", "phone", 50).unwrap().len(), 2);
+
+        // The device is retired. Its holdings are the only record that these files ever existed
+        // anywhere, and nothing removes them.
+        assert!(db.delete_node("alpha", "old-laptop").unwrap());
+
+        let still_offered = db.missing_on_device("alpha", "phone", 50).unwrap();
+        assert_eq!(
+            still_offered.len(),
+            0,
+            "a device that is gone cannot be a source: {} track(s) still offered",
+            still_offered.len()
+        );
+    }
+
     fn db_with(tracks: &[(LibraryTrack, &str)]) -> Db {
         let db = Db::new_in_memory().unwrap();
         for (t, device) in tracks {
             db.upsert_library_track(t).unwrap();
+            // Registered as well as holding. A device only reports holdings after it has
+            // registered, and since holdings from a device that no longer exists are no longer a
+            // source, a fixture that skips this is testing a state that cannot occur.
+            db.upsert_node(
+                device,
+                "alpha",
+                crate::db::NodeName::KeepOr(device),
+                "wander",
+                None,
+                None,
+            )
+            .unwrap();
             db.upsert_holding("alpha", device, &t.content_hash, None)
                 .unwrap();
         }

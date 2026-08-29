@@ -879,6 +879,7 @@ impl Db {
         };
         conn.execute("DELETE FROM app_passwords WHERE user_id = ?1", params![user_id])?;
         conn.execute("DELETE FROM registered_nodes WHERE user_id = ?1", params![username])?;
+        conn.execute("DELETE FROM device_holdings WHERE user_id = ?1", params![username])?;
         conn.execute("DELETE FROM handoff_state WHERE user_id = ?1", params![username])?;
         conn.execute("DELETE FROM synced_settings WHERE user_id = ?1", params![username])?;
         conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
@@ -1526,6 +1527,14 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
             "DELETE FROM registered_nodes WHERE user_id = ?1 AND device_id = ?2",
+            params![user_id, device_id],
+        )?;
+        // The holdings go with it. They are a claim about what is on a machine, and the machine is
+        // gone; left behind they are an unbounded pile of rows describing files nothing can serve.
+        // The readers ignore unregistered holders now, so this is hygiene rather than the fix, but
+        // a device retired and re-paired would otherwise carry stale claims back with it.
+        conn.execute(
+            "DELETE FROM device_holdings WHERE user_id = ?1 AND device_id = ?2",
             params![user_id, device_id],
         )?;
         Ok(affected > 0)
