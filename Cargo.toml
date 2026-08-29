@@ -16,7 +16,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 rust-embed = "8.4"
 rand = "0.8"
 argon2 = "0.5"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 lofty = "0.21"
 sha2 = "0.10"
 hex = "0.4"
