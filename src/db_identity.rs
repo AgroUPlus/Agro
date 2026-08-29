@@ -174,20 +174,41 @@ impl Db {
         Ok(migrated)
     }
 
-    /// The key this account's synced settings are encrypted with.
+    /// The account's vault key, sealed under its passphrase, and the salt that sealing used.
     ///
-    /// Its own column because the passphrase it used to be is now a hash. Generated per account and
-    /// never presented to anyone — unlike the passphrase, which was both the encryption key and the
-    /// bearer token.
-    pub fn settings_key(&self, username: &str) -> Result<String> {
+    /// Handed to a client at login so it can unwrap the key and read its own settings. Inert on
+    /// this server: unwrapping needs the passphrase, and all that is kept of that is an Argon2
+    /// hash. `(None, None)` for an account that has not set one up yet — a client seeing that
+    /// generates a fresh key and enrols it.
+    ///
+    /// This replaced `settings_key`, which was a key the *server* minted and stored in the row
+    /// beside the ciphertext it opened, and which therefore protected the settings from nobody who
+    /// could read the file. See migration 27.
+    pub fn vault_envelope(&self, username: &str) -> Result<(Option<String>, Option<String>)> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT settings_key FROM users WHERE username = ?1 COLLATE NOCASE",
+            "SELECT vault_salt, vault_key_wrapped FROM users WHERE username = ?1 COLLATE NOCASE",
             params![username.trim()],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
-        .map(|key: Option<String>| key.unwrap_or_default())
+        .map(|found| found.unwrap_or((None, None)))
+    }
+
+    /// Records a client-generated vault key, sealed under the account passphrase.
+    ///
+    /// Write-once by design: the `WHERE vault_key_wrapped IS NULL` clause means a second device
+    /// enrolling concurrently cannot replace a key that is already sealing live settings, which
+    /// would strand them. Rotating a key is a different operation — it has to re-seal the settings
+    /// in the same breath — and deliberately is not this one. Returns whether the enrolment landed.
+    pub fn enrol_vault_key(&self, username: &str, salt: &str, wrapped: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE users SET vault_salt = ?2, vault_key_wrapped = ?3
+              WHERE username = ?1 COLLATE NOCASE AND vault_key_wrapped IS NULL",
+            params![username.trim(), salt, wrapped],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn account(&self, username: &str) -> Result<Option<Account>> {
@@ -232,9 +253,11 @@ impl Db {
         {
             let conn = self.conn.lock().unwrap();
             conn.execute(
+                // No `settings_key`: the server does not mint the key to its users' settings any
+                // more. The client generates one and enrols it sealed, through `enrol_vault_key`.
                 "INSERT INTO users
-                   (id, username, api_key, created_at, passphrase_hash, role, state, quota_bytes, settings_key)
-                 VALUES (?1, ?2, '', ?3, ?4, ?5, ?6, ?7, ?8)",
+                   (id, username, api_key, created_at, passphrase_hash, role, state, quota_bytes)
+                 VALUES (?1, ?2, '', ?3, ?4, ?5, ?6, ?7)",
                 params![
                     id,
                     username,
@@ -243,7 +266,6 @@ impl Db {
                     role.as_str(),
                     state.as_str(),
                     quota,
-                    credentials::mint_token().secret,
                 ],
             )?;
         }
@@ -480,6 +502,80 @@ mod tests {
 
     fn db() -> Db {
         Db::new_in_memory().unwrap()
+    }
+
+    /// A new account starts with no vault key. The client is what notices and enrols one.
+    #[test]
+    fn a_fresh_account_has_no_vault_envelope() {
+        let db = db();
+        db.create_account("alpha", "open sesame", Role::Admin, AccountState::Active)
+            .unwrap();
+        assert_eq!(db.vault_envelope("alpha").unwrap(), (None, None));
+    }
+
+    #[test]
+    fn an_enrolled_vault_key_comes_back_verbatim() {
+        let db = db();
+        db.create_account("alpha", "open sesame", Role::Admin, AccountState::Active)
+            .unwrap();
+
+        assert!(db.enrol_vault_key("alpha", "s4lt", "sealed-key").unwrap());
+        assert_eq!(
+            db.vault_envelope("alpha").unwrap(),
+            (Some("s4lt".into()), Some("sealed-key".into()))
+        );
+    }
+
+    /// Two devices setting up the same account at once must not have the second overwrite the
+    /// first — the settings already sealed under the first key would become unreadable.
+    #[test]
+    fn a_vault_key_cannot_be_replaced_once_set() {
+        let db = db();
+        db.create_account("alpha", "open sesame", Role::Admin, AccountState::Active)
+            .unwrap();
+
+        assert!(db.enrol_vault_key("alpha", "first-salt", "first-key").unwrap());
+        assert!(
+            !db.enrol_vault_key("alpha", "second-salt", "second-key").unwrap(),
+            "the second enrolment should report that it did not land"
+        );
+        assert_eq!(
+            db.vault_envelope("alpha").unwrap(),
+            (Some("first-salt".into()), Some("first-key".into())),
+            "the key that is already sealing settings must survive"
+        );
+    }
+
+    /// The property the whole design exists for: what the server stores about an account's
+    /// settings must not be enough to read them. It holds a passphrase *hash* and a key sealed
+    /// under the passphrase — never the passphrase, and so never the key.
+    #[test]
+    fn the_server_stores_nothing_that_unwraps_the_vault() {
+        let db = db();
+        db.create_account("alpha", "correct horse battery staple", Role::Admin, AccountState::Active)
+            .unwrap();
+        db.enrol_vault_key("alpha", "s4lt", "sealed-key").unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let (hash, salt, wrapped, api_key): (String, String, String, String) = conn
+            .query_row(
+                "SELECT passphrase_hash, vault_salt, vault_key_wrapped, api_key FROM users",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+
+        for stored in [&hash, &salt, &wrapped, &api_key] {
+            assert!(
+                !stored.contains("correct horse battery staple"),
+                "the passphrase must not be recoverable from {stored}"
+            );
+        }
+        assert!(hash.starts_with("$argon2"), "hashed, not stored: {hash}");
+
+        // And the column that used to hold a server-minted key to these settings is gone from the
+        // write path entirely.
+        assert_eq!(api_key, "", "api_key is no longer a key to anything");
     }
 
     #[test]

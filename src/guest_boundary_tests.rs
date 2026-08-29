@@ -455,7 +455,7 @@ async fn graphql_cannot_create_an_account_at_all() {
 #[tokio::test]
 async fn nobody_can_rename_another_accounts_device() {
     let h = harness();
-    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None, None, None)
+    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None)
         .unwrap();
 
     let refused = h
@@ -483,7 +483,7 @@ async fn nobody_can_rename_another_accounts_device() {
 #[tokio::test]
 async fn a_device_cannot_be_renamed_to_nothing() {
     let h = harness();
-    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None, None, None)
+    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None)
         .unwrap();
     let refused = h
         .run_as(

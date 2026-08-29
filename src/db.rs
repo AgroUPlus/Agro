@@ -1,3 +1,4 @@
+use chrono::DurationRound;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -569,7 +570,98 @@ const MIGRATIONS: &[&str] = &[
     // Zero means "the sender did not say", which is also what a livestream reports, and both want
     // the same treatment: no bar, just a running clock.
     "ALTER TABLE handoff_state ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0;",
+    // 25 — the server stops keeping public IP addresses.
+    //
+    // Written on every `registerNode`, shown in the dashboard, and consumed by nothing. Neither
+    // client has ever sent it: both pass `lanAddress` and leave this null, so the column's only
+    // real content came from the dashboard's own view of itself. Against a stolen database it was
+    // a location history for no feature's benefit, which makes removing it free rather than a
+    // trade.
+    //
+    // `lan_address` stays. It is an RFC1918 address the LAN peer-to-peer transfer in
+    // `db_library::peer_sources_for_track` needs in order to dial a device directly.
+    //
+    // A plain DROP COLUMN rather than the table rebuild migration 10 had to do: nothing indexes
+    // this column, so SQLite can drop it in place.
+    "ALTER TABLE registered_nodes DROP COLUMN ip_address;",
+    // 26 — a play identifies itself, instead of being identified by its clock reading.
+    //
+    // Idempotency was `UNIQUE(user_id, artist_name, track_title, played_at)`: a retried outbox did
+    // not double-count because the second copy carried the same second-resolution timestamp. That
+    // works, but it welds deduplication to the precision of `played_at`, and that precision is a
+    // problem of its own — an exact play time reconstructs when someone sleeps, wakes and commutes,
+    // which is a thing a stolen database should not contain.
+    //
+    // With the client naming each play, dedup stops caring what the clock said and the timestamp
+    // becomes free to blur. SQLite treats NULLs in a unique index as distinct, so rows from clients
+    // that send no id do not collide with each other on the new index.
+    //
+    // The old rule cannot simply stay alongside it. Once timestamps are rounded to the hour, four
+    // plays of one track in one hour share a `played_at`, and an index on
+    // `(user_id, artist_name, track_title, played_at)` would reject three of them — the exact
+    // data loss the `play_uid` column exists to prevent. So it is rebuilt as a *partial* index that
+    // applies only where there is no id: a client on the old protocol keeps the old guarantee and
+    // keeps its exact timestamps, and a client on the new one is deduplicated by id and has its
+    // clock blurred. One table, two eras, neither breaking the other.
+    "
+    ALTER TABLE scrobbles ADD COLUMN play_uid TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scrobbles_uid ON scrobbles(user_id, play_uid);
+    DROP INDEX IF EXISTS idx_scrobbles_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scrobbles_legacy_unique
+        ON scrobbles(user_id, artist_name, track_title, played_at)
+        WHERE play_uid IS NULL;
+    ",
+    // 27 — the server stops being able to read the settings it stores.
+    //
+    // `synced_settings` held a Navidrome address and username encrypted with `users.settings_key`,
+    // a key the server minted and kept in the row next to the ciphertext. Anyone reading the
+    // database read both, so the encryption protected nothing that mattering losing the file did
+    // not also lose. It was not even working: the write path encrypted with `settings_key` while
+    // the read path decrypted with `api_key`, which `create_account` sets to the empty string, and
+    // `crypto::decrypt_field` failed *open* — so every account made since migration 9 has been
+    // handing clients back raw hex ciphertext where a URL should be.
+    //
+    // The key moves to the client. It is 32 random bytes the client generates and keeps, and the
+    // server holds only `vault_key_wrapped`, that key sealed under one derived from the account
+    // passphrase. Deriving it needs the passphrase, and the server keeps nothing but an Argon2
+    // hash of that, so the wrapped key is inert here — and typing the passphrase on a new device
+    // still recovers everything, which a key that lived only on the devices would not.
+    //
+    // `has_server_url` is one bit of deliberate plaintext. `sync_mode` has only ever asked whether
+    // an address exists, never what it is; with the address inside an opaque blob that question
+    // can no longer be answered by looking, so it is answered by an explicit flag instead of by
+    // giving the server the means to look.
+    //
+    // The old columns stay for now. Nothing reads them any more, and dropping them is a separate
+    // migration once no client is still writing to them.
+    "
+    ALTER TABLE users ADD COLUMN vault_salt TEXT;
+    ALTER TABLE users ADD COLUMN vault_key_wrapped TEXT;
+    ALTER TABLE synced_settings ADD COLUMN settings_blob TEXT;
+    ALTER TABLE synced_settings ADD COLUMN has_server_url INTEGER NOT NULL DEFAULT 0;
+    ",
+    // 28 — the server stops storing local network addresses on disk.
+    //
+    // `lan_address` was added by migration 22 to let devices discover each other for direct
+    // peer-to-peer transfers. A LAN address is volatile: it only exists while a device is on that
+    // specific Wi-Fi network, and is only usable while the peer is actively connected via WebSocket.
+    //
+    // Storing it on disk left stale private IPs in `agro.db` indefinitely. It now lives strictly
+    // in RAM on `WsHub` for the duration of the connection.
+    "ALTER TABLE registered_nodes DROP COLUMN lan_address;",
 ];
+
+/// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
+/// deduplication no longer needs the seconds and they are rounded away.
+const SCROBBLE_EXACT_TIME_DAYS: i64 = 14;
+
+/// How long a device may be quiet before the queue it was playing is scrubbed from its handoff
+/// row. Long enough that a laptop left shut over a holiday still resumes where it was.
+const HANDOFF_QUEUE_TTL_DAYS: i64 = 7;
+
+/// How long before the handoff row itself goes. A device silent this long has been replaced or
+/// wiped, and its row is a record of what someone was listening to and nothing else.
+const HANDOFF_ROW_TTL_DAYS: i64 = 90;
 
 #[derive(Clone)]
 pub struct Db {
@@ -714,6 +806,10 @@ impl Db {
                 user_id TEXT NOT NULL,
                 petname TEXT NOT NULL,
                 client_type TEXT NOT NULL,
+                -- Dropped again by migration 25, and still declared here: a fresh database runs
+                -- `init_schema` and then *every* migration, and migration 10 rebuilds this table
+                -- by selecting `ip_address` out of it. Removing it here would abort startup
+                -- before the migration that removes it properly ever runs.
                 ip_address TEXT,
                 version TEXT,
                 current_track TEXT,
@@ -1057,24 +1153,26 @@ impl Db {
         }
     }
 
-    pub fn record_scrobble(
-        &self,
-        user_id: &str,
-        track_title: &str,
-        artist_name: &str,
-        album_name: Option<&str>,
-        genre: Option<&str>,
-        duration_secs: i64,
-        device_name: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO scrobbles (user_id, track_title, artist_name, album_name, genre, duration_secs, device_name, played_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![user_id, track_title, artist_name, album_name, genre, duration_secs, device_name, now],
-        )?;
-        Ok(())
+    /// Rounds a play time down to the hour it fell in.
+    ///
+    /// An exact play time is a lifestyle record: a run of them says when someone woke, commuted,
+    /// worked and went to bed, and that is the single most identifying thing in this database.
+    /// Every statistic Agro computes — the 24-bar hour histogram, the day sparkline, the 8-week
+    /// heatmap, streaks, top artists, taste match — buckets by hour or by day already, so the
+    /// seconds are precision nobody reads.
+    ///
+    /// An unparseable timestamp is returned untouched. It is already excluded from every timeline
+    /// (`stats::compute` counts it in totals but cannot place it), and inventing an hour for it
+    /// would be worse than leaving it alone.
+    fn to_hour(played_at: &str) -> String {
+        match chrono::DateTime::parse_from_rfc3339(played_at) {
+            Ok(dt) => dt
+                .with_timezone(&chrono::Utc)
+                .duration_trunc(chrono::Duration::hours(1))
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_else(|_| played_at.to_string()),
+            Err(_) => played_at.to_string(),
+        }
     }
 
     /// Ingests a batch of plays from one device.
@@ -1096,10 +1194,21 @@ impl Db {
             let mut stmt = tx.prepare(
                 "INSERT OR IGNORE INTO scrobbles
                      (user_id, track_title, artist_name, album_name, genre, duration_secs,
-                      device_name, played_at, client_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                      device_name, played_at, client_type, play_uid)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for entry in entries {
+                // Only a play that names itself may be blurred. Without a `play_uid` the unique
+                // index on `(user_id, artist_name, track_title, played_at)` is still the only thing
+                // standing between a retried outbox and double-counted plays, and rounding the
+                // timestamp would collapse four plays of one track in one hour into one row —
+                // silently breaking the on-repeat feed and deflating every count that feeds it.
+                // A client that sends an id has moved its idempotency off the clock, so the clock
+                // is free to lose its seconds.
+                let played_at = match entry.play_uid {
+                    Some(_) => Self::to_hour(&entry.played_at),
+                    None => entry.played_at.clone(),
+                };
                 inserted += stmt.execute(params![
                     user_id,
                     entry.track_title,
@@ -1108,8 +1217,9 @@ impl Db {
                     entry.genre,
                     entry.duration_secs,
                     device_name,
-                    entry.played_at,
+                    played_at,
                     client_type,
+                    entry.play_uid,
                 ])?;
             }
         }
@@ -1198,14 +1308,109 @@ impl Db {
         }
     }
 
+    /// Deletes what has expired, and strips the residue from what has gone quiet.
+    ///
+    /// Nothing in this database was ever swept. `ephemeral_shares`, `friend_codes` and
+    /// `short_links` all carry an expiry that was only ever consulted in a `WHERE` clause at read
+    /// time, so an expired row stopped being *usable* but never stopped being *readable* — it sat
+    /// in the file, and in every backup of it, indefinitely. `friend_codes` even has an index on
+    /// `expires_at` that until now nothing used.
+    ///
+    /// `handoff_state` is the different case. It is keyed `(user_id, device_id)` and overwritten
+    /// constantly, so it does not grow; what accumulates is the `queue_json` blob on the row of a
+    /// device someone stopped using, which is a snapshot of what they were listening to, kept
+    /// forever. Scrubbing the queue is the part that matters, and it is done separately from
+    /// deleting the row: an active device's row would only be recreated by its next `updateHandoff`
+    /// anyway, so there is no point racing it.
+    ///
+    /// Returns nothing and takes no arguments because there is nothing a caller could usefully do
+    /// with the result. Failures are logged, not propagated: a sweep that cannot run is not a
+    /// reason to take the ticker down with it.
+    pub fn sweep_retention(&self) {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now();
+        let now_rfc = now.to_rfc3339();
+        let now_unix = now.timestamp();
+
+        let run = |what: &str, sql: &str, args: &[&dyn rusqlite::ToSql]| {
+            match conn.execute(sql, args) {
+                Ok(n) if n > 0 => tracing::debug!("retention sweep: {what} removed {n} rows"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("retention sweep: {what} failed: {e}"),
+            }
+        };
+
+        run(
+            "ephemeral_shares",
+            "DELETE FROM ephemeral_shares WHERE expires_at < ?1",
+            params![now_rfc],
+        );
+        run(
+            "friend_codes",
+            "DELETE FROM friend_codes WHERE expires_at < ?1",
+            params![now_rfc],
+        );
+        // A null `expires_at` is a link that was minted without one, which means it does not
+        // expire. Only rows that named a deadline and are past it go.
+        run(
+            "short_links",
+            "DELETE FROM short_links WHERE expires_at IS NOT NULL AND expires_at < ?1",
+            params![now_unix],
+        );
+
+        let stale = (now - chrono::Duration::days(HANDOFF_QUEUE_TTL_DAYS)).to_rfc3339();
+        run(
+            "handoff queues",
+            "UPDATE handoff_state
+                SET queue_json = NULL, queue_index = NULL, position_ms = 0
+              WHERE updated_at < ?1 AND queue_json IS NOT NULL",
+            params![stale],
+        );
+
+        let dead = (now - chrono::Duration::days(HANDOFF_ROW_TTL_DAYS)).to_rfc3339();
+        run(
+            "handoff rows",
+            "DELETE FROM handoff_state WHERE updated_at < ?1",
+            params![dead],
+        );
+
+        self.coarsen_settled_scrobbles(&conn, now);
+    }
+
+    /// Rounds down the play times of history old enough that nothing will be re-sent for it.
+    ///
+    /// Ingest blurs a timestamp only when the client named the play (see `record_scrobbles`), which
+    /// leaves two kinds of exact row behind: everything recorded before any of this existed, and
+    /// anything still arriving from a client that has not been updated. Both stop being at risk of
+    /// a retry once they are old enough — an outbox does not hold a fortnight — so past that point
+    /// the seconds can go the same way.
+    ///
+    /// Done in SQL rather than by reading rows into Rust because the timestamps are RFC3339 in a
+    /// fixed-width UTC form and truncation is a string operation on them. Rows whose format does
+    /// not match are left alone, exactly as `to_hour` leaves an unparseable value alone.
+    fn coarsen_settled_scrobbles(&self, conn: &Connection, now: chrono::DateTime<chrono::Utc>) {
+        let cutoff = (now - chrono::Duration::days(SCROBBLE_EXACT_TIME_DAYS)).to_rfc3339();
+        // `OR IGNORE` so one collision does not abort the batch: two exact plays of a track in the
+        // same hour cannot both round to it under the legacy partial index, and the right outcome
+        // is to leave that pair alone and coarsen everything else, not to give up on all of it.
+        let sql = "UPDATE OR IGNORE scrobbles
+                      SET played_at = substr(played_at, 1, 13) || ':00:00+00:00'
+                    WHERE played_at < ?1
+                      AND substr(played_at, 14) != ':00:00+00:00'
+                      AND length(played_at) >= 19";
+        match conn.execute(sql, params![cutoff]) {
+            Ok(n) if n > 0 => tracing::debug!("retention sweep: coarsened {n} play times"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("retention sweep: coarsening play times failed: {e}"),
+        }
+    }
+
     pub fn upsert_node(
         &self,
         device_id: &str,
         user_id: &str,
         petname: NodeName<'_>,
         client_type: &str,
-        ip_address: Option<&str>,
-        lan_address: Option<&str>,
         version: Option<&str>,
         current_track: Option<&str>,
     ) -> Result<()> {
@@ -1214,13 +1419,11 @@ impl Db {
         // The name is decided in SQL rather than by reading the row first, so a heartbeat that
         // arrives while the user is renaming the device cannot write back the name it read.
         conn.execute(
-            "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, version, current_track, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(user_id, device_id) DO UPDATE SET
-             petname = CASE WHEN ?10 AND excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
+             petname = CASE WHEN ?8 AND excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
              client_type = excluded.client_type,
-             ip_address = COALESCE(excluded.ip_address, registered_nodes.ip_address),
-             lan_address = COALESCE(excluded.lan_address, registered_nodes.lan_address),
              version = COALESCE(excluded.version, registered_nodes.version),
              current_track = COALESCE(excluded.current_track, registered_nodes.current_track),
              last_seen_at = excluded.last_seen_at",
@@ -1229,8 +1432,6 @@ impl Db {
                 user_id,
                 petname.as_str(),
                 client_type,
-                ip_address,
-                lan_address,
                 version,
                 current_track,
                 now,
@@ -1245,7 +1446,7 @@ impl Db {
     pub fn get_all_nodes(&self) -> Result<Vec<NodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at
+            "SELECT device_id, user_id, petname, client_type, version, current_track, last_seen_at
              FROM registered_nodes ORDER BY last_seen_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -1254,11 +1455,9 @@ impl Db {
                 user_id: row.get(1)?,
                 petname: row.get(2)?,
                 client_type: row.get(3)?,
-                ip_address: row.get(4)?,
-                lan_address: row.get(5)?,
-                version: row.get(6)?,
-                current_track: row.get(7)?,
-                last_seen_at: row.get(8)?,
+                version: row.get(4)?,
+                current_track: row.get(5)?,
+                last_seen_at: row.get(6)?,
             })
         })?;
         rows.collect()
@@ -1301,7 +1500,7 @@ impl Db {
     pub fn get_active_nodes(&self, user_id: &str) -> Result<Vec<NodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT device_id, user_id, petname, client_type, ip_address, lan_address, version, current_track, last_seen_at
+            "SELECT device_id, user_id, petname, client_type, version, current_track, last_seen_at
              FROM registered_nodes WHERE user_id = ?1 ORDER BY last_seen_at DESC"
         )?;
         let rows = stmt.query_map(params![user_id], |row| {
@@ -1310,11 +1509,9 @@ impl Db {
                 user_id: row.get(1)?,
                 petname: row.get(2)?,
                 client_type: row.get(3)?,
-                ip_address: row.get(4)?,
-                lan_address: row.get(5)?,
-                version: row.get(6)?,
-                current_track: row.get(7)?,
-                last_seen_at: row.get(8)?,
+                version: row.get(4)?,
+                current_track: row.get(5)?,
+                last_seen_at: row.get(6)?,
             })
         })?;
 
@@ -1337,9 +1534,8 @@ impl Db {
     pub fn upsert_synced_settings(
         &self,
         user_id: &str,
-        server_url: Option<&str>,
-        server_username: Option<&str>,
-        lrclib_url: Option<&str>,
+        settings_blob: Option<&str>,
+        has_server_url: Option<bool>,
         lyrics_fetch_online: Option<bool>,
         stream_format: Option<&str>,
         share: ShareSettingsInput<'_>,
@@ -1347,12 +1543,11 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO synced_settings (user_id, server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format, share_domain, share_hosts, share_enabled, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            "INSERT INTO synced_settings (user_id, settings_blob, has_server_url, lyrics_fetch_online, stream_format, share_domain, share_hosts, share_enabled, updated_at)
+             VALUES (?1, ?2, COALESCE(?3, 0), ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(user_id) DO UPDATE SET
-             server_url = COALESCE(excluded.server_url, synced_settings.server_url),
-             server_username = COALESCE(excluded.server_username, synced_settings.server_username),
-             lrclib_url = COALESCE(excluded.lrclib_url, synced_settings.lrclib_url),
+             settings_blob = COALESCE(excluded.settings_blob, synced_settings.settings_blob),
+             has_server_url = COALESCE(?3, synced_settings.has_server_url),
              lyrics_fetch_online = COALESCE(excluded.lyrics_fetch_online, synced_settings.lyrics_fetch_online),
              stream_format = COALESCE(excluded.stream_format, synced_settings.stream_format),
              share_domain = COALESCE(excluded.share_domain, synced_settings.share_domain),
@@ -1361,9 +1556,8 @@ impl Db {
              updated_at = excluded.updated_at",
             params![
                 user_id,
-                server_url,
-                server_username,
-                lrclib_url,
+                settings_blob,
+                has_server_url,
                 lyrics_fetch_online,
                 stream_format,
                 share.domain,
@@ -1378,22 +1572,21 @@ impl Db {
     pub fn get_synced_settings(&self, user_id: &str) -> Result<Option<SyncedSettingsRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT server_url, server_username, lrclib_url, lyrics_fetch_online, stream_format,
+            "SELECT settings_blob, has_server_url, lyrics_fetch_online, stream_format,
                     share_domain, share_hosts, share_enabled, updated_at
              FROM synced_settings WHERE user_id = ?1"
         )?;
         let mut rows = stmt.query(params![user_id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(SyncedSettingsRecord {
-                server_url: row.get(0)?,
-                server_username: row.get(1)?,
-                lrclib_url: row.get(2)?,
-                lyrics_fetch_online: row.get(3)?,
-                stream_format: row.get(4)?,
-                share_domain: row.get(5)?,
-                share_hosts: row.get(6)?,
-                share_enabled: row.get(7)?,
-                updated_at: row.get(8)?,
+                settings_blob: row.get(0)?,
+                has_server_url: row.get::<_, i64>(1)? != 0,
+                lyrics_fetch_online: row.get(2)?,
+                stream_format: row.get(3)?,
+                share_domain: row.get(4)?,
+                share_hosts: row.get(5)?,
+                share_enabled: row.get(6)?,
+                updated_at: row.get(7)?,
             }))
         } else {
             Ok(None)
@@ -1594,6 +1787,10 @@ pub struct ScrobbleEntry {
     pub genre: Option<String>,
     pub duration_secs: i64,
     pub played_at: String,
+    /// What makes a retry a retry. Minted by the client when the play happens and kept in its
+    /// outbox, so the same play re-sent carries the same id however many times it is offered.
+    /// `None` from a client that predates this, which falls back to the timestamp rule.
+    pub play_uid: Option<String>,
 }
 
 /// One play, as stored.
@@ -1682,17 +1879,18 @@ pub struct NodeRecord {
     pub user_id: String,
     pub petname: String,
     pub client_type: String,
-    pub ip_address: Option<String>,
-    pub lan_address: Option<String>,
     pub version: Option<String>,
     pub current_track: Option<String>,
     pub last_seen_at: String,
 }
 
 pub struct SyncedSettingsRecord {
-    pub server_url: Option<String>,
-    pub server_username: Option<String>,
-    pub lrclib_url: Option<String>,
+    /// The account's upstream settings, sealed by the client under a key this server does not
+    /// have. Opaque here by design: it is stored, returned, and never inspected.
+    pub settings_blob: Option<String>,
+    /// Whether [`Self::settings_blob`] contains a server address. The one thing the server needs
+    /// to know about the contents, stated outright rather than discovered by decrypting.
+    pub has_server_url: bool,
     pub lyrics_fetch_online: Option<bool>,
     pub stream_format: Option<String>,
     /// The domain the players send share links out on, e.g. `frwd.top`.
@@ -1774,6 +1972,385 @@ mod permission_tests {
 }
 
 #[cfg(test)]
+mod settings_vault_tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::new_in_memory().unwrap()
+    }
+
+    fn share() -> ShareSettingsInput<'static> {
+        ShareSettingsInput { domain: None, hosts: None, enabled: None }
+    }
+
+    /// The blob goes in and comes out unchanged, and nothing on the way tries to interpret it.
+    #[test]
+    fn a_settings_blob_round_trips_untouched() {
+        let db = db();
+        let sealed = "6e6f742d612d75726c-deadbeef";
+        db.upsert_synced_settings("alpha", Some(sealed), Some(true), Some(true), Some("FLAC"), share())
+            .unwrap();
+
+        let got = db.get_synced_settings("alpha").unwrap().unwrap();
+        assert_eq!(got.settings_blob.as_deref(), Some(sealed));
+        assert!(got.has_server_url);
+    }
+
+    /// What a stolen database would actually show. The sealed bytes are the only trace of the
+    /// address, and the old plaintext columns are never written to again.
+    #[test]
+    fn no_readable_address_reaches_the_table() {
+        let db = db();
+        db.upsert_synced_settings(
+            "alpha",
+            Some("0ff1ce-sealed-bytes"),
+            Some(true),
+            None,
+            None,
+            share(),
+        )
+        .unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let (blob, url, user): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT settings_blob, server_url, server_username FROM synced_settings",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(blob, "0ff1ce-sealed-bytes");
+        assert_eq!(url, None, "the legacy plaintext column must stay empty");
+        assert_eq!(user, None);
+    }
+
+    /// A partial update — toggling a preference — must not blank the sealed settings.
+    #[test]
+    fn updating_a_preference_leaves_the_blob_alone() {
+        let db = db();
+        db.upsert_synced_settings("alpha", Some("sealed"), Some(true), Some(true), None, share())
+            .unwrap();
+        db.upsert_synced_settings("alpha", None, None, Some(false), None, share())
+            .unwrap();
+
+        let got = db.get_synced_settings("alpha").unwrap().unwrap();
+        assert_eq!(got.settings_blob.as_deref(), Some("sealed"));
+        assert_eq!(got.lyrics_fetch_online, Some(false));
+        assert!(got.has_server_url, "and the flag is not reset either");
+    }
+
+    /// Clearing the address has to be expressible, or `syncMode` would be stuck reporting
+    /// Navidrome for ever once it had been set.
+    #[test]
+    fn the_server_url_flag_can_be_turned_off() {
+        let db = db();
+        db.upsert_synced_settings("alpha", Some("sealed"), Some(true), None, None, share())
+            .unwrap();
+        db.upsert_synced_settings("alpha", Some("resealed"), Some(false), None, None, share())
+            .unwrap();
+
+        assert!(!db.get_synced_settings("alpha").unwrap().unwrap().has_server_url);
+    }
+}
+
+#[cfg(test)]
+mod scrobble_time_tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::new_in_memory().unwrap()
+    }
+
+    fn entry(title: &str, at: &str, uid: Option<&str>) -> ScrobbleEntry {
+        ScrobbleEntry {
+            track_title: title.into(),
+            artist_name: "Boards of Canada".into(),
+            album_name: None,
+            genre: None,
+            duration_secs: 200,
+            played_at: at.into(),
+            play_uid: uid.map(str::to_string),
+        }
+    }
+
+    fn times(db: &Db) -> Vec<String> {
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT played_at FROM scrobbles ORDER BY id")
+            .unwrap();
+        let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    /// The whole reason `play_uid` exists. Four plays of one track inside one hour must stay four
+    /// rows after their timestamps are rounded into the same bucket — the on-repeat feed needs
+    /// four, and the old timestamp-keyed index would have left one.
+    #[test]
+    fn repeat_plays_in_one_hour_survive_coarsening() {
+        let db = db();
+        let batch: Vec<_> = ["03:05:11", "03:19:40", "03:31:02", "03:58:59"]
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                entry(
+                    "Roygbiv",
+                    &format!("2026-08-29T{t}+00:00"),
+                    Some(&format!("uid-{i}")),
+                )
+            })
+            .collect();
+
+        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 4);
+
+        let stored = times(&db);
+        assert_eq!(stored.len(), 4, "one row per play");
+        assert!(
+            stored.iter().all(|t| t == &stored[0]),
+            "all four land in the same hour bucket: {stored:?}"
+        );
+        assert!(stored[0].contains("T03:00:00"), "rounded down: {stored:?}");
+    }
+
+    /// The retry case the unique index was built for, now keyed on the id instead of the clock.
+    #[test]
+    fn a_resent_batch_inserts_nothing() {
+        let db = db();
+        let batch = vec![entry("Dayvan Cowboy", "2026-08-29T03:05:11+00:00", Some("uid-a"))];
+
+        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 1);
+        assert_eq!(
+            db.record_scrobbles("alpha", "phone", None, &batch).unwrap(),
+            0,
+            "the same play offered twice is still one play"
+        );
+        assert_eq!(times(&db).len(), 1);
+    }
+
+    /// Two accounts may both play a track at the same moment; the id is only unique within one.
+    #[test]
+    fn the_same_uid_under_two_accounts_is_two_plays() {
+        let db = db();
+        let batch = vec![entry("Olson", "2026-08-29T03:05:11+00:00", Some("uid-a"))];
+        db.record_scrobbles("alpha", "phone", None, &batch).unwrap();
+        assert_eq!(db.record_scrobbles("delta", "phone", None, &batch).unwrap(), 1);
+    }
+
+    /// A client that has not been updated keeps the exact timestamp, because the timestamp is
+    /// still the only thing making its retries idempotent.
+    #[test]
+    fn a_client_without_a_uid_keeps_its_exact_timestamp() {
+        let db = db();
+        let batch = vec![entry("Amo Bishop Roden", "2026-08-29T03:05:11+00:00", None)];
+
+        db.record_scrobbles("alpha", "phone", None, &batch).unwrap();
+        assert_eq!(times(&db), vec!["2026-08-29T03:05:11+00:00"]);
+
+        // And it is still deduplicated the old way.
+        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 0);
+    }
+
+    /// Settled history is rounded by the sweep even when it arrived without an id, which is how
+    /// rows written before any of this get cleaned up.
+    #[test]
+    fn the_sweep_coarsens_old_exact_timestamps() {
+        let db = db();
+        let old = (chrono::Utc::now() - chrono::Duration::days(SCROBBLE_EXACT_TIME_DAYS + 1))
+            .with_timezone(&chrono::Utc)
+            .format("%Y-%m-%dT%H:%M:%S+00:00")
+            .to_string();
+        let recent = (chrono::Utc::now() - chrono::Duration::days(1))
+            .format("%Y-%m-%dT%H:%M:%S+00:00")
+            .to_string();
+
+        db.record_scrobbles(
+            "alpha",
+            "phone",
+            None,
+            &[entry("Old", &old, None), entry("Recent", &recent, None)],
+        )
+        .unwrap();
+
+        db.sweep_retention();
+
+        let stored = times(&db);
+        assert!(
+            stored[0].ends_with(":00:00+00:00"),
+            "settled history should be rounded: {stored:?}"
+        );
+        assert_eq!(
+            stored[1], recent,
+            "recent history may still be retried, so it keeps its seconds"
+        );
+    }
+
+    /// Rounding must not invent a time for something it cannot read.
+    #[test]
+    fn an_unparseable_timestamp_is_left_alone() {
+        let db = db();
+        db.record_scrobbles(
+            "alpha",
+            "phone",
+            None,
+            &[entry("Broken", "not a date", Some("uid-x"))],
+        )
+        .unwrap();
+        assert_eq!(times(&db), vec!["not a date"]);
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+
+    fn db() -> Db {
+        Db::new_in_memory().unwrap()
+    }
+
+    fn ago(days: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339()
+    }
+
+    fn count(db: &Db, table: &str) -> i64 {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// The point of the sweep: expiry stopped a row being *usable* long ago, but only this makes
+    /// it stop being *readable* by anyone who takes the file.
+    #[test]
+    fn expired_rows_are_deleted_and_live_ones_are_not() {
+        let db = db();
+        {
+            let conn = db.conn.lock().unwrap();
+            for (token, expires) in [("dead", ago(1)), ("live", ago(-1))] {
+                conn.execute(
+                    "INSERT INTO ephemeral_shares
+                        (token, user_id, track_title, artist_name, album_name, audio_url, expires_at)
+                     VALUES (?1, 'alpha', 't', 'a', NULL, 'http://x', ?2)",
+                    params![token, expires],
+                )
+                .unwrap();
+            }
+            for (code, expires) in [("DEAD", ago(1)), ("LIVE", ago(-1))] {
+                conn.execute(
+                    "INSERT INTO friend_codes (code, user_id, created_at, expires_at)
+                     VALUES (?1, 'alpha', ?2, ?3)",
+                    params![code, ago(2), expires],
+                )
+                .unwrap();
+            }
+            let now = chrono::Utc::now().timestamp();
+            for (id, expires) in [
+                ("dead", Some(now - 60)),
+                ("live", Some(now + 3600)),
+                // No deadline named, so it does not expire and must survive.
+                ("forever", None),
+            ] {
+                conn.execute(
+                    "INSERT INTO short_links (id, target_url, user_id, created_at, expires_at)
+                     VALUES (?1, 'http://x', 'alpha', ?2, ?3)",
+                    params![id, now, expires],
+                )
+                .unwrap();
+            }
+        }
+
+        db.sweep_retention();
+
+        assert_eq!(count(&db, "ephemeral_shares"), 1);
+        assert_eq!(count(&db, "friend_codes"), 1);
+        assert_eq!(count(&db, "short_links"), 2);
+    }
+
+    /// A device that went quiet keeps its row — the account still wants to know it exists — but
+    /// the queue it was playing is what a stolen database would read, and that goes.
+    #[test]
+    fn a_stale_handoff_keeps_its_row_but_loses_its_queue() {
+        let db = db();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO handoff_state
+                    (user_id, device_id, track_uri, track_title, artist_name, position_ms,
+                     is_playing, updated_at, queue_json, queue_index)
+                 VALUES ('alpha', 'laptop', 'u', 't', 'a', 91000, 0, ?1, '[\"one\",\"two\"]', 1)",
+                params![ago(30)],
+            )
+            .unwrap();
+
+        db.sweep_retention();
+
+        let (queue, index, position): (Option<String>, Option<i64>, i64) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT queue_json, queue_index, position_ms FROM handoff_state",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(queue, None, "the stale queue should have been scrubbed");
+        assert_eq!(index, None);
+        assert_eq!(position, 0);
+        assert_eq!(count(&db, "handoff_state"), 1, "the row itself stays");
+    }
+
+    #[test]
+    fn a_long_dead_handoff_row_is_removed_entirely() {
+        let db = db();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO handoff_state
+                    (user_id, device_id, track_uri, track_title, artist_name, position_ms,
+                     is_playing, updated_at)
+                 VALUES ('alpha', 'retired', 'u', 't', 'a', 0, 0, ?1)",
+                params![ago(HANDOFF_ROW_TTL_DAYS + 1)],
+            )
+            .unwrap();
+
+        db.sweep_retention();
+
+        assert_eq!(count(&db, "handoff_state"), 0);
+    }
+
+    /// A device in daily use must not have the queue pulled out from under it.
+    #[test]
+    fn an_active_handoff_is_left_alone() {
+        let db = db();
+        db.update_handoff(
+            "alpha",
+            "u",
+            "t",
+            "a",
+            None,
+            None,
+            42_000,
+            180_000,
+            true,
+            "phone",
+            Some("[\"one\"]"),
+            Some(0),
+        )
+        .unwrap();
+
+        db.sweep_retention();
+
+        let handoff = db.get_handoff("alpha").unwrap().expect("row survives");
+        assert_eq!(handoff.position_ms, 42_000);
+        assert!(handoff.queue_json.is_some(), "an active queue must survive");
+    }
+}
+
+#[cfg(test)]
 mod node_naming_tests {
     use super::*;
 
@@ -1795,7 +2372,7 @@ mod node_naming_tests {
     #[test]
     fn a_reconnect_does_not_rename_a_named_device() {
         let db = db();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None, None, None)
+        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None)
             .unwrap();
 
         db.upsert_node(
@@ -1803,8 +2380,6 @@ mod node_naming_tests {
             "alpha",
             NodeName::KeepOr("Glitchy Alpaca"),
             "wanda",
-            None,
-            None,
             None,
             None,
         )
@@ -1823,8 +2398,6 @@ mod node_naming_tests {
             "wanda",
             None,
             None,
-            None,
-            None,
         )
         .unwrap();
 
@@ -1834,9 +2407,9 @@ mod node_naming_tests {
     #[test]
     fn naming_a_device_still_renames_it() {
         let db = db();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None, None, None)
+        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None)
             .unwrap();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Work phone"), "wanda", None, None, None, None)
+        db.upsert_node("pixel", "alpha", NodeName::Set("Work phone"), "wanda", None, None)
             .unwrap();
 
         assert_eq!(petname_of(&db, "alpha", "pixel"), "Work phone");
@@ -1846,9 +2419,9 @@ mod node_naming_tests {
     #[test]
     fn one_account_cannot_rename_another_accounts_device() {
         let db = db();
-        db.upsert_node("laptop", "alpha", NodeName::Set("Cachy"), "wander", None, None, None, None)
+        db.upsert_node("laptop", "alpha", NodeName::Set("Cachy"), "wander", None, None)
             .unwrap();
-        db.upsert_node("laptop", "delta", NodeName::Set("Lenovo"), "wander", None, None, None, None)
+        db.upsert_node("laptop", "delta", NodeName::Set("Lenovo"), "wander", None, None)
             .unwrap();
 
         assert_eq!(petname_of(&db, "alpha", "laptop"), "Cachy");

@@ -1,4 +1,3 @@
-mod crypto;
 mod credentials;
 mod auth;
 mod db;
@@ -168,6 +167,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 ticker.tick().await;
                 library::sweep_storage(&state).await;
+                // Rides the same ticker rather than taking its own: both are housekeeping at the
+                // same rate, and a second timer would only be a second thing to reason about.
+                state.db.sweep_retention();
             }
         });
     }

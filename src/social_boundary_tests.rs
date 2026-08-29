@@ -157,11 +157,16 @@ impl Harness {
                 album_name: None,
                 genre: None,
                 duration_secs: 180,
-                // One second apart, so each is a distinct row: the scrobble table is unique on
-                // (account, artist, title, time) and identical stamps would collapse into one.
+                // One second apart, so each is a distinct row: without a `play_uid` the scrobble
+                // table is unique on (account, artist, title, time) and identical stamps would
+                // collapse into one.
                 played_at: chrono::DateTime::from_timestamp(now - ago_secs + i as i64, 0)
                     .unwrap()
                     .to_rfc3339(),
+                // Deliberately the pre-`play_uid` path. These tests are about *ordering* between
+                // accounts — who played a track first — so they need timestamps kept to the
+                // second, which is exactly what ingest does for a client that sends no id.
+                play_uid: None,
             })
             .collect();
         self.db.record_scrobbles(who, "test-device", None, &entries).unwrap();

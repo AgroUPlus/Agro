@@ -26,12 +26,46 @@ pub struct WsMessage {
 
 pub struct WsHub {
     pub tx: broadcast::Sender<WsMessage>,
+    /// Live LAN addresses of actively connected devices, held strictly in memory.
+    ///
+    /// Keyed by `(user_id, device_id)`. Volatile on purpose: when a device disconnects or the
+    /// server restarts, the network address is wiped immediately from RAM and leaves zero residue
+    /// on disk.
+    live_lan_addresses: std::sync::RwLock<std::collections::HashMap<(String, String), String>>,
 }
 
 impl WsHub {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(100);
-        Self { tx }
+        Self {
+            tx,
+            live_lan_addresses: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Stores a node's local LAN address in memory for peer-to-peer transfers while online.
+    pub fn set_lan_address(&self, user_id: &str, device_id: &str, lan_address: &str) {
+        if let Ok(mut map) = self.live_lan_addresses.write() {
+            map.insert(
+                (user_id.to_string(), device_id.to_string()),
+                lan_address.to_string(),
+            );
+        }
+    }
+
+    /// Looks up a node's active local LAN address from memory.
+    pub fn get_lan_address(&self, user_id: &str, device_id: &str) -> Option<String> {
+        self.live_lan_addresses
+            .read()
+            .ok()
+            .and_then(|map| map.get(&(user_id.to_string(), device_id.to_string())).cloned())
+    }
+
+    /// Purges a node's local LAN address when it disconnects.
+    pub fn clear_lan_address(&self, user_id: &str, device_id: &str) {
+        if let Ok(mut map) = self.live_lan_addresses.write() {
+            map.remove(&(user_id.to_string(), device_id.to_string()));
+        }
     }
 
     /// Sends to every device on every account. Used for things that are not account-specific.
@@ -116,8 +150,6 @@ pub async fn ws_handler(
             client_type,
             None,
             None,
-            None,
-            None,
         );
         state.offers.note_archived(u);
     }
@@ -161,6 +193,10 @@ async fn handle_socket(
                 // Read and dropped. See above.
             }
         } => {}
+    }
+
+    if let (Some(u), Some(d)) = (username.as_deref(), device.as_deref()) {
+        hub.clear_lan_address(u, d);
     }
 }
 
@@ -215,5 +251,37 @@ mod tests {
         assert!(is_for(&m, Some("alpha"), Some("phone")));
         assert!(!is_for(&m, Some("alpha"), Some("laptop")));
         assert!(!is_for(&m, Some("alpha"), None));
+    }
+
+    #[test]
+    fn lan_addresses_are_stored_and_retrieved_in_memory() {
+        let hub = WsHub::new();
+        assert_eq!(hub.get_lan_address("alpha", "phone"), None);
+
+        hub.set_lan_address("alpha", "phone", "192.168.1.50:8702");
+        assert_eq!(
+            hub.get_lan_address("alpha", "phone"),
+            Some("192.168.1.50:8702".to_string())
+        );
+
+        hub.clear_lan_address("alpha", "phone");
+        assert_eq!(hub.get_lan_address("alpha", "phone"), None);
+    }
+
+    #[test]
+    fn lan_addresses_are_scoped_by_user_and_device() {
+        let hub = WsHub::new();
+        hub.set_lan_address("alpha", "phone", "192.168.1.50:8702");
+        hub.set_lan_address("beta", "phone", "10.0.0.5:8702");
+
+        assert_eq!(
+            hub.get_lan_address("alpha", "phone"),
+            Some("192.168.1.50:8702".to_string())
+        );
+        assert_eq!(
+            hub.get_lan_address("beta", "phone"),
+            Some("10.0.0.5:8702".to_string())
+        );
+        assert_eq!(hub.get_lan_address("alpha", "laptop"), None);
     }
 }
