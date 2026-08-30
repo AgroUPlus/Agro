@@ -9,9 +9,11 @@ mod db_library;
 mod db_drops;
 mod db_feed;
 mod db_jam;
+mod db_playlists;
 mod db_social;
 mod guest_boundary_tests;
 mod embedded_dashboard;
+mod importer;
 mod jam_clock;
 mod library;
 mod listen;
@@ -20,10 +22,12 @@ mod norm;
 mod offers;
 mod passphrase;
 mod plugins;
+mod proxy;
 mod schema;
 mod schema_drops;
 mod schema_feed;
 mod schema_jam;
+mod schema_playlists;
 mod schema_social;
 mod social_boundary_tests;
 mod share;
@@ -210,6 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(relay::send_relay).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/v1/relay/{session_id}/receive", get(relay::receive_relay))
+        .route("/api/v1/proxy", axum::routing::any(proxy::proxy_handler))
         .route("/api/v1/oidc/link", get(oidc::start_link))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
