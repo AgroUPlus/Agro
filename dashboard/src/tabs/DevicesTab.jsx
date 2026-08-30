@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Trash2, Smartphone, RefreshCw } from 'lucide-react';
-import { gql } from '../App.jsx';
+import React, { useCallback, useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  Smartphone,
+  Terminal,
+  Trash2,
+  Pencil,
+  RefreshCw,
+  Copy,
+  Check,
+  KeyRound,
+  Plus
+} from 'lucide-react';
+import { gql } from '../api.js';
 
-/**
- * Every credential issued for this account, and a way to take each one back.
- *
- * The Pairing tab has always told people to "revoke it any time under app passwords" — a place
- * that did not exist. `appPasswords` and `revokeAppPassword` were on the server the whole time
- * with nothing calling them, so tokens accumulated invisibly: a client that logs in again on each
- * launch leaves one row per launch and no one could see it happening.
- *
- * Each row is keyed and revoked by `id`, not by label. Labels repeat — several rows genuinely are
- * all called `wander-desktop` — and revoking by label signed all of them out at once.
- */
-const DEVICES_QUERY = `query Devices($user: String!) {
+const APP_PASSWORDS_QUERY = `query Devices($user: String!) {
   appPasswords(userId: $user) { id label createdAt lastUsedAt }
 }`;
 
-const REVOKE = `mutation Revoke($user: String!, $id: Int!) {
+const REVOKE_MUTATION = `mutation Revoke($user: String!, $id: Int!) {
   revokeAppPassword(userId: $user, id: $id)
 }`;
 
-/** "never", or how long ago — an exact timestamp says less here than an age does. */
 function when(iso) {
   if (!iso) return 'never used';
   const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -31,16 +30,19 @@ function when(iso) {
   return `${Math.round(seconds / 86400)} d ago`;
 }
 
-export default function DevicesTab({ username, onUnauthorized }) {
-  const [devices, setDevices] = useState([]);
+export default function DevicesTab({ username, nodes = [], onRenameNode, onDeleteNode, onUnauthorized }) {
+  const [appPasswords, setAppPasswords] = useState([]);
   const [busy, setBusy] = useState(null);
   const [notice, setNotice] = useState('');
+  const [deviceNameInput, setDeviceNameInput] = useState('');
+  const [pairing, setPairing] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await gql(DEVICES_QUERY, { user: username });
+      const res = await gql(APP_PASSWORDS_QUERY, { user: username });
       const body = await res.json();
-      setDevices(body?.data?.appPasswords ?? []);
+      setAppPasswords(body?.data?.appPasswords ?? []);
     } catch (err) {
       if (err.unauthorized) onUnauthorized?.();
     }
@@ -48,19 +50,44 @@ export default function DevicesTab({ username, onUnauthorized }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const handlePair = async () => {
+    const label = deviceNameInput.trim();
+    if (!label) return;
+    try {
+      const res = await gql(
+        `mutation MintToken($user: String!, $label: String!) {
+          mintAppPassword(userId: $user, label: $label) { token label }
+        }`,
+        { user: username, label }
+      );
+      const body = await res.json();
+      if (body?.errors?.length) throw new Error(body.errors[0].message);
+      setPairing(body?.data?.mintAppPassword);
+      setDeviceNameInput('');
+      load();
+    } catch (e) {
+      if (e.unauthorized) onUnauthorized?.();
+      else alert(e.message);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!pairing?.token) return;
+    navigator.clipboard.writeText(pairing.token);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   async function revoke(device) {
-    // Revoking the credential this browser is holding signs you out of it. Worth a sentence, not a
-    // prohibition — signing every other device out and keeping this one is a normal thing to want.
     const ok = window.confirm(
-      `Revoke “${device.label}”?\n\nThat device is signed out immediately and has to pair again. ` +
-      `If it is the browser you are using now, you will be signed out too.`
+      `Revoke “${device.label}”?\n\nThat device will be signed out immediately.`
     );
     if (!ok) return;
 
     setBusy(device.id);
     setNotice('');
     try {
-      const res = await gql(REVOKE, { user: username, id: device.id });
+      const res = await gql(REVOKE_MUTATION, { user: username, id: device.id });
       const body = await res.json();
       if (body?.errors?.length) throw new Error(body.errors[0].message);
       setNotice(`Revoked “${device.label}”.`);
@@ -73,70 +100,174 @@ export default function DevicesTab({ username, onUnauthorized }) {
     }
   }
 
-  // Same label more than once is the signature of a client re-logging in instead of keeping its
-  // token. Naming it is more useful than silently listing eight identical rows.
-  const counts = devices.reduce((acc, d) => ({ ...acc, [d.label]: (acc[d.label] || 0) + 1 }), {});
-  const repeated = Object.entries(counts).filter(([, n]) => n > 2);
+  const serverHost = window.location.origin;
+  const qrPayload = pairing ? JSON.stringify({
+    server: serverHost,
+    username,
+    token: pairing.token
+  }) : '';
 
   return (
-    <div className="card">
-      <div className="card-header">
-        <div>
-          <div className="card-title">Sign-ins</div>
-          <div className="card-subtitle">
-            One credential per device. Revoking one signs out only that device.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Section 1: Active Fleet Nodes */}
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-title">Connected Fleet Devices ({nodes.length})</div>
+            <div className="card-subtitle">Wander and Wanda instances reporting live state</div>
           </div>
         </div>
-        <button className="btn btn-secondary" onClick={load}>
-          <RefreshCw size={13} />
-          <span>Refresh</span>
-        </button>
-      </div>
 
-      {notice && <div className="empty-hint" style={{ padding: '10px 16px' }}>{notice}</div>}
-
-      {repeated.length > 0 && (
-        <div className="empty-hint" style={{ padding: '10px 16px', lineHeight: 1.55 }}>
-          {repeated.map(([label, n]) => (
-            <div key={label}>
-              <strong>{n}</strong> tokens are all called “{label}”. That usually means the client
-              logs in again on every launch instead of keeping the token it was given. Revoking the
-              old ones is safe — the one in use keeps working.
-            </div>
-          ))}
-        </div>
-      )}
-
-      {devices.length === 0 ? (
-        <p className="empty-hint" style={{ padding: '24px' }}>
-          No device tokens yet. Issue one from the Pairing tab.
-        </p>
-      ) : (
-        <div className="rules-list">
-          {devices.map((device) => (
-            <div key={device.id} className="rule-row">
-              <div className="rule-info">
-                <div className="rule-title">
-                  <Smartphone size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
-                  {device.label}
+        {nodes.length === 0 ? (
+          <div className="empty-hint" style={{ padding: '24px', textAlign: 'center' }}>
+            No devices currently registered. Launch <strong>Wander</strong> or <strong>Wanda</strong> to connect.
+          </div>
+        ) : (
+          <div className="nodes-grid">
+            {nodes.map(node => (
+              <div key={node.deviceId} className="node-card">
+                <div className="node-header">
+                  <div>
+                    <div className="node-name">
+                      {node.clientType.toLowerCase().includes('wanda') ? <Smartphone size={14} /> : <Terminal size={14} />}
+                      <span>{node.petname}</span>
+                    </div>
+                    <div className="node-type">{node.clientType.toLowerCase()}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="daemon-pill" style={{
+                      fontSize: '10px',
+                      padding: '2px 6px',
+                      color: node.isOnline ? 'var(--status-active)' : 'var(--text-muted)'
+                    }}>
+                      {node.isOnline ? 'ONLINE' : 'AWAY'}
+                    </span>
+                    <button
+                      onClick={() => onRenameNode?.(node)}
+                      title="Rename device"
+                      className="icon-btn"
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      onClick={() => onDeleteNode?.(node.deviceId)}
+                      title="Remove device"
+                      className="icon-btn"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-                <div className="rule-desc">
-                  Issued {new Date(device.createdAt).toLocaleString()} · {when(device.lastUsedAt)}
+                <div className="node-footer">
+                  <span>{node.currentTrack ? `Track: ${node.currentTrack}` : 'Status: Idle'}</span>
                 </div>
               </div>
-              <button
-                className="btn btn-secondary"
-                disabled={busy === device.id}
-                onClick={() => revoke(device)}
-                title="Revoke this credential"
-              >
-                <Trash2 size={13} />
-                <span>{busy === device.id ? 'Revoking…' : 'Revoke'}</span>
-              </button>
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Section 2: Pair a New Device */}
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-title">Pair a Device</div>
+            <div className="card-subtitle">Generate a scoped token and QR code for Wander or Wanda</div>
+          </div>
+          <div className="pair-issue">
+            <input
+              type="text"
+              placeholder="e.g. Living room laptop"
+              value={deviceNameInput}
+              onChange={(e) => setDeviceNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handlePair(); }}
+            />
+            <button
+              className="btn btn-secondary"
+              onClick={handlePair}
+              disabled={!deviceNameInput.trim()}
+            >
+              <Plus size={14} />
+              <span>Issue Token</span>
+            </button>
+          </div>
         </div>
-      )}
+
+        {pairing && (
+          <div className="pairing-container">
+            <div className="qr-box">
+              <QRCodeSVG value={qrPayload} size={140} level="M" />
+            </div>
+
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Device Token — Shown Once
+              </div>
+              <div className="passphrase-display">
+                <span style={{ wordBreak: 'break-all' }}>{pairing.token}</span>
+                <button className="btn btn-secondary" onClick={handleCopy} style={{ padding: '4px 8px' }}>
+                  {copied ? <Check size={13} color="var(--status-active)" /> : <Copy size={13} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="code-snippet">
+              <div style={{ color: 'var(--text-muted)', marginBottom: '4px' }}># ~/.config/wander/config.toml</div>
+              <div>[agro]</div>
+              <div>enabled = true</div>
+              <div>server = "{serverHost}"</div>
+              <div>username = "{username}"</div>
+              <div>token = "{pairing.token}"</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: Active Sign-ins / App Passwords */}
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-title">Active Sign-ins & App Passwords</div>
+            <div className="card-subtitle">Active authentication credentials issued for your account</div>
+          </div>
+          <button className="btn btn-secondary" onClick={load}>
+            <RefreshCw size={13} />
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {notice && <div className="empty-hint" style={{ padding: '10px 16px' }}>{notice}</div>}
+
+        {appPasswords.length === 0 ? (
+          <div className="empty-hint" style={{ padding: '20px' }}>
+            No tokens registered.
+          </div>
+        ) : (
+          <div className="rules-list">
+            {appPasswords.map((device) => (
+              <div key={device.id} className="rule-row">
+                <div className="rule-info">
+                  <div className="rule-title">
+                    <KeyRound size={13} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+                    {device.label}
+                  </div>
+                  <div className="rule-desc">
+                    Created {new Date(device.createdAt).toLocaleDateString()} · {when(device.lastUsedAt)}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  disabled={busy === device.id}
+                  onClick={() => revoke(device)}
+                >
+                  <Trash2 size={13} />
+                  <span>{busy === device.id ? 'Revoking…' : 'Revoke'}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

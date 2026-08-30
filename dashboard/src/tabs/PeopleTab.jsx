@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { UserCheck, UserX, Ticket, Copy, Ban, Trash2 } from 'lucide-react';
-import { gql } from '../App.jsx';
+import { gql } from '../api.js';
 import AccountsPanel from './AccountsPanel.jsx';
 import Avatar from '../Avatar.jsx';
 

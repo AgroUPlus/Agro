@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Clock, Flame, Music2, Radio } from 'lucide-react';
-import { gql } from '../App.jsx';
+import { gql } from '../api.js';
 
 /**
  * What the whole fleet has been listening to.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Archive, Inbox, Send, Music2 } from 'lucide-react';
-import { gql } from '../App.jsx';
+import { gql } from '../api.js';
 import { formatWhen } from './FeedTab.jsx';
 import Avatar from '../Avatar.jsx';
 

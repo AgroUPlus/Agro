@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Disc3, Search, Download } from 'lucide-react';
-import { gql } from '../App.jsx';
+import { gql } from '../api.js';
 
 /**
  * The library as a wall of covers, with a device picker that greys out what that device is missing.
