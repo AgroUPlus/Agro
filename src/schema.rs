@@ -1517,6 +1517,7 @@ impl MutationRoot {
         user_id: String,
         target_url: String,
         source: Option<String>,
+        expires_at: Option<i64>,
     ) -> async_graphql::Result<String> {
         // A link attributed to an account has to be authorised as that account. `userId` used to
         // be optional, and omitting it skipped this check entirely — minting an unowned link that
@@ -1545,7 +1546,7 @@ impl MutationRoot {
             })
             .collect();
 
-        db.create_short_link(&uid, target_url, Some(user_id.as_str()), source.as_deref())?;
+        db.create_short_link(&uid, target_url, Some(user_id.as_str()), source.as_deref(), expires_at)?;
         Ok(uid)
     }
 

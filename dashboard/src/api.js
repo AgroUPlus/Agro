@@ -4,13 +4,32 @@
 
 const TOKEN_KEY = 'agro.token';
 
+/**
+ * Sanitizes and validates a bearer/device token before writing to browser storage.
+ * Prevents storage poisoning from tainted inputs (CWE-8475 / jssecurity:S8475).
+ */
+export function sanitizeToken(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  // Valid tokens are base64/base64url characters (alphanumeric, -, _, =, +, /)
+  if (!/^[A-Za-z0-9_\-+=/]{16,512}$/.test(trimmed)) {
+    return '';
+  }
+  return trimmed;
+}
+
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || '';
+  const raw = localStorage.getItem(TOKEN_KEY) || '';
+  return sanitizeToken(raw);
 }
 
 export function setToken(value) {
-  if (value) localStorage.setItem(TOKEN_KEY, value.trim());
-  else localStorage.removeItem(TOKEN_KEY);
+  const sanitized = sanitizeToken(value);
+  if (sanitized) {
+    localStorage.setItem(TOKEN_KEY, sanitized);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
 }
 
 /**
@@ -116,19 +135,29 @@ export function consumeSsoFragment() {
   if (!raw) return null;
   const params = new URLSearchParams(raw);
 
-  const error = params.get('ssoError');
-  const token = params.get('token');
-  if (!error && !token && !params.has('linked')) return null;
+  const rawError = params.get('ssoError');
+  const rawToken = params.get('token');
+  if (!rawError && !rawToken && !params.has('linked')) return null;
 
   window.history.replaceState(null, '', window.location.pathname + window.location.search);
 
-  if (error) return { error };
-  if (params.has('linked') && !token) return { linked: true };
+  if (rawError) {
+    const error = typeof rawError === 'string' ? rawError.slice(0, 256) : 'SSO Error';
+    return { error };
+  }
+  if (params.has('linked') && !rawToken) return { linked: true };
 
-  setToken(token);
+  const token = sanitizeToken(rawToken);
+  if (token) {
+    setToken(token);
+  }
+
+  const rawUsername = params.get('username') || '';
+  const username = typeof rawUsername === 'string' ? rawUsername.trim().slice(0, 64) : '';
+
   return {
     token,
-    username: params.get('username') || '',
+    username,
     vaultSalt: params.get('vaultSalt') || null,
     vaultKeyWrapped: params.get('vaultKeyWrapped') || null,
   };
