@@ -1,4 +1,6 @@
 use axum::{
+    extract::State,
+
     body::Body,
     extract::{Extension, Request},
     http::{HeaderMap, HeaderValue, StatusCode},
@@ -8,13 +10,15 @@ use axum::response::IntoResponse;
 use std::sync::Arc;
 use crate::auth::AuthedUser;
 use crate::db::Db;
+use crate::AppState;
 
 pub async fn proxy_handler(
+    State(state): State<AppState>,
     Extension(user): Extension<AuthedUser>,
-    Extension(db): Extension<Arc<Db>>,
     headers: HeaderMap,
     req: Request<Body>,
 ) -> Response {
+    let db = &state.db;
     let saved_states = db.get_plugin_states().unwrap_or_default();
     if !saved_states.get("privacy-relay").copied().unwrap_or(true) {
         return (StatusCode::FORBIDDEN, "Privacy relay is disabled by the administrator").into_response();

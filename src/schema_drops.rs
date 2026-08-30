@@ -274,6 +274,8 @@ impl DropsMutation {
                     "contentHash": drop.content_hash,
                     "trackUri": drop.track_uri,
                     "note": drop.note,
+                    "noteCiphertext": drop.note_ciphertext,
+                    "isEncrypted": drop.is_encrypted,
                     "createdAt": drop.created_at,
                 }),
             );
