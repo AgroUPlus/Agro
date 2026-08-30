@@ -11,9 +11,13 @@ const PROFILE_SETTINGS_QUERY = `query AccountSettings($username: String!) {
   }
   hasTotp
   syncedSettings(userId: $username) {
-    serverUrl serverUsername lrclibUrl lyricsFetchOnline streamFormat shareDomain shareHosts shareEnabled
+    hasServerUrl lyricsFetchOnline streamFormat shareDomain shareHosts shareEnabled
   }
 }`;
+// `serverUrl`, `serverUsername` and `lrclibUrl` are deliberately absent: migration 27 moved them
+// into a blob the client seals, and the server has no key to open it. Asking for them was not a
+// missing value but an *unknown field*, which is a validation error -- so the whole document was
+// rejected and the profile in it never resolved. That is why this page rendered blank.
 
 const UPDATE_PROFILE = `mutation UpdateProfile($displayName: String, $bio: String, $avatarUrl: String) {
   updateProfile(displayName: $displayName, bio: $bio, avatarUrl: $avatarUrl) { username }
@@ -52,7 +56,7 @@ const REGENERATE_RECOVERY = `mutation Regenerate($code: String!) {
 export default function AccountSettingsTab({ username, onUnauthorized }) {
   const [profile, setProfile] = useState({ displayName: '', bio: '', avatarUrl: '' });
   const [visibility, setVisibility] = useState({ showNowPlaying: true, showStats: true, discoverable: true, showActivity: true });
-  const [synced, setSynced] = useState({ serverUrl: '', serverUsername: '', lrclibUrl: '', streamFormat: 'FLAC', shareDomain: '', shareHosts: '', shareEnabled: true });
+  const [synced, setSynced] = useState({ streamFormat: 'FLAC', shareDomain: '', shareHosts: '', shareEnabled: true, lyricsFetchOnline: true, hasServerUrl: false });
 
   const [hasTotp, setHasTotp] = useState(false);
   const [totpEnrolment, setTotpEnrolment] = useState(null);
@@ -113,19 +117,21 @@ export default function AccountSettingsTab({ username, onUnauthorized }) {
   const handleSaveSynced = async (e) => {
     e.preventDefault();
     try {
-      await gql(UPDATE_SYNCED_SETTINGS, {
+      // The sealed blob is deliberately not sent. Omitting it leaves the stored one untouched;
+      // sending anything from here would overwrite settings this page cannot read with settings it
+      // invented, and there is no key on this machine to seal a replacement with.
+      const res = await gql(UPDATE_SYNCED_SETTINGS, {
         input: {
           userId: username,
-          serverUrl: synced.serverUrl,
-          serverUsername: synced.serverUsername,
-          lrclibUrl: synced.lrclibUrl,
-          lyricsFetchOnline: true,
+          lyricsFetchOnline: synced.lyricsFetchOnline,
           streamFormat: synced.streamFormat,
           shareDomain: synced.shareDomain || '',
           shareHosts: synced.shareHosts || '',
           shareEnabled: synced.shareEnabled
         }
       });
+      const body = await res.json();
+      if (body?.errors?.length) throw new Error(body.errors[0].message);
       setSyncedSaved(true);
       setTimeout(() => setSyncedSaved(false), 2500);
     } catch (err) {
@@ -224,7 +230,7 @@ export default function AccountSettingsTab({ username, onUnauthorized }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '840px' }}>
+    <div className="settings-page">
       <ProfileSection
         profile={profile}
         onProfileChange={setProfile}

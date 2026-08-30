@@ -55,7 +55,9 @@
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 
   --sidebar-width: 232px;
-  --now-bar-height: 76px;
+  /* Kept equal to `.modern-now-bar`'s height: the grid reserves this row, the bar is fixed on
+     top of it, and any difference between the two shows as a strip of bare background. */
+  --now-bar-height: 64px;
 }
 
 * {
@@ -1513,9 +1515,13 @@ input:checked + .slider:before {
 .modern-now-bar {
   position: fixed;
   bottom: 0;
-  left: var(--sidebar-width);
+  /* Full width, not inset by the sidebar. It used to start at `--sidebar-width`, which left a
+     dead strip under the sidebar showing the app background -- the bar is `position: fixed` and
+     so never filled the grid row reserved for it either. The row below the sidebar is the bar's
+     own, so spanning it covers nothing. */
+  left: 0;
   right: 0;
-  height: 64px;
+  height: var(--now-bar-height);
   background: rgba(19, 19, 21, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -1903,3 +1909,157 @@ input:checked + .slider:before {
   background: var(--bg-surface-hover);
 }
 
+
+/* ── Two-factor enrolment ──────────────────────────────────────────────────────────────────
+   Reuses the auth card, because this screen is the same kind of thing: a full-page step that
+   has to be finished before the app is usable. */
+.enrol-qr {
+  display: flex;
+  justify-content: center;
+  background: #fff;
+  padding: 14px;
+  border-radius: var(--radius-sm, 8px);
+  margin: 14px 0 10px;
+}
+
+.enrol-secret {
+  display: block;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  word-break: break-all;
+  background: var(--bg-surface, #16161a);
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.enrol-codes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin: 14px 0;
+}
+
+.enrol-codes code {
+  font-size: 13px;
+  background: var(--bg-surface, #16161a);
+  padding: 7px 9px;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.auth-hint {
+  font-size: 12px;
+  color: var(--text-muted, #8b8b93);
+  margin: 0 0 6px;
+}
+
+.auth-sso {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+/* ── Settings ──────────────────────────────────────────────────────────────────────────────
+   Full width. This used to carry an inline `max-width: 840px`, which on a wide window left the
+   whole right-hand side empty while the fields themselves stayed cramped. `page-content` already
+   provides the page gutter, so there is nothing else holding it in. */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+  margin-top: 6px;
+}
+
+/* Spans the row it is on, so a long allowlist is not squeezed into one column. */
+.settings-grid-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* Says why a field is absent rather than showing an empty box that reads as lost data. */
+.sealed-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.sealed-note strong { color: var(--text-secondary); font-weight: 600; }
+
+/* ── Contextual menus ──────────────────────────────────────────────────────────────────────
+   A short rise and fade, so a menu reads as coming *from* the control that opened it rather than
+   appearing on top of the page. Kept to 120ms: long enough to be followed, short enough that it
+   never delays the click that follows.
+
+   `transform-origin` is at the bottom because the sidebar's menu opens upward. */
+@keyframes menu-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.user-dropdown-menu {
+  transform-origin: bottom center;
+  animation: menu-rise 120ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* Anything that opens downward reads better growing from its top edge. */
+.dropdown-menu,
+.context-menu,
+.popover {
+  transform-origin: top center;
+  animation: menu-rise 120ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* Respect a stated preference for less motion: the menu still appears, it simply does not move. */
+@media (prefers-reduced-motion: reduce) {
+  .user-dropdown-menu,
+  .dropdown-menu,
+  .context-menu,
+  .popover {
+    animation: none;
+  }
+}

@@ -370,11 +370,20 @@ async fn graphql_handler(
             && !state.db.totp_is_confirmed(user.username()).unwrap_or(false);
 
         if owes_enrolment && !is_enrolment_only(&request) {
-            return async_graphql::Response::from_errors(vec![async_graphql::ServerError::new(
-                "This server requires administrators to set up two-factor authentication.                  Finish enrolling before using the rest of the API.",
+            // Carries a machine-readable code as well as prose. The dashboard sends composite
+            // documents — one query fetches the account, the devices and the current track
+            // together — so this refusal lands on every screen at once, and with nothing to
+            // recognise it by, the client can only render a dashboard whose every field is empty.
+            // That is exactly what it did: it looked broken rather than like a step to take.
+            let mut error = async_graphql::ServerError::new(
+                "Set up two-factor authentication to finish signing in. \
+                 This server requires it for administrators.",
                 None,
-            )])
-            .into();
+            );
+            let mut extensions = async_graphql::ErrorExtensionValues::default();
+            extensions.set("code", "TOTP_ENROLMENT_REQUIRED");
+            error.extensions = Some(extensions);
+            return async_graphql::Response::from_errors(vec![error]).into();
         }
         request = request.data(user);
     }

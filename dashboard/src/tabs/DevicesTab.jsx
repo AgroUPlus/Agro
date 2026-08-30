@@ -56,13 +56,13 @@ export default function DevicesTab({ username, nodes = [], onRenameNode, onDelet
     try {
       const res = await gql(
         `mutation MintToken($user: String!, $label: String!) {
-          mintAppPassword(userId: $user, label: $label) { token label }
+          createAppPassword(userId: $user, label: $label) { token label }
         }`,
         { user: username, label }
       );
       const body = await res.json();
       if (body?.errors?.length) throw new Error(body.errors[0].message);
-      setPairing(body?.data?.mintAppPassword);
+      setPairing(body?.data?.createAppPassword);
       setDeviceNameInput('');
       load();
     } catch (e) {
