@@ -20,15 +20,21 @@ export function sanitizeToken(value) {
 
 export function getToken() {
   const raw = localStorage.getItem(TOKEN_KEY) || '';
-  return sanitizeToken(raw);
+  const sanitized = sanitizeToken(raw);
+  if (sanitized && document.cookie.indexOf(`token=${sanitized}`) === -1) {
+    document.cookie = `token=${sanitized}; path=/; max-age=31536000; SameSite=Strict`;
+  }
+  return sanitized;
 }
 
 export function setToken(value) {
   const sanitized = sanitizeToken(value);
   if (sanitized) {
     localStorage.setItem(TOKEN_KEY, sanitized);
+    document.cookie = `token=${sanitized}; path=/; max-age=31536000; SameSite=Strict`;
   } else {
     localStorage.removeItem(TOKEN_KEY);
+    document.cookie = `token=; path=/; max-age=0; SameSite=Strict`;
   }
 }
 

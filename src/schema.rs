@@ -376,6 +376,7 @@ pub struct LibraryItem {
     /// False when the selected device is missing this. Null-ish only in the sense that with no
     /// device selected everything reports true — there is nothing to be missing from.
     pub present_on_device: bool,
+    pub source_count: i64,
 }
 
 /// What `libraryBrowse` is listing.
@@ -591,6 +592,7 @@ impl QueryRoot {
                 cover_key: item.cover_key,
                 track_count: item.track_count,
                 present_on_device: item.present_on_device,
+                source_count: item.source_count,
             })
             .collect())
     }
@@ -1311,6 +1313,24 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
+    /// Removes a track from the library entirely. It will disappear from all views.
+    async fn delete_library_item(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        kind: LibraryBrowseKind,
+        id: String,
+    ) -> async_graphql::Result<bool> {
+        require_admin(ctx)?;
+        let db = ctx.data::<crate::db::Db>()?;
+        let db_kind = match kind {
+            LibraryBrowseKind::Artist => crate::db_library::BrowseKind::Artist,
+            LibraryBrowseKind::Album => crate::db_library::BrowseKind::Album,
+            LibraryBrowseKind::Track => crate::db_library::BrowseKind::Track,
+        };
+        Ok(db.delete_library_item(db_kind, &id)?)
+    }
+
     async fn register_node(
         &self,
         ctx: &Context<'_>,

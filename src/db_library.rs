@@ -72,6 +72,8 @@ pub struct BrowseItem {
     pub track_count: i64,
     /// False when the selected device is missing this — the whole reason for the view.
     pub present_on_device: bool,
+    /// Number of active registered devices that hold this item.
+    pub source_count: i64,
 }
 
 /// A path-safe, stable identifier for an album's artwork.
@@ -286,14 +288,10 @@ impl Db {
                ON other.content_hash = t.content_hash
               AND other.user_id = ?1
               AND other.device_id <> ?2
-             -- The holder has to still exist. `delete_node` only removes the row in
-             -- `registered_nodes`, and a client that changes its device id simply stops answering
-             -- to the old one, so holdings outlive the device that reported them either way.
-             -- Without this, every track a retired machine ever held is offered forever to every
-             -- remaining device, sourced from somewhere nothing can be fetched from.
              JOIN registered_nodes rn
                ON rn.user_id = other.user_id AND rn.device_id = other.device_id
-             WHERE NOT EXISTS (
+             WHERE 1=1 
+               AND NOT EXISTS (
                  SELECT 1 FROM device_holdings mine
                  WHERE mine.device_id = ?2 AND mine.content_hash = t.content_hash)
                AND NOT EXISTS (
@@ -462,7 +460,9 @@ impl Db {
 
         // Present when *this* device holds it. With no device selected nothing is greyed out, so
         // the expression is a constant rather than a join that would always be false.
-        let present = match device_id {
+        
+        let source_count = "(SELECT COUNT(DISTINCT h.device_id) FROM device_holdings h JOIN registered_nodes rn ON rn.device_id = h.device_id AND rn.user_id = h.user_id WHERE h.content_hash = t.content_hash AND h.user_id = :user) + (CASE WHEN t.archived_path IS NOT NULL THEN 1 ELSE 0 END)";
+let present = match device_id {
             Some(_) => {
                 "EXISTS (SELECT 1 FROM device_holdings h
                          WHERE h.content_hash = t.content_hash AND h.device_id = :device)"
@@ -477,7 +477,8 @@ impl Db {
                         COALESCE(t.album_artist, t.artist),
                         t.album,
                         1,
-                        MIN({present})
+                        MIN({present}),
+                        MAX({source_count})
                  {scope}
                  GROUP BY t.content_hash
                  ORDER BY COALESCE(t.album_artist, t.artist), t.album, t.track_no, t.title
@@ -489,7 +490,8 @@ impl Db {
                         COALESCE(t.album_artist, t.artist),
                         t.album,
                         COUNT(*),
-                        MIN({present})
+                        MIN({present}),
+                        MAX({source_count})
                  {scope}
                  GROUP BY COALESCE(t.album_artist, t.artist), COALESCE(t.album, '')
                  ORDER BY COALESCE(t.album_artist, t.artist), COALESCE(t.album, '')
@@ -501,7 +503,8 @@ impl Db {
                         COALESCE(t.album_artist, t.artist),
                         NULL,
                         COUNT(*),
-                        MIN({present})
+                        MIN({present}),
+                        MAX({source_count})
                  {scope}
                  GROUP BY COALESCE(t.album_artist, t.artist)
                  ORDER BY COALESCE(t.album_artist, t.artist)
@@ -552,6 +555,7 @@ impl Db {
                 // tracks is. A half-copied album shown as complete is the one answer this view must
                 // never give.
                 present_on_device: row.get::<_, i64>(5)? != 0,
+                source_count: row.get(6)?,
             });
         }
         Ok(items)
@@ -816,6 +820,56 @@ impl Db {
             params![content_hash],
         )?;
         Ok(())
+    }
+
+    /// Removes a track from the library index entirely.
+    
+    pub fn delete_library_item(&self, kind: BrowseKind, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        match kind {
+            BrowseKind::Track => {
+                conn.execute("DELETE FROM device_holdings WHERE content_hash = ?1", rusqlite::params![id])?;
+                let deleted = conn.execute("DELETE FROM library_tracks WHERE content_hash = ?1", rusqlite::params![id])?;
+                Ok(deleted > 0)
+            }
+            BrowseKind::Album => {
+                let mut parts = id.splitn(2, '');
+                let album_artist = parts.next().unwrap_or("");
+                let album = parts.next().unwrap_or("");
+                conn.execute(
+                    "DELETE FROM device_holdings WHERE content_hash IN (SELECT content_hash FROM library_tracks WHERE COALESCE(album_artist, artist) = ?1 AND COALESCE(album, '') = ?2)",
+                    rusqlite::params![album_artist, album]
+                )?;
+                let deleted = conn.execute(
+                    "DELETE FROM library_tracks WHERE COALESCE(album_artist, artist) = ?1 AND COALESCE(album, '') = ?2",
+                    rusqlite::params![album_artist, album]
+                )?;
+                Ok(deleted > 0)
+            }
+            BrowseKind::Artist => {
+                conn.execute(
+                    "DELETE FROM device_holdings WHERE content_hash IN (SELECT content_hash FROM library_tracks WHERE COALESCE(album_artist, artist) = ?1)",
+                    rusqlite::params![id]
+                )?;
+                let deleted = conn.execute(
+                    "DELETE FROM library_tracks WHERE COALESCE(album_artist, artist) = ?1",
+                    rusqlite::params![id]
+                )?;
+                Ok(deleted > 0)
+            }
+        }
+    }
+pub fn delete_library_track(&self, content_hash: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM device_holdings WHERE content_hash = ?1",
+            params![content_hash],
+        )?;
+        let deleted = conn.execute(
+            "DELETE FROM library_tracks WHERE content_hash = ?1",
+            params![content_hash],
+        )?;
+        Ok(deleted > 0)
     }
 }
 

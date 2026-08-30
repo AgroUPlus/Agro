@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Smartphone, Terminal, Radio } from 'lucide-react';
 import { formatDuration } from '../api.js';
 
@@ -8,13 +8,63 @@ export default function NowBar({ lastHandoff, nodes = [] }) {
   const artist = lastHandoff?.artist || '';
   const album = lastHandoff?.album || '';
   const artworkUrl = lastHandoff?.artworkUrl || '';
-  const positionSec = Math.floor((lastHandoff?.positionMs || 0) / 1000);
-  const durationSec = Math.floor((lastHandoff?.durationMs || 0) / 1000);
-  const progressPercent = durationSec > 0 ? Math.min(100, (positionSec / durationSec) * 100) : 0;
+  
+  const basePositionMs = lastHandoff?.positionMs || 0;
+  const durationMs = lastHandoff?.durationMs || 0;
+  const durationSec = Math.floor(durationMs / 1000);
 
   const activeNode = nodes.find((n) => n.deviceId === lastHandoff?.deviceId);
   const devicePetname = activeNode?.petname || lastHandoff?.deviceId || 'fleet';
   const isMobile = activeNode?.clientType?.toLowerCase().includes('wanda');
+
+  const fillRef = useRef(null);
+  const timeRef = useRef(null);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    const startTime = Date.now();
+
+    const updateDOM = (posMs) => {
+      const posSec = Math.floor(posMs / 1000);
+      if (timeRef.current) {
+        const newTimeStr = formatDuration(posSec);
+        if (timeRef.current.textContent !== newTimeStr) {
+          timeRef.current.textContent = newTimeStr;
+        }
+      }
+      if (fillRef.current) {
+        if (durationMs > 0) {
+          const pct = Math.min(100, (posMs / durationMs) * 100);
+          fillRef.current.style.width = `${pct}%`;
+        } else {
+          fillRef.current.style.width = `0%`;
+        }
+      }
+    };
+
+    const tick = () => {
+      if (!isPlaying) {
+        updateDOM(basePositionMs);
+        return;
+      }
+      const now = Date.now();
+      const elapsed = now - startTime;
+      const currentMs = Math.min(basePositionMs + elapsed, durationMs || Infinity);
+      updateDOM(currentMs);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (isPlaying) {
+      rafRef.current = requestAnimationFrame(tick);
+    } else {
+      updateDOM(basePositionMs);
+    }
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [basePositionMs, durationMs, isPlaying]);
 
   return (
     <footer className="modern-now-bar">
@@ -47,11 +97,14 @@ export default function NowBar({ lastHandoff, nodes = [] }) {
       {/* Middle: Progress scrub bar & elapsed / duration */}
       <div className="now-bar-center">
         <div className="now-bar-progress-container">
-          <span className="time-display">{formatDuration(positionSec)}</span>
+          <span className="time-display" ref={timeRef}>
+            {formatDuration(Math.floor(basePositionMs / 1000))}
+          </span>
           <div className="now-bar-progress-track">
             <div
               className="now-bar-progress-fill"
-              style={{ width: `${progressPercent}%` }}
+              ref={fillRef}
+              style={{ width: durationMs > 0 ? `${Math.min(100, (basePositionMs / durationMs) * 100)}%` : '0%' }}
             />
           </div>
           <span className="time-display total">

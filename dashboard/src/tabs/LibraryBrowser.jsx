@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Disc3, Search, Download } from 'lucide-react';
+import { Disc3, Search, Download, Trash2 } from 'lucide-react';
 import { gql } from '../api.js';
 
 /**
@@ -15,8 +15,12 @@ const BROWSE_QUERY = `query Browse(
   libraryBrowse(
     userId: $user, kind: $kind, deviceId: $device, search: $search, limit: 120, offset: $offset
   ) {
-    id title subtitle coverKey trackCount presentOnDevice
+    id title subtitle coverKey trackCount presentOnDevice sourceCount
   }
+}`;
+
+const DELETE_ITEM_MUTATION = `mutation DeleteItem($user: String!, $kind: LibraryBrowseKind!, $id: String!) {
+  deleteLibraryItem(userId: $user, kind: $kind, id: $id)
 }`;
 
 const OFFER_MUTATION = `mutation Offer($user: String!, $device: String!) {
@@ -69,6 +73,16 @@ export default function LibraryBrowser({ username, devices, onUnauthorized }) {
   useEffect(() => setPage(0), [kind, device, search]);
 
   const missing = items.filter(item => !item.presentOnDevice).length;
+
+  async function deleteItem(id) {
+    if (!confirm('Are you sure you want to completely remove this from the server index?')) return;
+    try {
+      await gql(DELETE_ITEM_MUTATION, { user: username, kind, id });
+      load();
+    } catch (error) {
+      if (error.unauthorized) onUnauthorized?.();
+    }
+  }
 
   async function offerMissing() {
     if (!device) return;
@@ -156,13 +170,27 @@ export default function LibraryBrowser({ username, devices, onUnauthorized }) {
                 ) : (
                   <Disc3 size={28} />
                 )}
-                {!item.presentOnDevice && <span className="cover-badge">Not here</span>}
+                {item.sourceCount === 0 ? (
+                  <span className="cover-badge" style={{background: 'var(--danger)'}}>0 sources</span>
+                ) : !item.presentOnDevice ? (
+                  <span className="cover-badge">Not here</span>
+                ) : null}
+                {username === 'alpha' && (
+                  <button 
+                    className="cover-delete-btn" 
+                    title="Remove from Server"
+                    onClick={(e) => { e.stopPropagation(); deleteItem(item.id); }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
               </div>
               <div className="cover-title">{item.title}</div>
               <div className="cover-sub">
                 {item.subtitle}
                 {kind !== 'TRACK' ? ` · ${item.trackCount}` : ''}
               </div>
+
             </div>
           ))}
         </div>

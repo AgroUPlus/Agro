@@ -149,7 +149,21 @@ pub async fn require_token(
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::trim)
         .map(str::to_string)
-        .or(query.token)
+        .or_else(|| query.token)
+        .or_else(|| {
+            request.headers().get(axum::http::header::COOKIE)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|cookies| {
+                    cookies.split(';').find_map(|cookie| {
+                        let cookie = cookie.trim();
+                        if let Some(token) = cookie.strip_prefix("token=") {
+                            Some(token.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+        })
         .unwrap_or_default();
 
     if presented.trim().is_empty() {
