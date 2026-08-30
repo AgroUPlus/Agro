@@ -55,7 +55,9 @@
   --shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 
   --sidebar-width: 232px;
-  --now-bar-height: 76px;
+  /* Kept equal to `.modern-now-bar`'s height: the grid reserves this row, the bar is fixed on
+     top of it, and any difference between the two shows as a strip of bare background. */
+  --now-bar-height: 64px;
 }
 
 * {
@@ -1513,9 +1515,13 @@ input:checked + .slider:before {
 .modern-now-bar {
   position: fixed;
   bottom: 0;
-  left: var(--sidebar-width);
+  /* Full width, not inset by the sidebar. It used to start at `--sidebar-width`, which left a
+     dead strip under the sidebar showing the app background -- the bar is `position: fixed` and
+     so never filled the grid row reserved for it either. The row below the sidebar is the bar's
+     own, so spanning it covers nothing. */
+  left: 0;
   right: 0;
-  height: 64px;
+  height: var(--now-bar-height);
   background: rgba(19, 19, 21, 0.88);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -2017,3 +2023,43 @@ input:checked + .slider:before {
 }
 
 .sealed-note strong { color: var(--text-secondary); font-weight: 600; }
+
+/* ── Contextual menus ──────────────────────────────────────────────────────────────────────
+   A short rise and fade, so a menu reads as coming *from* the control that opened it rather than
+   appearing on top of the page. Kept to 120ms: long enough to be followed, short enough that it
+   never delays the click that follows.
+
+   `transform-origin` is at the bottom because the sidebar's menu opens upward. */
+@keyframes menu-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.user-dropdown-menu {
+  transform-origin: bottom center;
+  animation: menu-rise 120ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* Anything that opens downward reads better growing from its top edge. */
+.dropdown-menu,
+.context-menu,
+.popover {
+  transform-origin: top center;
+  animation: menu-rise 120ms cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* Respect a stated preference for less motion: the menu still appears, it simply does not move. */
+@media (prefers-reduced-motion: reduce) {
+  .user-dropdown-menu,
+  .dropdown-menu,
+  .context-menu,
+  .popover {
+    animation: none;
+  }
+}
