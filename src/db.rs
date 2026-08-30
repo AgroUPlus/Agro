@@ -745,6 +745,42 @@ const MIGRATIONS: &[&str] = &[
      -- cannot answer -- and it is what stops `unlinkFederatedIdentity` removing the last way in.
      ALTER TABLE users ADD COLUMN passphrase_is_usable INTEGER NOT NULL DEFAULT 1;
     ",
+    // 29 - Proxy caching table
+    "CREATE TABLE IF NOT EXISTS proxy_cache (
+        url TEXT PRIMARY KEY,
+        headers TEXT NOT NULL,
+        body BLOB NOT NULL,
+        expires_at INTEGER NOT NULL
+    );",
+    // 30 - Universal source-agnostic playlists
+    "CREATE TABLE IF NOT EXISTS playlists (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        description TEXT,
+        is_public   INTEGER NOT NULL DEFAULT 0,
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id);
+    CREATE INDEX IF NOT EXISTS idx_playlists_public ON playlists(is_public);
+
+    CREATE TABLE IF NOT EXISTS playlist_items (
+        id          TEXT PRIMARY KEY,
+        playlist_id TEXT NOT NULL,
+        position    INTEGER NOT NULL,
+        title       TEXT NOT NULL,
+        artist      TEXT NOT NULL,
+        album       TEXT,
+        duration_ms INTEGER,
+        norm_artist TEXT NOT NULL,
+        norm_title  TEXT NOT NULL,
+        artwork_url TEXT,
+        origin_uri  TEXT,
+        FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist ON playlist_items(playlist_id, position);
+    ",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -770,6 +806,26 @@ pub struct Db {
 }
 
 impl Db {
+    pub fn get_cached_proxy(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let mut stmt = conn.prepare("SELECT headers, body FROM proxy_cache WHERE url = ?1 AND expires_at > ?2")?;
+        let mut rows = stmt.query(params![url, now])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some((row.get(0)?, row.get(1)?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_cached_proxy(&self, url: &str, headers: &str, body: &[u8], expires_at: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_cache (url, headers, body, expires_at) VALUES (?1, ?2, ?3, ?4)",
+            params![url, headers, body, expires_at],
+        )?;
+        Ok(())
+    }
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let conn = Connection::open(&path)?;
