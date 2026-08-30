@@ -267,5 +267,12 @@ export const FALLBACK_RULES = [
     description: 'Pushes a host\'s track and position to the friends following them, so a session can be joined rather than merely watched. Gated on the host\'s "show now playing" switch.',
     target: 'Multi-device',
     isEnabled: true
+  },
+  {
+    id: 'privacy-relay',
+    name: 'Privacy Relay',
+    description: 'Proxies metadata and lyric requests (Internet Archive, LRCLIB, Nyaa) through this server to hide client IP addresses. Caches responses to reduce API calls.',
+    target: 'Core',
+    isEnabled: true
   }
 ];
