@@ -159,6 +159,121 @@ pub fn period_start(period: &str, now: i64) -> Option<String> {
     chrono::DateTime::from_timestamp(now - days * DAY, 0).map(|dt| dt.to_rfc3339())
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct AgroWrapped {
+    pub year: i32,
+    pub month: Option<i32>,
+    pub total_minutes: i64,
+    pub total_plays: i64,
+    pub top_artists: Vec<(String, i64)>,
+    pub top_tracks: Vec<(String, i64)>,
+    pub top_albums: Vec<(String, i64)>,
+    pub top_genres: Vec<(String, i64)>,
+    pub top_hour_utc: Option<i32>,
+    pub longest_streak_days: i64,
+    pub new_artists_count: i64,
+}
+
+/// Computes an "Agro Wrapped" recap for a given year and optional month.
+pub fn compute_wrapped(
+    all_rows: &[ScrobbleRow],
+    year: i32,
+    month: Option<i32>,
+    top_n: usize,
+) -> AgroWrapped {
+    use chrono::{Datelike, Timelike};
+
+    let mut prior_artists = HashSet::new();
+    let mut period_rows = Vec::new();
+
+    for row in all_rows {
+        if let Some(dt) = chrono::DateTime::parse_from_rfc3339(&row.played_at).ok() {
+            let row_year = dt.year();
+            let row_month = dt.month() as i32;
+
+            let in_period = if let Some(m) = month {
+                row_year == year && row_month == m
+            } else {
+                row_year == year
+            };
+
+            let before_period = if let Some(m) = month {
+                row_year < year || (row_year == year && row_month < m)
+            } else {
+                row_year < year
+            };
+
+            if before_period {
+                prior_artists.insert(row.artist_name.clone());
+            } else if in_period {
+                period_rows.push((row, dt));
+            }
+        }
+    }
+
+    let mut artists: HashMap<&str, i64> = HashMap::new();
+    let mut albums: HashMap<String, i64> = HashMap::new();
+    let mut tracks: HashMap<String, i64> = HashMap::new();
+    let mut genres: HashMap<&str, i64> = HashMap::new();
+    let mut hour_counts = [0i64; 24];
+    let mut active_days: HashSet<(i32, u32)> = HashSet::new(); // (year, day_of_year)
+    let mut period_artists: HashSet<String> = HashSet::new();
+    let mut total_secs = 0i64;
+
+    for (row, dt) in &period_rows {
+        let secs = row.duration_secs.max(0);
+        total_secs += secs;
+
+        *artists.entry(row.artist_name.as_str()).or_default() += 1;
+        period_artists.insert(row.artist_name.clone());
+
+        *albums
+            .entry(format!(
+                "{} — {}",
+                row.album_name.as_deref().unwrap_or("Unknown Album"),
+                row.artist_name
+            ))
+            .or_default() += 1;
+
+        *tracks
+            .entry(format!("{} — {}", row.track_title, row.artist_name))
+            .or_default() += 1;
+
+        if let Some(genre) = row.genre.as_deref().filter(|g| !g.trim().is_empty()) {
+            *genres.entry(genre).or_default() += 1;
+        }
+
+        hour_counts[dt.hour() as usize] += 1;
+        active_days.insert((dt.year(), dt.ordinal()));
+    }
+
+    let top_hour_utc = hour_counts
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, &count)| count)
+        .filter(|(_, &count)| count > 0)
+        .map(|(hour, _)| hour as i32);
+
+    let new_artists_count = period_artists
+        .iter()
+        .filter(|a| !prior_artists.contains(*a))
+        .count() as i64;
+
+    AgroWrapped {
+        year,
+        month,
+        total_minutes: total_secs / 60,
+        total_plays: period_rows.len() as i64,
+        top_artists: rank(artists.into_iter().map(owned), top_n),
+        top_tracks: rank(tracks.into_iter(), top_n),
+        top_albums: rank(albums.into_iter(), top_n),
+        top_genres: rank(genres.into_iter().map(owned), top_n),
+        top_hour_utc,
+        longest_streak_days: active_days.len() as i64,
+        new_artists_count,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +453,46 @@ mod tests {
     fn period_start_is_none_for_all_time() {
         assert!(period_start("ALL", 0).is_none());
         assert!(period_start("WEEK", 10 * DAY).is_some());
+    }
+
+    #[test]
+    fn test_agro_wrapped_computation() {
+        let rows = vec![
+            ScrobbleRow {
+                track_title: "Around the World".to_string(),
+                artist_name: "Daft Punk".to_string(),
+                album_name: Some("Homework".to_string()),
+                genre: Some("Electronic".to_string()),
+                duration_secs: 420,
+                device_name: "phone".to_string(),
+                played_at: "2025-06-15T14:30:00Z".to_string(),
+            },
+            ScrobbleRow {
+                track_title: "One More Time".to_string(),
+                artist_name: "Daft Punk".to_string(),
+                album_name: Some("Discovery".to_string()),
+                genre: Some("Electronic".to_string()),
+                duration_secs: 320,
+                device_name: "phone".to_string(),
+                played_at: "2026-02-10T10:00:00Z".to_string(),
+            },
+            ScrobbleRow {
+                track_title: "Windowlicker".to_string(),
+                artist_name: "Aphex Twin".to_string(),
+                album_name: Some("Windowlicker".to_string()),
+                genre: Some("IDM".to_string()),
+                duration_secs: 360,
+                device_name: "desktop".to_string(),
+                played_at: "2026-08-20T18:00:00Z".to_string(),
+            },
+        ];
+
+        let wrapped = compute_wrapped(&rows, 2026, None, 10);
+        assert_eq!(wrapped.year, 2026);
+        assert_eq!(wrapped.total_plays, 2);
+        assert_eq!(wrapped.total_minutes, (320 + 360) / 60);
+        assert_eq!(wrapped.top_artists.len(), 2);
+        // Daft Punk was played in 2025 (prior artist), Aphex Twin was new in 2026
+        assert_eq!(wrapped.new_artists_count, 1);
     }
 }
