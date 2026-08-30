@@ -138,6 +138,19 @@ export async function logout() {
   setToken('');
 }
 
+/**
+ * Called when the server refuses a request until the account enrols a second factor.
+ *
+ * Set by `App` so any caller anywhere can raise the enrolment screen. The refusal arrives on
+ * *every* query at once — the gate refuses a whole document, and the dashboard's documents fetch
+ * several things together — so handling it in each caller would mean handling it in all of them.
+ */
+let onEnrolmentRequired = () => {};
+
+export function setEnrolmentRequiredHandler(handler) {
+  onEnrolmentRequired = handler;
+}
+
 export async function gql(query, variables = {}) {
   const token = getToken();
   const res = await fetch('/graphql', {
@@ -153,6 +166,17 @@ export async function gql(query, variables = {}) {
     const error = new Error('Unauthorized');
     error.unauthorized = true;
     throw error;
+  }
+
+  // Peeked at without consuming the body: callers all read `res.json()` themselves, so this
+  // clones rather than reading, and stays silent on anything that is not JSON.
+  try {
+    const body = await res.clone().json();
+    if (body?.errors?.some((e) => e?.extensions?.code === 'TOTP_ENROLMENT_REQUIRED')) {
+      onEnrolmentRequired();
+    }
+  } catch {
+    // Not JSON, or already consumed. Nothing to detect.
   }
 
   return res;

@@ -4,11 +4,13 @@ import {
   setToken,
   gql,
   consumeSsoFragment,
+  setEnrolmentRequiredHandler,
   FALLBACK_RULES
 } from './api.js';
 import Sidebar, { NAV_ITEMS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
 import AuthScreen from './AuthScreen.jsx';
+import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
 import SocialTab from './tabs/SocialTab.jsx';
 import DevicesTab from './tabs/DevicesTab.jsx';
@@ -38,6 +40,15 @@ const ssoResult = consumeSsoFragment();
 export default function App() {
   const [ssoError, setSsoError] = useState(ssoResult?.error || '');
   const [locked, setLocked] = useState(!getToken());
+  /**
+   * Raised by any query the server refuses until a second factor exists. Registered once, because
+   * the refusal arrives on every query at once rather than on one screen.
+   */
+  const [needsEnrolment, setNeedsEnrolment] = useState(false);
+
+  useEffect(() => {
+    setEnrolmentRequiredHandler(() => setNeedsEnrolment(true));
+  }, []);
   const [activeTab, setActiveTab] = useState(getTabFromHash());
   const [unreadDrops, setUnreadDrops] = useState(0);
   const [username, setUsername] = useState('');
@@ -140,21 +151,32 @@ export default function App() {
   const poll = useCallback(async () => {
     if (!getToken()) return;
     try {
-      const res = await gql(`
-        query AgroState {
-          me { username role }
-          registeredNodes { deviceId clientType deviceName petname isOnline lanAddress currentTrack }
-          playbackHandoff(userId: "me") { trackTitle artistName albumName artworkUrl positionMs durationMs isPlaying deviceId }
-        }
-      `);
+      // Two round trips rather than one, because both of the other fields are scoped to an
+      // account and the server will not accept a stand-in for it. This document used to ask for
+      // `registeredNodes`, which is not a field on Query, and for `playbackHandoff(userId: "me")`,
+      // where "me" was compared literally against the caller's username and refused. An unknown
+      // field is a *validation* error, so the whole document was rejected before anything ran and
+      // `me` never resolved -- which is why the dashboard rendered with no username, no devices
+      // and empty settings.
+      const meRes = await gql(`query Me { me { username role } }`);
+      const meData = (await meRes.json())?.data;
+      if (!meData?.me) return;
+
+      const who = meData.me.username;
+      setUsername(who);
+      setRole(meData.me.role || 'member');
+
+      const res = await gql(
+        `query AgroState($who: String!) {
+          activeNodes(userId: $who) { deviceId clientType petname isOnline lanAddress currentTrack }
+          playbackHandoff(userId: $who) { trackTitle artistName albumName artworkUrl positionMs durationMs isPlaying deviceId }
+        }`,
+        { who }
+      );
       const body = await res.json();
       const data = body?.data;
-      if (data?.me) {
-        setUsername(data.me.username);
-        setRole(data.me.role || 'member');
-      }
-      if (data?.registeredNodes) {
-        setNodes(data.registeredNodes);
+      if (data?.activeNodes) {
+        setNodes(data.activeNodes);
       }
       if (data?.playbackHandoff) {
         setLastHandoff({
@@ -179,6 +201,12 @@ export default function App() {
     const interval = setInterval(poll, 4000);
     return () => clearInterval(interval);
   }, [poll]);
+
+  // Checked before `locked`, and before any tab renders: the account is authenticated but may do
+  // nothing until it enrols, so every other screen would be empty.
+  if (needsEnrolment && !locked) {
+    return <EnrolTotpScreen onEnrolled={() => window.location.reload()} />;
+  }
 
   if (locked) {
     return (
