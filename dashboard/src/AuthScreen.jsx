@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Copy, Check, ArrowLeft, Loader2 } from 'lucide-react';
-import { login } from './App.jsx';
+import { useEffect, useState } from 'react';
+import { Copy, Check, ArrowLeft, Loader2, KeyRound, ShieldCheck } from 'lucide-react';
+import { login, ssoConfig, TotpRequiredError } from './api.js';
 
 /**
  * The whole of the signed-out experience: signing in, and creating an account.
@@ -14,7 +14,7 @@ import { login } from './App.jsx';
  * usually `pending`, which is the part people get wrong: nothing is broken, an administrator has
  * simply not let them in yet, and the screen has to say so in those words.
  */
-export default function AuthScreen({ onSignedIn }) {
+export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) {
   const [mode, setMode] = useState('signin');
   const [username, setUsername] = useState('');
   const [passphrase, setPassphrase] = useState('');
@@ -24,16 +24,36 @@ export default function AuthScreen({ onSignedIn }) {
   /** Set once a signup succeeds. Holds the passphrase the server will never show again. */
   const [created, setCreated] = useState(null);
   const [copied, setCopied] = useState(false);
+  /**
+   * Set only after the passphrase has already been accepted. Showing the code field any earlier
+   * would tell a stranger which usernames exist and which have a second factor.
+   */
+  const [needsCode, setNeedsCode] = useState(false);
+  const [totpCode, setTotpCode] = useState('');
+  const [sso, setSso] = useState({ enabled: false });
+
+  useEffect(() => {
+    ssoConfig().then(setSso);
+  }, []);
 
   async function handleSignIn(event) {
     event.preventDefault();
     setBusy(true);
     setError('');
     try {
-      await login(username, passphrase);
+      await login(username, passphrase, needsCode ? totpCode : undefined);
       onSignedIn();
     } catch (err) {
-      setError(err.message);
+      if (err instanceof TotpRequiredError) {
+        // The passphrase was right. Ask for the code and keep everything else as it was, so the
+        // second attempt can resend the passphrase without the user retyping it.
+        setNeedsCode(true);
+        setTotpCode('');
+        setError(needsCode ? 'That code was not accepted. Try the next one.' : '');
+      } else {
+        setNeedsCode(false);
+        setError(err.message);
+      }
     } finally {
       setBusy(false);
     }
@@ -156,9 +176,36 @@ export default function AuthScreen({ onSignedIn }) {
               onChange={(e) => setPassphrase(e.target.value)}
               placeholder="four-word-pass-phrase"
             />
+
+            {needsCode && (
+              <>
+                <label className="auth-label" htmlFor="auth-totp">
+                  <ShieldCheck size={13} /> Authenticator code
+                </label>
+                <input
+                  id="auth-totp"
+                  className="auth-input"
+                  type="text"
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  placeholder="123456"
+                />
+                <p className="auth-hint">
+                  Lost your authenticator? Use one of your recovery codes here instead.
+                </p>
+              </>
+            )}
           </>
         )}
 
+        {ssoError && (
+          <p className="auth-error" role="alert" onClick={onDismissSsoError}>
+            {ssoError}
+          </p>
+        )}
         {error && <p className="auth-error" role="alert">{error}</p>}
 
         <button type="submit" className="auth-submit" disabled={busy}>
@@ -168,6 +215,12 @@ export default function AuthScreen({ onSignedIn }) {
       </form>
 
       <div className="auth-divider"><span>or</span></div>
+
+      {sso.enabled && !signingUp && (
+        <a className="auth-secondary auth-sso" href="/api/v1/oidc/start">
+          <KeyRound size={14} /> Continue with {sso.displayName}
+        </a>
+      )}
 
       <button
         type="button"

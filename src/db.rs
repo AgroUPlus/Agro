@@ -649,6 +649,102 @@ const MIGRATIONS: &[&str] = &[
     // Storing it on disk left stale private IPs in `agro.db` indefinitely. It now lives strictly
     // in RAM on `WsHub` for the duration of the connection.
     "ALTER TABLE registered_nodes DROP COLUMN lan_address;",
+    // 29 — device tokens gain an expiry.
+    //
+    // Until now a token minted once was valid forever. That is what made every other credential
+    // control decorative: revoking a passphrase, or enrolling a second factor, left every token
+    // ever issued from the old passphrase still working, and there was no way to say "sign me out
+    // everywhere" because nothing recorded when a token should stop being one.
+    //
+    // NULL means "no fixed expiry", which is what every existing row gets and what a deliberately
+    // paired device still gets by default — a TUI that logs itself out monthly is worse than no
+    // TUI. Idle expiry is computed from `last_used_at` instead and needs no column.
+    "ALTER TABLE app_passwords ADD COLUMN expires_at TEXT;",
+    // 30 — an append-only record of security-relevant events.
+    //
+    // Until now nothing recorded that a login had happened, succeeded or failed. `tracing` carried
+    // warnings for the operator's own console and nothing else, so the questions a compromised
+    // account actually raises — when did this start, which device, from where, what did it do —
+    // had no answer anywhere on the server.
+    //
+    // `user_id` is nullable because a failed login for a username that does not exist is exactly
+    // the event most worth recording, and there is no account to point at.
+    //
+    // The IP is stored truncated (see `audit::truncate_ip`). It is here to make a pattern of
+    // attempts visible, which a /24 does as well as a full address, and not to log where anyone
+    // lives.
+    "CREATE TABLE security_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        user_id TEXT,
+        kind TEXT NOT NULL,
+        client_ip TEXT,
+        device_label TEXT,
+        detail TEXT
+    );
+    CREATE INDEX security_events_user_at ON security_events(user_id, at DESC);
+    CREATE INDEX security_events_at ON security_events(at DESC);
+    ",
+    // 31 — a second factor.
+    //
+    // Two columns rather than one, because a secret that has been generated is not a second factor
+    // until someone has proved they can read codes from it. `totp_secret_enc` is written when
+    // enrolment *starts*; `totp_confirmed_at` is written when the user proves it works. Until then
+    // the secret is ignored entirely — a half-finished enrolment must not be able to lock anyone
+    // out of their own account.
+    //
+    // The secret is encrypted at rest (see `totp::seal`). Unlike the settings vault, the server has
+    // to be able to read this one — it is what verifies the code — so it cannot be client-sealed.
+    // Encrypting it under a key held outside the database means a stolen `agro_data.db` on its own
+    // does not yield working second factors.
+    //
+    // `totp_last_step` is the replay guard: a code is valid for a whole 30-second window, so
+    // without recording the step it was accepted for, a code read over someone's shoulder can be
+    // used again inside that window.
+    "ALTER TABLE users ADD COLUMN totp_secret_enc TEXT;
+     ALTER TABLE users ADD COLUMN totp_confirmed_at TEXT;
+     ALTER TABLE users ADD COLUMN totp_last_step INTEGER;
+     CREATE TABLE totp_recovery_codes (
+        user_id TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        used_at TEXT,
+        PRIMARY KEY (user_id, code_hash)
+     );
+    ",
+    // 32 — per-profile public key and E2EE encrypted track drops.
+    //
+    // `public_key` on users allows clients to publish an X25519 identity key. Senders can seal
+    // drop messages and notes directly to the recipient's public key with zero server knowledge.
+    // `note_ciphertext` and `is_encrypted` hold the sealed ciphertext payload for end-to-end encryption.
+    "ALTER TABLE users ADD COLUMN public_key TEXT;
+     ALTER TABLE track_drops ADD COLUMN note_ciphertext TEXT;
+     ALTER TABLE track_drops ADD COLUMN is_encrypted INTEGER NOT NULL DEFAULT 0;
+    ",
+    // 33 — federated (OIDC) identities.
+    //
+    // `(issuer, subject)` is the primary key and the *only* join key. An identity provider's
+    // `email` or `preferred_username` is a display hint that the IdP's own admin can edit, so
+    // matching on either would mean anyone who can change a claim can take over the account that
+    // happens to share it. The subject claim is the one value an IdP promises is stable and unique.
+    //
+    // There is deliberately no unique constraint on `user_id`: one account may link identities from
+    // more than one provider. There *is* one on `(issuer, subject)`, so a single identity cannot be
+    // pointed at two accounts.
+    "CREATE TABLE federated_identities (
+        issuer TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        linked_at TEXT NOT NULL,
+        claims_snapshot TEXT,
+        PRIMARY KEY (issuer, subject)
+     );
+     CREATE INDEX federated_identities_user ON federated_identities(user_id);
+     -- An account created through OIDC gets a generated passphrase nobody is ever shown, so the
+     -- column is not empty. This records whether its owner could actually use it, which a hash
+     -- cannot answer -- and it is what stops `unlinkFederatedIdentity` removing the last way in.
+     ALTER TABLE users ADD COLUMN passphrase_is_usable INTEGER NOT NULL DEFAULT 1;
+    ",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -656,12 +752,15 @@ const MIGRATIONS: &[&str] = &[
 const SCROBBLE_EXACT_TIME_DAYS: i64 = 14;
 
 /// How long a device may be quiet before the queue it was playing is scrubbed from its handoff
-/// row. Long enough that a laptop left shut over a holiday still resumes where it was.
-const HANDOFF_QUEUE_TTL_DAYS: i64 = 7;
+/// row. Tightened to 2 days to minimize metadata footprint at rest.
+const HANDOFF_QUEUE_TTL_DAYS: i64 = 2;
 
 /// How long before the handoff row itself goes. A device silent this long has been replaced or
 /// wiped, and its row is a record of what someone was listening to and nothing else.
-const HANDOFF_ROW_TTL_DAYS: i64 = 90;
+const HANDOFF_ROW_TTL_DAYS: i64 = 30;
+
+/// How long before an inactive registered node is purged from the database.
+const INACTIVE_NODE_TTL_DAYS: i64 = 90;
 
 #[derive(Clone)]
 pub struct Db {
@@ -877,11 +976,73 @@ impl Db {
         let Some(user_id) = user_id else {
             return Ok(false);
         };
-        conn.execute("DELETE FROM app_passwords WHERE user_id = ?1", params![user_id])?;
-        conn.execute("DELETE FROM registered_nodes WHERE user_id = ?1", params![username])?;
-        conn.execute("DELETE FROM device_holdings WHERE user_id = ?1", params![username])?;
-        conn.execute("DELETE FROM handoff_state WHERE user_id = ?1", params![username])?;
-        conn.execute("DELETE FROM synced_settings WHERE user_id = ?1", params![username])?;
+        // Every table that stores a username or a user id, or this is not a deletion.
+        //
+        // It used to be five of them. What survived was the whole social graph — friendships in
+        // both directions, drops sent and received, jam membership and votes — plus every scrobble,
+        // which is a listening history, and every live share link, which kept working after the
+        // account that minted it was gone. "Deleted" has to mean deleted.
+        //
+        // Two columns are named differently everywhere, so this is a list rather than a loop: some
+        // tables key on `users.id` and most key on the username, and `track_drops`/`friendships`
+        // key on *two* user columns each.
+        let by_id: &[&str] = &["app_passwords", "totp_recovery_codes", "federated_identities"];
+        for table in by_id {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE user_id = ?1"),
+                params![user_id],
+            )?;
+        }
+
+        let by_username: &[&str] = &[
+            "registered_nodes",
+            "device_holdings",
+            "handoff_state",
+            "synced_settings",
+            "scrobbles",
+            "friend_codes",
+            "ephemeral_shares",
+            "short_links",
+            "spool_items",
+            "upload_sessions",
+        ];
+        for table in by_username {
+            conn.execute(
+                &format!("DELETE FROM {table} WHERE user_id = ?1"),
+                params![username],
+            )?;
+        }
+
+        // Friendship is two rows, one per direction. Removing only the row this account owns leaves
+        // the other person still holding a friendship with somebody who no longer exists.
+        conn.execute(
+            "DELETE FROM friendships WHERE user_id = ?1 OR friend_id = ?1",
+            params![username],
+        )?;
+        // A drop is addressed: sent and received both have to go.
+        conn.execute(
+            "DELETE FROM track_drops WHERE from_user = ?1 OR to_user = ?1",
+            params![username],
+        )?;
+        conn.execute(
+            "DELETE FROM listen_along WHERE listener_id = ?1 OR host_id = ?1",
+            params![username],
+        )?;
+        conn.execute("DELETE FROM jam_members WHERE username = ?1", params![username])?;
+        conn.execute("DELETE FROM jam_votes WHERE username = ?1", params![username])?;
+        conn.execute("DELETE FROM jam_skips WHERE username = ?1", params![username])?;
+        conn.execute("DELETE FROM jam_tracks WHERE added_by = ?1", params![username])?;
+        conn.execute("DELETE FROM jams WHERE host = ?1", params![username])?;
+
+        // The audit trail is the one thing kept, and only in a form that names nobody: "an account
+        // was deleted" is a fact the operator needs, and rows still carrying the username would be
+        // a record of the person who asked to be forgotten.
+        conn.execute(
+            "UPDATE security_events SET user_id = NULL, client_ip = NULL, device_label = NULL
+              WHERE user_id = ?1",
+            params![username],
+        )?;
+
         conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
         Ok(true)
     }
@@ -1271,6 +1432,37 @@ impl Db {
         Ok(out)
     }
 
+    /// Purges scrobbles for an account, optionally restricted by year or before a given timestamp.
+    ///
+    /// Allows users to actively wipe listening history (e.g. at the conclusion of viewing a Rewind).
+    pub fn purge_scrobbles(
+        &self,
+        user_id: &str,
+        year: Option<i32>,
+        before: Option<&str>,
+    ) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count = match (year, before) {
+            (Some(y), _) => {
+                let start = format!("{y:04}-01-01T00:00:00+00:00");
+                let end = format!("{:04}-01-01T00:00:00+00:00", y + 1);
+                conn.execute(
+                    "DELETE FROM scrobbles WHERE user_id = ?1 AND played_at >= ?2 AND played_at < ?3",
+                    params![user_id, start, end],
+                )?
+            }
+            (None, Some(b)) => conn.execute(
+                "DELETE FROM scrobbles WHERE user_id = ?1 AND played_at < ?2",
+                params![user_id, b],
+            )?,
+            (None, None) => conn.execute(
+                "DELETE FROM scrobbles WHERE user_id = ?1",
+                params![user_id],
+            )?,
+        };
+        Ok(count)
+    }
+
     pub fn create_ephemeral_share(
         &self,
         user_id: &str,
@@ -1373,6 +1565,29 @@ impl Db {
             "handoff rows",
             "DELETE FROM handoff_state WHERE updated_at < ?1",
             params![dead],
+        );
+
+        // Opt-in, and off by default. A listening history is the point of the product for some
+        // people and a liability for others, so the operator chooses — but an upgrade must never
+        // silently delete years of it, which is what a default would do.
+        if let Some(days) = std::env::var("AGRO_SCROBBLE_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|d| *d > 0)
+        {
+            let cutoff = (now - chrono::Duration::days(days)).to_rfc3339();
+            run(
+                "scrobbles",
+                "DELETE FROM scrobbles WHERE played_at < ?1",
+                params![cutoff],
+            );
+        }
+
+        let stale_nodes = (now - chrono::Duration::days(INACTIVE_NODE_TTL_DAYS)).to_rfc3339();
+        run(
+            "inactive nodes",
+            "DELETE FROM registered_nodes WHERE last_seen_at < ?1",
+            params![stale_nodes],
         );
 
         self.coarsen_settled_scrobbles(&conn, now);
@@ -2288,7 +2503,7 @@ mod retention_tests {
                     (user_id, device_id, track_uri, track_title, artist_name, position_ms,
                      is_playing, updated_at, queue_json, queue_index)
                  VALUES ('alpha', 'laptop', 'u', 't', 'a', 91000, 0, ?1, '[\"one\",\"two\"]', 1)",
-                params![ago(30)],
+                params![ago(10)],
             )
             .unwrap();
 
@@ -2539,5 +2754,84 @@ mod handoff_tests {
 
         assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Phone Song");
         assert!(db.get_handoff_excluding("alpha", "phone").unwrap().is_none());
+    }
+
+    #[test]
+    fn public_key_can_be_set_and_read_on_profile() {
+        let db = db();
+        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        assert_eq!(db.profile("alpha").unwrap().unwrap().public_key, None);
+        assert!(db.set_public_key("alpha", Some("base64-pubkey-xyz")).unwrap());
+        assert_eq!(
+            db.profile("alpha").unwrap().unwrap().public_key.as_deref(),
+            Some("base64-pubkey-xyz")
+        );
+        assert!(db.set_public_key("alpha", None).unwrap());
+        assert_eq!(db.profile("alpha").unwrap().unwrap().public_key, None);
+    }
+
+    #[test]
+    fn e2ee_encrypted_drop_stores_and_reads_ciphertext() {
+        let db = db();
+        let new_drop = crate::db_drops::NewDrop {
+            track_title: "Secret Track".to_string(),
+            artist_name: "Secret Artist".to_string(),
+            note: None,
+            note_ciphertext: Some("sealed-ciphertext-payload-base64".to_string()),
+            is_encrypted: true,
+            ..Default::default()
+        };
+        let drop_id = db.create_drop("alpha", "beta", &new_drop).unwrap();
+        let inbox = db.inbox("beta", 10, 0).unwrap();
+        let found = inbox.iter().find(|d| d.id == drop_id).unwrap();
+        assert_eq!(found.note_ciphertext.as_deref(), Some("sealed-ciphertext-payload-base64"));
+        assert!(found.is_encrypted);
+        assert_eq!(found.note, None);
+    }
+
+    #[test]
+    fn purge_scrobbles_by_year_and_all() {
+        let db = db();
+        let batch = vec![
+            ScrobbleEntry {
+                track_title: "Track 2024".to_string(),
+                artist_name: "Artist".to_string(),
+                album_name: None,
+                genre: None,
+                duration_secs: 180,
+                played_at: "2024-06-15T12:00:00+00:00".to_string(),
+                play_uid: Some("u1".to_string()),
+            },
+            ScrobbleEntry {
+                track_title: "Track 2025".to_string(),
+                artist_name: "Artist".to_string(),
+                album_name: None,
+                genre: None,
+                duration_secs: 200,
+                played_at: "2025-03-10T14:00:00+00:00".to_string(),
+                play_uid: Some("u2".to_string()),
+            },
+            ScrobbleEntry {
+                track_title: "Track 2025 B".to_string(),
+                artist_name: "Artist".to_string(),
+                album_name: None,
+                genre: None,
+                duration_secs: 210,
+                played_at: "2025-08-20T16:00:00+00:00".to_string(),
+                play_uid: Some("u3".to_string()),
+            },
+        ];
+        db.record_scrobbles("alpha", "phone", None, &batch).unwrap();
+        assert_eq!(db.scrobble_rows("alpha", None, None).unwrap().len(), 3);
+
+        // Purge 2024
+        let purged_2024 = db.purge_scrobbles("alpha", Some(2024), None).unwrap();
+        assert_eq!(purged_2024, 1);
+        assert_eq!(db.scrobble_rows("alpha", None, None).unwrap().len(), 2);
+
+        // Purge all remaining
+        let purged_all = db.purge_scrobbles("alpha", None, None).unwrap();
+        assert_eq!(purged_all, 2);
+        assert_eq!(db.scrobble_rows("alpha", None, None).unwrap().len(), 0);
     }
 }

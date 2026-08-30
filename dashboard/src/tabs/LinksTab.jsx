@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link2, Trash2, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
-import { gql } from '../App.jsx';
+import { gql } from '../api.js';
 
 /**
  * Every link this account has minted, with its hit count and a way to remove it.

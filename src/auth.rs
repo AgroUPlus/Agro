@@ -78,6 +78,24 @@ impl SetupToken {
     }
 }
 
+/// Whether administrators on this server must have a second factor.
+///
+/// On by default. The environment variable is the escape hatch, and it exists for one specific
+/// situation: an operator whose own authenticator is gone, who has no recovery codes left, and who
+/// would otherwise be locked out of the deployment with no way back in — a setup token is only ever
+/// minted for a database with *no* accounts, so there is no other recovery path. Turning it off,
+/// signing in, and turning it back on is the intended sequence.
+pub fn admin_totp_required() -> bool {
+    !matches!(
+        std::env::var("AGRO_REQUIRE_TOTP_ADMIN")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
 /// Who the presented token belongs to, and what they are allowed to be.
 ///
 /// Carries the whole [`Account`] rather than just a username, because authorization needs the role
@@ -92,6 +110,13 @@ pub struct AuthedUser {
     /// The name given to this device when its token was issued. Empty for anything not
     /// token-authenticated, such as a test harness.
     pub device_label: String,
+    /// The stored form of the token that authenticated this request.
+    ///
+    /// Carried so "sign out my other devices" can spare *this* device. It has to be the hash and
+    /// not the label, because labels are chosen by the client and freely repeated — see the note on
+    /// `revokeAppPassword`. The secret itself is deliberately not kept: this value is already what
+    /// the database holds, so carrying it discloses nothing the server did not already store.
+    pub token_hash: String,
 }
 
 impl AuthedUser {
@@ -128,6 +153,11 @@ pub async fn require_token(
         .unwrap_or_default();
 
     if presented.trim().is_empty() {
+        // WebSocket connections may perform post-handshake in-band authentication
+        // to avoid leaking bearer tokens in reverse proxy query logs.
+        if request.uri().path() == "/ws/sync" {
+            return next.run(request).await;
+        }
         return unauthorized();
     }
 
@@ -146,7 +176,11 @@ pub async fn require_token(
             if !account.state.is_active() {
                 return not_active();
             }
-            request.extensions_mut().insert(AuthedUser { account, device_label });
+            request.extensions_mut().insert(AuthedUser {
+                account,
+                device_label,
+                token_hash: crate::credentials::hash_token(&presented),
+            });
             next.run(request).await
         }
         _ => unauthorized(),

@@ -483,11 +483,42 @@ pub struct AppPassword {
     pub last_used_at: Option<String>,
 }
 
+/// An identity provider account linked to an Agro account.
+#[derive(SimpleObject, Clone)]
+pub struct FederatedIdentity {
+    pub issuer: String,
+    /// The provider's stable identifier for the person. The only value treated as identity.
+    pub subject: String,
+    pub linked_at: String,
+}
+
+/// One entry in the security log.
+#[derive(SimpleObject, Clone)]
+pub struct SecurityEventPayload {
+    pub id: i64,
+    pub at: String,
+    /// The account this concerns. Absent on a failed login for a username that does not exist.
+    pub user_id: Option<String>,
+    /// A stable machine-readable kind — see `audit::Event`.
+    pub kind: String,
+    /// The network the request came from, truncated to a /24 or /64. Never a full address.
+    pub client_ip: Option<String>,
+    pub device_label: Option<String>,
+    pub detail: Option<String>,
+}
+
 /// The one time a token is returned. Shown once, at creation.
 #[derive(SimpleObject, Clone)]
 pub struct AppPasswordCreated {
     pub label: String,
     pub token: String,
+}
+
+/// The outcome of actively purging listening history.
+#[derive(SimpleObject, Clone)]
+pub struct PurgeScrobblesPayload {
+    pub purged_count: i32,
+    pub success: bool,
 }
 
 #[derive(Default)]
@@ -742,6 +773,75 @@ impl QueryRoot {
             }
         }).collect();
         Ok(payload)
+    }
+
+    /// Everything this server holds about the caller, as a JSON string.
+    ///
+    /// Self-scoped like everything else — an administrator cannot use this to read someone's
+    /// listening history, because `authorize` compares the caller to the named account and an admin
+    /// is not exempt from it.
+    async fn export_my_data(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<String> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let export = db.export_account_data(&user_id)?;
+        Ok(serde_json::to_string_pretty(&export)?)
+    }
+
+    /// The SSO identities linked to an account. Self-scoped.
+    async fn federated_identities(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<Vec<FederatedIdentity>> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        Ok(db
+            .federated_identities(&user_id)?
+            .into_iter()
+            .map(|(issuer, subject, linked_at)| FederatedIdentity {
+                issuer,
+                subject,
+                linked_at,
+            })
+            .collect())
+    }
+
+    /// The security log for one account, or — for an administrator passing no `userId` — the whole
+    /// server.
+    ///
+    /// Self-scoped through `authorize`, so this is not a way to read anyone else's sign-in history:
+    /// naming another account is refused exactly as it is everywhere else. The server-wide view is
+    /// separately gated on `require_admin`, because "no `userId`" must not read as "any user".
+    async fn security_events(
+        &self,
+        ctx: &Context<'_>,
+        user_id: Option<String>,
+        limit: Option<i64>,
+    ) -> async_graphql::Result<Vec<SecurityEventPayload>> {
+        let db = ctx.data::<Db>()?;
+        let scope = match user_id.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+            Some(user) => {
+                authorize(ctx, user)?;
+                Some(user.to_string())
+            }
+            None => {
+                require_admin(ctx)?;
+                None
+            }
+        };
+        Ok(db
+            .security_events(scope.as_deref(), limit.unwrap_or(100))?
+            .into_iter()
+            .map(|e| SecurityEventPayload {
+                id: e.id,
+                at: e.at,
+                user_id: e.user_id,
+                kind: e.kind,
+                client_ip: e.client_ip,
+                device_label: e.device_label,
+                detail: e.detail,
+            })
+            .collect())
     }
 
     async fn app_passwords(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<AppPassword>> {
@@ -1489,6 +1589,25 @@ impl MutationRoot {
         Ok(inserted as i32)
     }
 
+    /// Purges listening history (scrobbles) for the account, optionally restricted by year or cutoff.
+    ///
+    /// Useful for wiping past listening data after viewing a Rewind or on demand.
+    async fn purge_scrobbles(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        year: Option<i32>,
+        before: Option<String>,
+    ) -> async_graphql::Result<PurgeScrobblesPayload> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let count = db.purge_scrobbles(&user_id, year, before.as_deref())?;
+        Ok(PurgeScrobblesPayload {
+            purged_count: count as i32,
+            success: true,
+        })
+    }
+
     /// Removes a link so it stops resolving.
     ///
     /// `kind` is the discriminator from `links` — `SHORT` or `EPHEMERAL`. Deleting is scoped to the
@@ -1547,6 +1666,12 @@ impl MutationRoot {
         if !db.set_account_state(&target, next)? {
             return Err("No such account".into());
         }
+        db.record_event(
+            crate::audit::Event::AccountStateChanged,
+            crate::audit::Record::new()
+                .user(&target)
+                .detail(format!("set to {} by {}", next.as_str(), admin.username())),
+        );
         Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
     }
 
@@ -1602,6 +1727,13 @@ impl MutationRoot {
             .ok_or("Name the device, so its token can be told apart from the others")?
             .to_string();
         let token = db.mint_device_token(&user_id, &label)?;
+        db.record_event(
+            crate::audit::Event::TokenMinted,
+            crate::audit::Record::new()
+                .user(&user_id)
+                .device(label.clone())
+                .detail("paired by QR"),
+        );
         Ok(PairingPayload {
             qr_data: pairing_qr(&user_id, &token),
             token,
@@ -1652,6 +1784,10 @@ impl MutationRoot {
         // form wrote a plaintext four-word token straight into the legacy column, which the
         // hashed-token lookup cannot match — so every credential this issued was dead on arrival.
         let token = db.mint_device_token(&user_id, &label)?;
+        db.record_event(
+            crate::audit::Event::TokenMinted,
+            crate::audit::Record::new().user(&user_id).device(label.clone()),
+        );
         Ok(AppPasswordCreated { label, token })
     }
 
@@ -1669,7 +1805,118 @@ impl MutationRoot {
     ) -> async_graphql::Result<bool> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
-        Ok(db.revoke_app_password(&user_id, id)?)
+        let revoked = db.revoke_app_password(&user_id, id)?;
+        if revoked {
+            db.record_event(
+                crate::audit::Event::TokenRevoked,
+                crate::audit::Record::new().user(&user_id).detail(format!("credential {id}")),
+            );
+        }
+        Ok(revoked)
+    }
+
+    /// Removes a linked SSO identity from the caller's account.
+    ///
+    /// Refuses when it would remove the last way in — an account created through SSO has a
+    /// passphrase it has never been shown, so unlinking without setting one first is a lockout.
+    async fn unlink_federated_identity(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        issuer: String,
+        subject: String,
+    ) -> async_graphql::Result<bool> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+        let removed = db
+            .unlink_federated_identity(&user_id, &issuer, &subject)
+            .map_err(async_graphql::Error::new)?;
+        if removed {
+            db.record_event(
+                crate::audit::Event::IdentityUnlinked,
+                crate::audit::Record::new()
+                    .user(&user_id)
+                    .detail(format!("{issuer} subject {subject}")),
+            );
+        }
+        Ok(removed)
+    }
+
+    /// Changes the caller's passphrase, re-sealing the settings vault under the new one.
+    ///
+    /// The client does the sealing: it unwraps the vault key with the old passphrase, wraps it
+    /// again with the new one, and sends both halves. The server never sees either passphrase in a
+    /// form it could keep, and never sees the vault key at all — the same property the vault had
+    /// before this mutation existed.
+    ///
+    /// **Every device is signed out, including the caller's.** A passphrase is changed because it
+    /// may have leaked, and the tokens bought with it are the thing being invalidated.
+    async fn change_passphrase(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        current_passphrase: String,
+        new_passphrase: String,
+        new_vault_salt: Option<String>,
+        new_vault_key_wrapped: Option<String>,
+    ) -> async_graphql::Result<bool> {
+        authorize(ctx, &user_id)?;
+        let db = ctx.data::<Db>()?;
+
+        // Both halves of the envelope or neither. One without the other would write a salt that
+        // does not match the wrapped key, which is a vault nothing can open.
+        let vault = match (new_vault_salt.as_deref(), new_vault_key_wrapped.as_deref()) {
+            (Some(salt), Some(wrapped)) => Some((salt, wrapped)),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "Send both newVaultSalt and newVaultKeyWrapped, or neither".into()
+                )
+            }
+        };
+
+        let changed = db
+            .change_passphrase(&user_id, &current_passphrase, &new_passphrase, vault)
+            .map_err(async_graphql::Error::new)?;
+        if !changed {
+            return Err("That passphrase was not accepted".into());
+        }
+        db.record_event(
+            crate::audit::Event::PassphraseChanged,
+            crate::audit::Record::new().user(&user_id),
+        );
+        Ok(true)
+    }
+
+    /// Signs out every other device on the account.
+    ///
+    /// The blunt instrument that per-device revocation does not cover: a passphrase that may have
+    /// leaked has already been traded for tokens, and revoking them one at a time from a list means
+    /// noticing every one of them. This spares only the device making the call — by token hash, not
+    /// by label, for the same reason `revokeAppPassword` refuses to work by label.
+    ///
+    /// Returns how many were revoked.
+    async fn revoke_all_devices(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<i64> {
+        authorize(ctx, &user_id)?;
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+        // An empty hash would spare nothing and sign the caller out too. That is the correct
+        // reading of "this request did not arrive with a token" — it only happens in a test
+        // harness — but it must be deliberate rather than an accident of an empty string.
+        let spare = Some(authed.token_hash.as_str()).filter(|h| !h.is_empty());
+        let revoked = db.revoke_all_tokens(&user_id, spare)?;
+        db.record_event(
+            crate::audit::Event::AllTokensRevoked,
+            crate::audit::Record::new()
+                .user(&user_id)
+                .device(authed.device_label.clone())
+                .detail(format!("{revoked} revoked")),
+        );
+        Ok(revoked as i64)
     }
 
     /// Deletes an account with its nodes, session, settings and app passwords.
@@ -1703,7 +1950,19 @@ impl MutationRoot {
             return Err(forbidden("the last administrator cannot be removed"));
         }
 
-        Ok(db.delete_user(&target)?)
+        let removed = db.delete_user(&target)?;
+        if removed {
+            // Recorded against the *actor*, not the deleted account: rows keyed to a username that
+            // no longer exists are exactly what a scoped audit query cannot show anyone, and an
+            // account being deleted is something the admin who did it should have to answer for.
+            db.record_event(
+                crate::audit::Event::AccountDeleted,
+                crate::audit::Record::new()
+                    .user(authed.username())
+                    .detail(format!("removed account {target}")),
+            );
+        }
+        Ok(removed)
     }
 
     /// Enables or disables a plugin. Administrators only: `plugins_state` has no user column, so

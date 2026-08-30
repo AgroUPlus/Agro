@@ -1,3 +1,6 @@
+mod oidc;
+mod totp;
+mod audit;
 mod credentials;
 mod auth;
 mod db;
@@ -32,7 +35,7 @@ mod ws;
 use async_graphql::Schema;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, State},
     http::HeaderValue,
     routing::{get, post, put},
     Router,
@@ -60,6 +63,8 @@ pub struct AppState {
     pub setup_token: Arc<auth::SetupToken>,
     /// Throttles the two endpoints that can be reached without a token.
     pub rate_limiter: Arc<login::RateLimiter>,
+    /// SSO sign-ins waiting for the browser to come back. See [`oidc::FlowStore`].
+    pub oidc_flows: Arc<oidc::FlowStore>,
 }
 
 #[tokio::main]
@@ -99,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         relay_hub: relay::RelayHub::new(),
         setup_token: setup_token.clone(),
         rate_limiter: Arc::new(login::RateLimiter::new()),
+        oidc_flows: Arc::new(oidc::FlowStore::new()),
     };
 
     // A one-shot pass rather than something that runs at every boot: cover extraction only happens
@@ -170,6 +176,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Rides the same ticker rather than taking its own: both are housekeeping at the
                 // same rate, and a second timer would only be a second thing to reason about.
                 state.db.sweep_retention();
+                // Separate call rather than a line inside `sweep_retention`, which holds the
+                // connection mutex for its whole body — the mutex is not reentrant.
+                match state.db.sweep_expired_tokens() {
+                    Ok(n) if n > 0 => tracing::debug!("retention sweep: {n} expired device tokens"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("retention sweep: expired tokens failed: {e}"),
+                }
+                match state.db.sweep_security_events() {
+                    Ok(n) if n > 0 => tracing::debug!("retention sweep: {n} security events"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("retention sweep: security events failed: {e}"),
+                }
             }
         });
     }
@@ -192,6 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             post(relay::send_relay).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/v1/relay/{session_id}/receive", get(relay::receive_relay))
+        .route("/api/v1/oidc/link", get(oidc::start_link))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_token,
@@ -209,6 +228,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/login", post(login::login))
         .route("/api/v1/bootstrap", post(login::bootstrap))
         .route("/api/v1/signup", post(login::signup))
+        // SSO. `config` and `start` have to be reachable by someone with no account yet, and
+        // `callback` is where the provider sends the browser back. `link` is the only one that
+        // needs an identity, and it lives on the protected router above.
+        .route("/api/v1/oidc/config", get(oidc::config))
+        .route("/api/v1/oidc/start", get(oidc::start))
+        .route("/api/v1/oidc/callback", get(oidc::callback))
         .route("/share/{token}", get(share::share_handler))
         // Public by design: a shared link is opened by someone with no account here.
         .route("/listen", get(listen::listen_handler))
@@ -216,6 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Without this a single request can stream unbounded bytes into any JSON handler. The
         // upload routes opt back out, because that is exactly what they are for.
         .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
+        .layer(axum::middleware::from_fn(security_headers))
         .layer(cors)
         .with_state(state)
         .layer(axum::Extension(schema));
@@ -243,13 +269,113 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// `Option`, because `require_token` deliberately lets requests through unauthenticated while the
 /// server has no accounts — the window in which the first account is created. Resolvers treat a
 /// missing identity as that first-run window; see `schema::authorize`.
+/// The operations an administrator who still owes a second factor is allowed to reach.
+///
+/// Everything else is refused until they finish enrolling. Kept as an allowlist rather than a
+/// denylist for the usual reason: a resolver added later is refused by default instead of being
+/// quietly exempt because nobody remembered to add it to a list of things to block.
+const ENROLMENT_ONLY_OPERATIONS: &[&str] = &[
+    "beginTotp",
+    "confirmTotp",
+    "totpStatus",
+    "hasTotp",
+    // Reachable so the enrolment screen can greet them by name and know they are an admin.
+    "me",
+];
+
+/// True when the document asks for nothing outside [`ENROLMENT_ONLY_OPERATIONS`].
+///
+/// Parsed rather than string-matched: `query { securityEvents }` must not sneak through because the
+/// word `totpStatus` appears in a comment or a variable name. An unparseable document is refused
+/// here and will fail in the executor anyway.
+fn is_enrolment_only(request: &async_graphql::Request) -> bool {
+    let Ok(document) = async_graphql::parser::parse_query(&request.query) else {
+        return false;
+    };
+    document.operations.iter().all(|(_, operation)| {
+        operation
+            .node
+            .selection_set
+            .node
+            .items
+            .iter()
+            .all(|item| match &item.node {
+                async_graphql::parser::types::Selection::Field(field) => {
+                    ENROLMENT_ONLY_OPERATIONS.contains(&field.node.name.node.as_str())
+                }
+                // A fragment or inline spread at the top level could name anything, and resolving
+                // it here would mean reimplementing the executor. Refused.
+                _ => false,
+            })
+    })
+}
+
+/// Adds the headers that limit what a compromised page can do.
+///
+/// The device token lives in `localStorage`, which is reachable by any script that runs on this
+/// origin. A strict CSP is what makes "any script" hard to arrange: the dashboard is a
+/// self-contained bundle served from this origin, so it needs no third-party sources at all, and
+/// saying so closes the ways an injected `<script src>` or an exfiltrating `fetch` would work.
+///
+/// HSTS is only sent when the request already arrived over TLS. Sending it on a plaintext response
+/// is meaningless — anyone able to strip the header is able to strip that too — and on a
+/// LAN-only deployment reached by IP it would pin a browser to HTTPS the server does not speak.
+async fn security_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let was_https = request
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|proto| proto.eq_ignore_ascii_case("https"));
+
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static(
+            "default-src 'self';              script-src 'self';              style-src 'self' 'unsafe-inline';              img-src 'self' data: https:;              media-src 'self' blob:;              connect-src 'self' ws: wss:;              font-src 'self' data:;              object-src 'none';              base-uri 'none';              form-action 'self';              frame-ancestors 'none'",
+        ),
+    );
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "referrer-policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    if was_https {
+        headers.insert(
+            "strict-transport-security",
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+    response
+}
+
 async fn graphql_handler(
     schema: axum::Extension<AgroSchema>,
+    State(state): State<AppState>,
     user: Option<axum::Extension<auth::AuthedUser>>,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.into_inner();
     if let Some(axum::Extension(user)) = user {
+        // An administrator on a server that requires a second factor may do exactly one thing until
+        // they have one. The check lives here rather than in the token middleware because the
+        // middleware does not parse GraphQL — and should not start.
+        let owes_enrolment = user.is_admin()
+            && auth::admin_totp_required()
+            && !state.db.totp_is_confirmed(user.username()).unwrap_or(false);
+
+        if owes_enrolment && !is_enrolment_only(&request) {
+            return async_graphql::Response::from_errors(vec![async_graphql::ServerError::new(
+                "This server requires administrators to set up two-factor authentication.                  Finish enrolling before using the rest of the API.",
+                None,
+            )])
+            .into();
+        }
         request = request.data(user);
     }
     schema.execute(request).await.into()

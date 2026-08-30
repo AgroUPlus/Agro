@@ -71,6 +71,8 @@ pub struct Profile {
     /// is on, every social surface is closed regardless of what the others say. Enforced in
     /// `visible_profile`, so no caller has to remember to ask.
     pub incognito: bool,
+    /// The public identity key (e.g. X25519) used for end-to-end encrypted track drops and messages.
+    pub public_key: Option<String>,
 }
 
 /// An edge as the *viewer* experiences it: who, and which way the unanswered request points.
@@ -85,10 +87,10 @@ pub struct FriendEdge {
 
 /// How many columns [`PROFILE_COLUMNS`] selects, so anything appended after them can be indexed
 /// relative to it rather than by a number that has to be remembered.
-const PROFILE_COLUMN_COUNT: usize = 11;
+const PROFILE_COLUMN_COUNT: usize = 12;
 
 const PROFILE_COLUMNS: &str =
-    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity, incognito";
+    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity, incognito, public_key";
 
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
     Ok(Profile {
@@ -103,6 +105,7 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         share_library: row.get::<_, i64>(8)? != 0,
         show_activity: row.get::<_, i64>(9)? != 0,
         incognito: row.get::<_, i64>(10)? != 0,
+        public_key: row.get(11)?,
     })
 }
 
@@ -161,6 +164,15 @@ impl Db {
                     avatar_url   = COALESCE(?3, avatar_url)
               WHERE username = ?4 COLLATE NOCASE",
             params![display_name, bio, avatar_url, username.trim()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn set_public_key(&self, username: &str, public_key: Option<&str>) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE users SET public_key = ?1 WHERE username = ?2 COLLATE NOCASE",
+            params![public_key, username.trim()],
         )?;
         Ok(changed > 0)
     }

@@ -36,6 +36,9 @@ pub struct NewDrop {
     /// What they said about it. Optional — handing someone a song without comment is a complete
     /// thought.
     pub note: Option<String>,
+    /// E2EE encrypted note or payload sealed with recipient's public key.
+    pub note_ciphertext: Option<String>,
+    pub is_encrypted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +53,8 @@ pub struct Drop {
     pub content_hash: Option<String>,
     pub track_uri: Option<String>,
     pub note: Option<String>,
+    pub note_ciphertext: Option<String>,
+    pub is_encrypted: bool,
     pub created_at: String,
     /// When the recipient first read it, or `None` while it is still unread.
     pub read_at: Option<String>,
@@ -63,8 +68,8 @@ pub struct Drop {
 }
 
 const DROP_COLUMNS: &str = "id, from_user, to_user, track_title, artist_name, album_name, \
-                            artwork_url, content_hash, track_uri, note, created_at, read_at, \
-                            archived, reaction";
+                            artwork_url, content_hash, track_uri, note, note_ciphertext, \
+                            is_encrypted, created_at, read_at, archived, reaction";
 
 fn drop_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Drop> {
     Ok(Drop {
@@ -78,10 +83,12 @@ fn drop_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Drop> {
         content_hash: row.get(7)?,
         track_uri: row.get(8)?,
         note: row.get(9)?,
-        created_at: row.get(10)?,
-        read_at: row.get(11)?,
-        archived: row.get::<_, i64>(12)? != 0,
-        reaction: row.get(13)?,
+        note_ciphertext: row.get(10)?,
+        is_encrypted: row.get::<_, i64>(11)? != 0,
+        created_at: row.get(12)?,
+        read_at: row.get(13)?,
+        archived: row.get::<_, i64>(14)? != 0,
+        reaction: row.get(15)?,
     })
 }
 
@@ -98,8 +105,8 @@ impl Db {
         conn.execute(
             "INSERT INTO track_drops
                  (id, from_user, to_user, track_title, artist_name, album_name, artwork_url,
-                  content_hash, track_uri, note, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                  content_hash, track_uri, note, note_ciphertext, is_encrypted, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 from.trim().to_lowercase(),
@@ -111,6 +118,8 @@ impl Db {
                 drop.content_hash.as_deref().map(str::trim),
                 drop.track_uri.as_deref().map(str::trim),
                 drop.note.as_deref().map(str::trim),
+                drop.note_ciphertext.as_deref().map(str::trim),
+                drop.is_encrypted as i64,
                 now,
             ],
         )?;

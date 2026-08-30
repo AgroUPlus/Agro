@@ -61,6 +61,7 @@ impl Harness {
         let request = Request::new(query).data(AuthedUser {
             account: account.clone(),
             device_label: String::new(),
+            token_hash: String::new(),
         });
         self.schema.execute(request).await
     }
@@ -492,4 +493,226 @@ async fn a_device_cannot_be_renamed_to_nothing() {
         )
         .await;
     assert_forbidden(&refused, "renaming a device to blank");
+}
+
+// ── The security log ────────────────────────────────────────────────────────────────────────
+//
+// An audit log is a record of who signed in from where. Reading it is exactly as sensitive as the
+// data it protects, so it needs the same boundary as everything else — and the server-wide view
+// needs one more, because "no userId" must not read as "every user".
+
+#[tokio::test]
+async fn a_guest_cannot_read_another_accounts_security_log() {
+    let h = harness();
+    h.db.record_event(
+        crate::audit::Event::LoginSucceeded,
+        crate::audit::Record::new().user("alpha").ip("203.0.113.9"),
+    );
+    let refused = h
+        .run_as(&h.guest, r#"{ securityEvents(userId: "alpha") { kind } }"#)
+        .await;
+    assert_forbidden(&refused, "mallory reading alpha's security log");
+}
+
+#[tokio::test]
+async fn a_guest_can_read_their_own_security_log() {
+    let h = harness();
+    h.db.record_event(
+        crate::audit::Event::LoginSucceeded,
+        crate::audit::Record::new().user("mallory").ip("203.0.113.9"),
+    );
+    let allowed = h
+        .run_as(&h.guest, r#"{ securityEvents(userId: "mallory") { kind clientIp } }"#)
+        .await;
+    assert_allowed(&allowed, "mallory reading their own security log");
+    let rendered = allowed.data.to_string();
+    assert!(rendered.contains("login_succeeded"), "{rendered}");
+    // Truncated on the way in, so the stored value is the network and not the host.
+    assert!(rendered.contains("203.0.113.0/24"), "{rendered}");
+    assert!(!rendered.contains("203.0.113.9\""), "{rendered}");
+}
+
+/// Omitting `userId` asks for every account's events. That is an administrator's view, and a guest
+/// reaching it would get exactly what the per-account check refuses one query earlier.
+#[tokio::test]
+async fn a_guest_cannot_read_the_server_wide_security_log() {
+    let h = harness();
+    let refused = h.run_as(&h.guest, r#"{ securityEvents { kind } }"#).await;
+    assert_forbidden(&refused, "mallory reading the whole server's security log");
+}
+
+#[tokio::test]
+async fn an_admin_can_read_the_server_wide_security_log() {
+    let h = harness();
+    h.db.record_event(
+        crate::audit::Event::LoginFailed,
+        crate::audit::Record::new().ip("198.51.100.7").detail("username=ghost"),
+    );
+    let allowed = h.run_as(&h.admin, r#"{ securityEvents { kind detail } }"#).await;
+    assert_allowed(&allowed, "alpha reading the server-wide security log");
+    assert!(allowed.data.to_string().contains("username=ghost"));
+}
+
+#[tokio::test]
+async fn nobody_can_read_the_security_log_without_an_identity() {
+    let h = harness();
+    assert_forbidden(
+        &h.run_anonymously(r#"{ securityEvents { kind } }"#).await,
+        "anonymous server-wide security log",
+    );
+    assert_forbidden(
+        &h.run_anonymously(r#"{ securityEvents(userId: "alpha") { kind } }"#).await,
+        "anonymous scoped security log",
+    );
+}
+
+/// Signing out other devices must be scoped like everything else, or it is a way to sign someone
+/// else out of their account.
+#[tokio::test]
+async fn a_guest_cannot_revoke_another_accounts_devices() {
+    let h = harness();
+    let alpha_token = h.db.mint_device_token("alpha", "laptop").unwrap();
+    let refused = h
+        .run_as(&h.guest, r#"mutation { revokeAllDevices(userId: "alpha") }"#)
+        .await;
+    assert_forbidden(&refused, "mallory revoking alpha's devices");
+    assert!(
+        h.db.account_for_token(&alpha_token).unwrap().is_some(),
+        "alpha's token must survive a refused revocation"
+    );
+}
+
+// ── Erasure ─────────────────────────────────────────────────────────────────────────────────
+//
+// "Delete my account" has to mean it. A deletion that leaves the social graph, the listening
+// history or a live share link behind is not one, and those are exactly the rows that used to
+// survive it.
+
+/// Every table that stores a username, checked by writing to all of them and counting after.
+#[tokio::test]
+async fn deleting_an_account_leaves_nothing_of_it_behind() {
+    let h = harness();
+    let username = "mallory";
+
+    // A row in every table the account can reach.
+    h.db.upsert_node("m-phone", username, crate::db::NodeName::Set("Phone"), "wanda", None, None)
+        .unwrap();
+    h.db.mint_device_token(username, "laptop").unwrap();
+    h.db.link_federated_identity(username, "https://id.example.com", "sub-1", None)
+        .unwrap();
+    {
+        let conn = h.db.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        for (sql, args) in [
+            ("INSERT INTO scrobbles (user_id, track_title, artist_name, duration_secs, device_name, played_at) VALUES (?1, 't', 'a', 180, 'phone', ?2)", vec![username, now.as_str()]),
+            ("INSERT INTO friendships (user_id, friend_id, state, created_at) VALUES (?1, 'alpha', 'accepted', ?2)", vec![username, now.as_str()]),
+            ("INSERT INTO friendships (user_id, friend_id, state, created_at) VALUES ('alpha', ?1, 'accepted', ?2)", vec![username, now.as_str()]),
+            ("INSERT INTO listen_along (listener_id, host_id, started_at) VALUES (?1, 'alpha', ?2)", vec![username, now.as_str()]),
+        ] {
+            conn.execute(sql, rusqlite::params_from_iter(args)).unwrap();
+        }
+    }
+    h.db.record_event(
+        crate::audit::Event::LoginSucceeded,
+        crate::audit::Record::new().user(username).ip("203.0.113.9"),
+    );
+
+    assert!(h.db.delete_user(username).unwrap());
+
+    let conn = h.db.conn.lock().unwrap();
+    for (table, column) in [
+        ("registered_nodes", "user_id"),
+        ("scrobbles", "user_id"),
+        ("federated_identities", "user_id"),
+    ] {
+        let remaining: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM {table} WHERE {column} IN \
+                     (?1, (SELECT id FROM users WHERE username = ?1))"
+                ),
+                rusqlite::params![username],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0, "{table} still holds rows for the deleted account");
+    }
+
+    // Friendship is two rows. Removing only one leaves alpha friends with a ghost.
+    let friendships: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM friendships WHERE user_id = ?1 OR friend_id = ?1",
+            rusqlite::params![username],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(friendships, 0, "a friendship survived in the other direction");
+
+    let listening: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM listen_along WHERE listener_id = ?1 OR host_id = ?1",
+            rusqlite::params![username],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(listening, 0);
+}
+
+/// The audit trail survives, but stripped: "an account was deleted" is a fact the operator needs;
+/// rows still naming the person are a record of someone who asked to be forgotten.
+#[tokio::test]
+async fn deletion_keeps_the_audit_trail_but_not_the_identity_in_it() {
+    let h = harness();
+    h.db.record_event(
+        crate::audit::Event::LoginSucceeded,
+        crate::audit::Record::new().user("mallory").ip("203.0.113.9"),
+    );
+    h.db.delete_user("mallory").unwrap();
+
+    let events = h.db.security_events(None, 100).unwrap();
+    assert!(!events.is_empty(), "the trail itself should remain");
+    assert!(
+        events.iter().all(|e| e.user_id.is_none() && e.client_ip.is_none()),
+        "a deleted account must not still be named in the log"
+    );
+}
+
+/// An export is the counterpart to erasure, and carries the same boundary: your data, not anyone
+/// else's — and not a way for an administrator to read a member's listening history either.
+#[tokio::test]
+async fn an_export_is_self_scoped_even_for_an_admin() {
+    let h = harness();
+    assert_forbidden(
+        &h.run_as(&h.guest, r#"{ exportMyData(userId: "alpha") }"#).await,
+        "mallory exporting alpha's data",
+    );
+    assert_forbidden(
+        &h.run_as(&h.admin, r#"{ exportMyData(userId: "mallory") }"#).await,
+        "an admin exporting a member's data",
+    );
+    assert_allowed(
+        &h.run_as(&h.guest, r#"{ exportMyData(userId: "mallory") }"#).await,
+        "mallory exporting their own data",
+    );
+}
+
+/// An export must not hand back the credentials themselves — a token hash is no use to its owner,
+/// and a passphrase hash was never theirs to have.
+#[tokio::test]
+async fn an_export_carries_data_but_no_credentials() {
+    let h = harness();
+    h.db.mint_device_token("mallory", "laptop").unwrap();
+    let response = h
+        .run_as(&h.guest, r#"{ exportMyData(userId: "mallory") }"#)
+        .await;
+    assert_allowed(&response, "exporting own data");
+
+    let rendered = response.data.to_string();
+    for forbidden in ["passphrase_hash", "token_hash", "totp_secret", "vault_key_wrapped"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "an export must not include {forbidden}"
+        );
+    }
+    assert!(rendered.contains("listening_history"), "but it must include the data");
 }

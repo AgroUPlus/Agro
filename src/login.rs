@@ -29,19 +29,83 @@ use crate::AppState;
 const MAX_ATTEMPTS: usize = 10;
 const WINDOW: Duration = Duration::from_secs(300);
 
-/// A fixed-window counter per client address.
+/// How many consecutive failures an account tolerates before answers start being slowed.
+const FREE_FAILURES: u32 = 5;
+
+/// The longest an account's failed answer is delayed. Enough to make a distributed guessing run
+/// impractical, short enough that a person who mistyped their passphrase does not think the server
+/// has hung.
+const MAX_BACKOFF: Duration = Duration::from_secs(4);
+
+/// How long a run of failures is remembered. A person who gets it wrong twice at breakfast and
+/// once at lunch is not in the middle of an attack.
+const FAILURE_MEMORY: Duration = Duration::from_secs(900);
+
+/// A fixed-window counter per client address, plus a per-account slowdown.
 ///
-/// Deliberately simple: a token bucket per account would be more precise but is also a way for an
-/// attacker to lock a known account out by exhausting *its* bucket. Counting by source address
-/// costs the attacker something and costs the account nothing.
+/// **By address**, this is a hard limit: an attacker guessing from one place is cut off.
+///
+/// **By account**, it deliberately is *not*. A hard per-account limit is a way to lock a known
+/// account out by exhausting its bucket on purpose — the original note here said so, and it was
+/// right. What it did not cover is the case that motivates counting by account at all: a botnet
+/// spreading guesses across thousands of addresses never fills any one address bucket, so the
+/// address limit alone never fires.
+///
+/// The answer is to make failures *slow* rather than *refused*. Consecutive failures against one
+/// account add a delay that doubles, capped at [`MAX_BACKOFF`], and reset the moment someone signs
+/// in successfully. An attacker cannot lock anyone out — the legitimate user's correct passphrase
+/// still works on the first try — but a distributed run pays the delay on every guess.
+///
+/// The delay applies to usernames that do not exist too. Otherwise "this one answered instantly"
+/// becomes the enumeration oracle that [`login`] refuses to be in every other respect.
 #[derive(Default)]
 pub struct RateLimiter {
     hits: Mutex<HashMap<String, (Instant, usize)>>,
+    failures: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
 impl RateLimiter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How long to wait before answering a failed attempt for `account`.
+    pub fn backoff_for(&self, account: &str) -> Duration {
+        let failures = self.failures.lock().unwrap();
+        let Some((seen, count)) = failures.get(&account.to_ascii_lowercase()) else {
+            return Duration::ZERO;
+        };
+        if seen.elapsed() >= FAILURE_MEMORY || *count <= FREE_FAILURES {
+            return Duration::ZERO;
+        }
+        // Doubling from a quarter second: 0.25, 0.5, 1, 2, then the cap.
+        let steps = (*count - FREE_FAILURES).min(8);
+        Duration::from_millis(250u64.saturating_mul(1 << (steps - 1))).min(MAX_BACKOFF)
+    }
+
+    /// Records a failed attempt against an account.
+    pub fn note_failure(&self, account: &str) {
+        let mut failures = self.failures.lock().unwrap();
+        let now = Instant::now();
+        if failures.len() > 4096 {
+            failures.retain(|_, (seen, _)| now.duration_since(*seen) < FAILURE_MEMORY);
+        }
+        let entry = failures
+            .entry(account.to_ascii_lowercase())
+            .or_insert((now, 0));
+        if now.duration_since(entry.0) >= FAILURE_MEMORY {
+            *entry = (now, 0);
+        }
+        entry.0 = now;
+        entry.1 = entry.1.saturating_add(1);
+    }
+
+    /// Clears the run of failures after a successful sign-in.
+    pub fn note_success(&self, account: &str) {
+        self.failures
+            .lock()
+            .unwrap()
+            .remove(&account.to_ascii_lowercase());
     }
 
     /// Records an attempt and reports whether it is allowed.
@@ -115,6 +179,13 @@ pub struct LoginBody {
     passphrase: String,
     /// What to call this device in the app-password list. Defaults to something honest.
     label: Option<String>,
+    /// The second factor, when the account has one. A recovery code is also accepted here.
+    ///
+    /// Optional because the client does not know whether it is needed until it has asked: the
+    /// first attempt comes without it and is answered with `totpRequired`, and the client asks the
+    /// user and sends the whole thing again.
+    #[serde(default)]
+    totp_code: Option<String>,
 }
 
 /// Exchanges a passphrase for a device token.
@@ -128,19 +199,113 @@ pub async fn login(
     headers: HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Response {
-    if !state.rate_limiter.allow(&client_ip(addr, &headers)) {
+    let client_ip = client_ip(addr, &headers);
+    if !state.rate_limiter.allow(&client_ip) {
         return too_many();
     }
 
     let username = body.username.trim().to_lowercase();
+
+    // Paid before the answer, not after, and *before* the account is looked up — so an account that
+    // exists and one that does not are slowed identically.
+    let backoff = state.rate_limiter.backoff_for(&username);
+    if !backoff.is_zero() {
+        tokio::time::sleep(backoff).await;
+    }
+
     let Ok(Some(account)) = state.db.verify_login(&username, &body.passphrase) else {
+        state.rate_limiter.note_failure(&username);
         // One answer for "no such account" and "wrong passphrase" alike. Telling them apart turns
         // this into a way to find out who has an account here.
+        //
+        // The *log* may distinguish them, and does — it is read by the operator, not the caller,
+        // and "someone is guessing usernames that do not exist" is a different situation from
+        // "someone is guessing one real account's passphrase". The attempted username is recorded
+        // in `detail` because a failed login has no account to attach to; the passphrase never is.
+        state.db.record_event(
+            crate::audit::Event::LoginFailed,
+            crate::audit::Record::new()
+                .ip(&client_ip)
+                .detail(format!("username={username}")),
+        );
         return refused("Those credentials were not accepted");
     };
 
     if !account.state.is_active() {
+        state.rate_limiter.note_failure(&username);
+        state.db.record_event(
+            crate::audit::Event::LoginFailed,
+            crate::audit::Record::new()
+                .user(&account.username)
+                .ip(&client_ip)
+                .detail(format!("account state is {}", account.state.as_str())),
+        );
         return refused("This account is not active yet");
+    }
+
+    // The second factor, checked *after* the passphrase and never before it. Asking for a code
+    // first would tell an anonymous caller which usernames exist and which have 2FA enabled.
+    //
+    // Kept as one request/response rather than a challenge the server has to remember: a two-step
+    // flow needs pending-login state, and — more importantly — the vault envelope below can only be
+    // handed over in a response the client receives while it still holds the passphrase. Re-sending
+    // the passphrase with the code costs one extra Argon2 verification and keeps that property.
+    // Only a *confirmed* enrolment is demanded here. An admin under enforcement who has not
+    // enrolled yet cannot be asked for a code they do not have — they are let in, and the GraphQL
+    // gate confines them to the enrolment mutations until they finish.
+    let needs_totp = state.db.totp_is_confirmed(&account.username).unwrap_or(false);
+
+    if needs_totp {
+        let presented = body.totp_code.as_deref().unwrap_or_default();
+        if presented.trim().is_empty() {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({
+                    "error": "This account needs a code from its authenticator",
+                    "totpRequired": true,
+                })),
+            )
+                .into_response();
+        }
+        match state.db.verify_totp(&account.username, presented) {
+            Ok(outcome) if outcome.is_satisfied() => {
+                if outcome == crate::db_identity::TotpOutcome::AcceptedRecoveryCode {
+                    state.db.record_event(
+                        crate::audit::Event::RecoveryCodeUsed,
+                        crate::audit::Record::new().user(&account.username).ip(&client_ip),
+                    );
+                }
+            }
+            Ok(outcome) => {
+                state.rate_limiter.note_failure(&username);
+                state.db.record_event(
+                    crate::audit::Event::TotpFailed,
+                    crate::audit::Record::new()
+                        .user(&account.username)
+                        .ip(&client_ip)
+                        // "replayed" is worth telling apart from "wrong": it means a code that was
+                        // already spent is being presented again, which is what a captured code
+                        // looks like.
+                        .detail(format!("{outcome:?}")),
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "error": "That code was not accepted",
+                        "totpRequired": true,
+                    })),
+                )
+                    .into_response();
+            }
+            Err(err) => {
+                tracing::error!("could not check a second factor: {err}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "could not check the second factor" })),
+                )
+                    .into_response();
+            }
+        }
     }
 
     let label = body
@@ -160,15 +325,33 @@ pub async fn login(
         .vault_envelope(&account.username)
         .unwrap_or((None, None));
 
+    let enrolment_owed = account.is_admin()
+        && crate::auth::admin_totp_required()
+        && !state.db.totp_is_confirmed(&account.username).unwrap_or(false);
+
     match state.db.mint_device_token(&account.username, label) {
-        Ok(token) => Json(json!({
-            "username": account.username,
-            "role": account.role.as_str(),
-            "token": token,
-            "vaultSalt": vault_salt,
-            "vaultKeyWrapped": vault_key_wrapped,
-        }))
-        .into_response(),
+        Ok(token) => {
+            state.rate_limiter.note_success(&username);
+            state.db.record_event(
+                crate::audit::Event::LoginSucceeded,
+                crate::audit::Record::new()
+                    .user(&account.username)
+                    .ip(&client_ip)
+                    .device(label),
+            );
+            Json(json!({
+                "username": account.username,
+                "role": account.role.as_str(),
+                "token": token,
+                "vaultSalt": vault_salt,
+                "vaultKeyWrapped": vault_key_wrapped,
+                // True when this account may do nothing but enrol a second factor. The client uses
+                // it to go straight to the enrolment screen instead of showing a dashboard whose
+                // every query is about to be refused.
+                "totpEnrolmentRequired": enrolment_owed,
+            }))
+            .into_response()
+        }
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": format!("could not issue a token: {err}") })),
@@ -231,6 +414,14 @@ pub async fn bootstrap(
         .unwrap_or_default();
     state.setup_token.consume();
 
+    state.db.record_event(
+        crate::audit::Event::AccountCreated,
+        crate::audit::Record::new()
+            .user(&account.username)
+            .ip(&client_ip(addr, &headers))
+            .detail("first administrator, via setup token"),
+    );
+
     Json(json!({
         "username": account.username,
         // Shown once. The server keeps an Argon2 hash and cannot show it again.
@@ -245,7 +436,7 @@ pub async fn bootstrap(
 /// Read from `AGRO_SIGNUP` once per request rather than cached, so an operator can close signups on
 /// a server that is being abused without restarting it and dropping every live WebSocket.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SignupMode {
+pub(crate) enum SignupMode {
     /// Anyone may register; the account waits for an admin to let it in.
     Approval,
     /// A valid invite code is required, and spending one lets the account straight in.
@@ -268,6 +459,14 @@ impl SignupMode {
             _ => SignupMode::Approval,
         }
     }
+}
+
+/// Whether this server refuses new accounts outright.
+///
+/// Read by `oidc`, so an operator who closed signups does not find that SSO quietly reopened them.
+/// Already-linked identities keep working; only the creation of new accounts stops.
+pub fn signups_are_closed() -> bool {
+    SignupMode::from_env() == SignupMode::Closed
 }
 
 /// The username rule, in one place.
@@ -383,6 +582,14 @@ pub async fn signup(
         }
     };
 
+    state.db.record_event(
+        crate::audit::Event::AccountCreated,
+        crate::audit::Record::new()
+            .user(&account.username)
+            .ip(&client_ip(addr, &headers))
+            .detail(format!("self-signup, state {}", account.state.as_str())),
+    );
+
     Json(json!({
         "username": account.username,
         "state": account.state.as_str(),
@@ -405,7 +612,7 @@ fn too_many() -> Response {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -428,7 +635,79 @@ mod tests {
         assert!(limiter.allow("10.0.0.2"));
     }
 
-    fn test_state(db: crate::db::Db) -> AppState {
+    #[test]
+    fn an_account_is_slowed_only_after_a_run_of_failures() {
+        let limiter = RateLimiter::new();
+        for _ in 0..FREE_FAILURES {
+            limiter.note_failure("alpha");
+        }
+        assert!(
+            limiter.backoff_for("alpha").is_zero(),
+            "a few mistyped passphrases must not be punished"
+        );
+        limiter.note_failure("alpha");
+        assert!(!limiter.backoff_for("alpha").is_zero());
+    }
+
+    /// A hard per-account limit would let anyone lock a known account out. The delay grows but is
+    /// capped, and the correct passphrase still works on the first try.
+    #[test]
+    fn the_slowdown_is_capped_and_never_becomes_a_refusal() {
+        let limiter = RateLimiter::new();
+        for _ in 0..200 {
+            limiter.note_failure("alpha");
+        }
+        let backoff = limiter.backoff_for("alpha");
+        assert!(backoff <= MAX_BACKOFF, "backoff ran away: {backoff:?}");
+        assert!(!backoff.is_zero());
+    }
+
+    #[test]
+    fn signing_in_clears_the_run() {
+        let limiter = RateLimiter::new();
+        for _ in 0..20 {
+            limiter.note_failure("alpha");
+        }
+        limiter.note_success("alpha");
+        assert!(limiter.backoff_for("alpha").is_zero());
+    }
+
+    /// Otherwise "this one answered instantly" tells an anonymous caller which usernames exist.
+    #[test]
+    fn an_unknown_username_is_slowed_the_same_way() {
+        let limiter = RateLimiter::new();
+        for _ in 0..20 {
+            limiter.note_failure("nobody-by-that-name");
+            limiter.note_failure("alpha");
+        }
+        assert_eq!(
+            limiter.backoff_for("nobody-by-that-name"),
+            limiter.backoff_for("alpha")
+        );
+    }
+
+    #[test]
+    fn the_account_slowdown_is_case_insensitive() {
+        let limiter = RateLimiter::new();
+        for _ in 0..20 {
+            limiter.note_failure("Alpha");
+        }
+        assert!(!limiter.backoff_for("alpha").is_zero());
+    }
+
+    /// One account's failures must not slow another's sign-in.
+    #[test]
+    fn the_slowdown_is_per_account() {
+        let limiter = RateLimiter::new();
+        for _ in 0..20 {
+            limiter.note_failure("alpha");
+        }
+        assert!(limiter.backoff_for("mallory").is_zero());
+    }
+
+    /// Also used by `relay`'s handler tests, so the two do not drift apart on what an `AppState`
+    /// is made of.
+    pub(crate) fn test_state(db: crate::db::Db) -> AppState {
         let ws_hub = std::sync::Arc::new(crate::ws::WsHub::new());
         AppState {
             db: db.clone(),
@@ -438,6 +717,7 @@ mod tests {
             relay_hub: crate::relay::RelayHub::new(),
             setup_token: crate::auth::SetupToken::for_fresh_server(1),
             rate_limiter: std::sync::Arc::new(RateLimiter::new()),
+            oidc_flows: std::sync::Arc::new(crate::oidc::FlowStore::new()),
         }
     }
 

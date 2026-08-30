@@ -63,6 +63,7 @@ impl Harness {
         let request = Request::new(query).data(AuthedUser {
             account: account.clone(),
             device_label: String::new(),
+            token_hash: String::new(),
         });
         self.schema.execute(request).await
     }
