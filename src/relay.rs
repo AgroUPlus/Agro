@@ -390,6 +390,7 @@ mod tests {
                 AuthedUser {
                     account,
                     device_label: "alpha-pc".to_string(),
+                    token_hash: String::new(),
                 },
             )
         }

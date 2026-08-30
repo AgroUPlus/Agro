@@ -180,27 +180,104 @@ pub async fn ws_handler(
         );
         state.offers.note_archived(u);
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, state.ws_hub, username, device))
+    ws.on_upgrade(move |socket| handle_socket(socket, state, username, device))
 }
 
 /// Forwards hub messages this socket is entitled to see.
 ///
-/// Two changes from the original, both of which were holes:
-///
-/// - **Filtering.** Every socket used to receive every message for every account, so one device's
-///   handoff was delivered to a stranger's client.
-/// - **No echo.** Inbound frames used to be pushed straight back into the hub, which let any
-///   authenticated client forge a `HANDOFF` — or now a `SYNC_OFFER` — to everyone else. Inbound
-///   frames are read and discarded; they exist to keep the connection alive, and state changes go
-///   through the API where they can be authorised.
+/// Supports both pre-authenticated connections (via HTTP Authorization header or query parameter)
+/// and post-handshake in-band authentication (via an `AUTH` message frame within 5 seconds),
+/// preventing bearer tokens from being logged in reverse proxy access logs.
 async fn handle_socket(
     socket: WebSocket,
-    hub: Arc<WsHub>,
-    username: Option<String>,
-    device: Option<String>,
+    state: AppState,
+    mut username: Option<String>,
+    mut device: Option<String>,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let mut rx = hub.tx.subscribe();
+    let mut rx = state.ws_hub.tx.subscribe();
+
+    // If unauthenticated, wait for an in-band AUTH frame within 5 seconds
+    if username.is_none() {
+        let auth_future = async {
+            while let Some(Ok(msg)) = receiver.next().await {
+                if let Message::Text(text) = msg {
+                    if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
+                        if ws_msg.msg_type.eq_ignore_ascii_case("AUTH") {
+                            if let Some(token) = ws_msg.payload.get("token").and_then(|t| t.as_str()) {
+                                if let Ok(Some((account, _))) = state.db.account_for_token(token) {
+                                    if account.state.is_active() {
+                                        let u = account.username.to_string();
+                                        let d = ws_msg
+                                            .payload
+                                            .get("device")
+                                            .and_then(|dev| dev.as_str())
+                                            .map(str::to_string);
+                                        let lan = ws_msg
+                                            .payload
+                                            .get("lan")
+                                            .and_then(|l| l.as_str());
+
+                                        if let (Some(dev_id), Some(lan_addr)) = (&d, lan) {
+                                            let lan_addr = lan_addr.trim();
+                                            if !lan_addr.is_empty()
+                                                && lan_addr.len() <= MAX_LAN_ADDRESS
+                                                && is_plausible_host_port(lan_addr)
+                                            {
+                                                state.ws_hub.set_lan_address(&u, dev_id, lan_addr);
+                                            }
+                                        }
+
+                                        if let Some(dev_id) = &d {
+                                            let petname = crate::passphrase::generate_random_petname();
+                                            let client_type = if dev_id.to_lowercase().contains("android")
+                                                || dev_id.to_lowercase().contains("wanda")
+                                            {
+                                                "wanda"
+                                            } else {
+                                                "wander"
+                                            };
+                                            let _ = state.db.upsert_node(
+                                                dev_id,
+                                                &u,
+                                                crate::db::NodeName::KeepOr(&petname),
+                                                client_type,
+                                                None,
+                                                None,
+                                            );
+                                            state.offers.note_archived(&u);
+                                        }
+                                        return Some((u, d));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), auth_future).await {
+            Ok(Some((u, d))) => {
+                username = Some(u);
+                device = d;
+                let _ = sender
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "msg_type": "AUTH_SUCCESS",
+                            "payload": { "status": "authenticated" }
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await;
+            }
+            _ => {
+                return; // Failed to authenticate in-band within timeout
+            }
+        }
+    }
 
     tokio::select! {
         _ = async {
@@ -223,7 +300,7 @@ async fn handle_socket(
     }
 
     if let (Some(u), Some(d)) = (username.as_deref(), device.as_deref()) {
-        hub.clear_lan_address(u, d);
+        state.ws_hub.clear_lan_address(u, d);
     }
 }
 

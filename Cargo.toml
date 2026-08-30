@@ -34,3 +34,8 @@ unicode-normalization = "0.1"
 # Bridges an axum body stream to tokio's AsyncRead, so uploads copy straight to disk instead of
 # being collected into memory.
 tokio-util = { version = "0.7", features = ["io"] }
+# RFC 6238 time-based one-time passwords. A dependency rather than forty lines of HOTP: the
+# truncation and skew rules are easy to write and easy to write *subtly* wrong, and a second factor
+# that quietly accepts the wrong codes is worse than none.
+totp-rs = "6.0.0"
+jsonwebtoken = "11.0.0"

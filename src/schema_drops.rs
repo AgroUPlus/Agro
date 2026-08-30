@@ -24,6 +24,7 @@ use crate::schema::{bounded, caller, forbidden, normalise_username};
 /// A comment, not an essay. Long enough for the reason you sent it, short enough that an inbox row
 /// stays a row.
 const MAX_NOTE_LEN: usize = 500;
+const MAX_CIPHERTEXT_LEN: usize = 4096;
 
 /// The longest any piece of track description may be. Titles are attacker-controlled here in a way
 /// they are not elsewhere: this is text one account writes into another account's inbox.
@@ -60,6 +61,9 @@ pub struct DropPayload {
     pub content_hash: Option<String>,
     pub track_uri: Option<String>,
     pub note: Option<String>,
+    /// Sealed E2EE ciphertext note or payload.
+    pub note_ciphertext: Option<String>,
+    pub is_encrypted: bool,
     pub created_at: String,
     /// Null while unread. Only ever populated on the recipient's own view; see `sentDrops`.
     pub read_at: Option<String>,
@@ -84,6 +88,8 @@ fn to_payload(drop: Drop) -> DropPayload {
         content_hash: drop.content_hash,
         track_uri: drop.track_uri,
         note: drop.note,
+        note_ciphertext: drop.note_ciphertext,
+        is_encrypted: drop.is_encrypted,
         created_at: drop.created_at,
         read_at: drop.read_at,
         archived: drop.archived,
@@ -205,6 +211,8 @@ impl DropsMutation {
         content_hash: Option<String>,
         track_uri: Option<String>,
         note: Option<String>,
+        note_ciphertext: Option<String>,
+        is_encrypted: Option<bool>,
     ) -> async_graphql::Result<DropPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -240,6 +248,8 @@ impl DropsMutation {
             content_hash: optional(content_hash.as_deref(), MAX_FIELD_LEN, "contentHash")?,
             track_uri: optional(track_uri.as_deref(), MAX_FIELD_LEN, "trackUri")?,
             note: optional(note.as_deref(), MAX_NOTE_LEN, "note")?,
+            note_ciphertext: optional(note_ciphertext.as_deref(), MAX_CIPHERTEXT_LEN, "noteCiphertext")?,
+            is_encrypted: is_encrypted.unwrap_or(false),
         };
 
         let id = db.create_drop(authed.username(), &to, &new)?;
