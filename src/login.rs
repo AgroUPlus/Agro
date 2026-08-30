@@ -405,7 +405,7 @@ fn too_many() -> Response {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -428,7 +428,9 @@ mod tests {
         assert!(limiter.allow("10.0.0.2"));
     }
 
-    fn test_state(db: crate::db::Db) -> AppState {
+    /// Also used by `relay`'s handler tests, so the two do not drift apart on what an `AppState`
+    /// is made of.
+    pub(crate) fn test_state(db: crate::db::Db) -> AppState {
         let ws_hub = std::sync::Arc::new(crate::ws::WsHub::new());
         AppState {
             db: db.clone(),
