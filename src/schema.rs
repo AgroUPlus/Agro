@@ -20,6 +20,7 @@ pub struct Query(
     crate::schema_jam::JamQuery,
     crate::schema_feed::FeedQuery,
     crate::schema_drops::DropsQuery,
+    crate::schema_playlists::PlaylistsQuery,
 );
 
 #[derive(async_graphql::MergedObject, Default)]
@@ -28,6 +29,7 @@ pub struct Mutation(
     crate::schema_social::SocialMutation,
     crate::schema_jam::JamMutation,
     crate::schema_drops::DropsMutation,
+    crate::schema_playlists::PlaylistsMutation,
 );
 
 pub type AgroSchema = Schema<Query, Mutation, async_graphql::EmptySubscription>;
@@ -749,6 +751,37 @@ impl QueryRoot {
         Ok(to_listening_stats(crate::stats::compute(&rows, 10, now)))
     }
 
+    /// Computes a private Year / Month in Review recap for the account.
+    async fn agro_wrapped(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+        year: i32,
+        month: Option<i32>,
+    ) -> async_graphql::Result<AgroWrappedPayload> {
+        crate::schema_social::require_visible(
+            ctx,
+            &user_id,
+            crate::schema_social::Surface::Stats,
+        )?;
+        let db = ctx.data::<Db>()?;
+        let rows = db.scrobble_rows(&user_id, None, None)?;
+        let wrapped = crate::stats::compute_wrapped(&rows, year, month, 10);
+        Ok(AgroWrappedPayload {
+            year: wrapped.year,
+            month: wrapped.month,
+            total_minutes: wrapped.total_minutes,
+            total_plays: wrapped.total_plays,
+            top_artists: to_entries(wrapped.top_artists),
+            top_tracks: to_entries(wrapped.top_tracks),
+            top_albums: to_entries(wrapped.top_albums),
+            top_genres: to_entries(wrapped.top_genres),
+            top_hour_utc: wrapped.top_hour_utc,
+            longest_streak_days: wrapped.longest_streak_days,
+            new_artists_count: wrapped.new_artists_count,
+        })
+    }
+
     async fn active_nodes(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<NodePayload>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
@@ -1052,6 +1085,21 @@ fn to_entries(pairs: Vec<(String, i64)>) -> Vec<StatEntry> {
         .into_iter()
         .map(|(name, value)| StatEntry { name, value })
         .collect()
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct AgroWrappedPayload {
+    pub year: i32,
+    pub month: Option<i32>,
+    pub total_minutes: i64,
+    pub total_plays: i64,
+    pub top_artists: Vec<StatEntry>,
+    pub top_tracks: Vec<StatEntry>,
+    pub top_albums: Vec<StatEntry>,
+    pub top_genres: Vec<StatEntry>,
+    pub top_hour_utc: Option<i32>,
+    pub longest_streak_days: i64,
+    pub new_artists_count: i64,
 }
 
 

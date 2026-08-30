@@ -157,5 +157,21 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
                 meta("Pushed as", "LISTEN_ALONG"),
             ],
         },
+        AgroPlugin {
+            id: "privacy-relay".to_string(),
+            name: "Privacy Relay".to_string(),
+            description: "Proxies metadata and lyric requests (Internet Archive, LRCLIB, Nyaa) through this server to hide client IP addresses. Caches responses to reduce API calls.".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            category: "Privacy".to_string(),
+            target: "Core".to_string(),
+            is_enabled: true,
+            is_connected: true,
+            latency_ms: None,
+            endpoint: Some("/api/v1/proxy".to_string()),
+            metadata: vec![
+                meta("Caching", "Enabled (24 hours)"),
+                meta("Target", "Metadata APIs only (no media streams)"),
+            ],
+        },
     ]
 }
