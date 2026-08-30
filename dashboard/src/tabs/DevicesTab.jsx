@@ -101,11 +101,7 @@ export default function DevicesTab({ username, nodes = [], onRenameNode, onDelet
   }
 
   const serverHost = window.location.origin;
-  const qrPayload = pairing ? JSON.stringify({
-    server: serverHost,
-    username,
-    token: pairing.token
-  }) : '';
+  const qrPayload = pairing ? `agro://connect?username=${encodeURIComponent(username)}&token=${encodeURIComponent(pairing.token)}&server=${encodeURIComponent(serverHost)}` : '';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -217,7 +213,7 @@ export default function DevicesTab({ username, nodes = [], onRenameNode, onDelet
               <div>enabled = true</div>
               <div>server = "{serverHost}"</div>
               <div>username = "{username}"</div>
-              <div>token = "{pairing.token}"</div>
+              <div>device_token = "{pairing.token}"</div>
             </div>
           </div>
         )}
