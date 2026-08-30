@@ -1854,12 +1854,13 @@ impl Db {
         target_url: &str,
         user_id: Option<&str>,
         source: Option<&str>,
+        expires_at: Option<i64>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at, source)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, target_url, user_id, unix_now(), source],
+            "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at, source, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, target_url, user_id, unix_now(), source, expires_at],
         )?;
         Ok(())
     }

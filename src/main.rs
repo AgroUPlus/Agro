@@ -336,7 +336,17 @@ async fn security_headers(
     headers.insert(
         "content-security-policy",
         HeaderValue::from_static(
-            "default-src 'self';              script-src 'self';              style-src 'self' 'unsafe-inline';              img-src 'self' data: https:;              media-src 'self' blob:;              connect-src 'self' ws: wss:;              font-src 'self' data:;              object-src 'none';              base-uri 'none';              form-action 'self';              frame-ancestors 'none'",
+            "default-src 'self'; \
+             script-src 'self' 'unsafe-inline'; \
+             style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: https:; \
+             media-src 'self' blob:; \
+             connect-src 'self' ws: wss:; \
+             font-src 'self' data:; \
+             object-src 'none'; \
+             base-uri 'none'; \
+             form-action 'self'; \
+             frame-ancestors 'none'",
         ),
     );
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));

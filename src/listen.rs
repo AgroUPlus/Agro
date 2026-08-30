@@ -216,14 +216,24 @@ pub async fn listen_handler(
     var duration = 2000, start = Date.now(), isPaused = false;
     var fill = document.getElementById("progressFill");
     var txt = document.getElementById("countdownText");
-    document.getElementById("btnPause").onclick = function() { isPaused = true; document.getElementById("progressWrap").style.display = "none"; };
+    var btnPause = document.getElementById("btnPause");
+    if (btnPause) {
+      btnPause.onclick = function() {
+        isPaused = true;
+        var wrap = document.getElementById("progressWrap");
+        if (wrap) wrap.style.display = "none";
+      };
+    }
     function tick() {
       if (isPaused) return;
       var remaining = Math.max(0, duration - (Date.now() - start));
       if (fill) fill.style.width = ((remaining / duration) * 100) + "%";
       if (txt) txt.textContent = "Forwarding in " + (remaining / 1000).toFixed(1) + "s…";
-      if (remaining > 0) requestAnimationFrame(tick);
-      else window.location.replace(target);
+      if (remaining > 0) {
+        requestAnimationFrame(tick);
+      } else if (target && target.length > 0) {
+        window.location.replace(target);
+      }
     }
     requestAnimationFrame(tick);
   })();
@@ -395,9 +405,18 @@ mod tests {
     #[test]
     fn resolves_short_link_uid_when_allowed() {
         let db = crate::db::Db::new(":memory:").unwrap();
-        db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None).unwrap();
+        db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None, None).unwrap();
         let retrieved = db.get_short_link("testUid").unwrap();
         assert_eq!(retrieved.as_deref(), Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn expired_short_link_is_not_resolved() {
+        let db = crate::db::Db::new(":memory:").unwrap();
+        let past = chrono::Utc::now().timestamp() - 100;
+        db.create_short_link("expiredUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None, Some(past)).unwrap();
+        let retrieved = db.get_short_link("expiredUid").unwrap();
+        assert_eq!(retrieved, None);
     }
 }
 
