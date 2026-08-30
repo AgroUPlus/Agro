@@ -57,16 +57,6 @@ export default function App() {
 
   const [nodes, setNodes] = useState([]);
   const [rules, setRules] = useState(FALLBACK_RULES);
-  const [syncedSettings, setSyncedSettings] = useState({
-    serverUrl: 'http://localhost:4533',
-    serverUsername: 'alpha',
-    lrclibUrl: 'https://lrclib.net',
-    lyricsFetchOnline: true,
-    streamFormat: 'FLAC',
-    shareDomain: '',
-    shareHosts: '',
-    shareEnabled: true
-  });
   const [lastHandoff, setLastHandoff] = useState({
     title: 'Wander Daemon Ready',
     artist: 'Kolb Audio Subsystem',
@@ -276,12 +266,8 @@ export default function App() {
 
           {activeTab === 'plugins' && isAdmin && (
             <AdminPluginsTab
-              username={username}
               rules={rules}
-              syncedSettings={syncedSettings}
-              onUpdateSyncedSettings={setSyncedSettings}
               onToggleRule={handleToggleRule}
-              onUnauthorized={() => setLocked(true)}
             />
           )}
 

@@ -18,7 +18,9 @@ const DROPS_CONVO_QUERY = `query DropsConvo {
     id toUser trackTitle artistName albumName note noteCiphertext isEncrypted createdAt contentHash trackUri
   }
   friends {
-    username displayName avatarUrl friendState
+    profile {
+      username displayName avatarUrl friendState
+    }
   }
 }`;
 
@@ -50,7 +52,10 @@ export default function SocialTab({ me, onUnauthorized }) {
 
       setInbox(dropsData?.inbox || []);
       setSent(dropsData?.sentDrops || []);
-      const frList = (dropsData?.friends || []).filter(f => f.friendState?.toLowerCase() === 'accepted');
+      const frList = (dropsData?.friends || [])
+        .map(f => f.profile)
+        .filter(Boolean)
+        .filter(f => f.friendState?.toLowerCase() === 'accepted');
       setFriends(frList);
       setFeedItems(feedData?.friendActivity || []);
 
