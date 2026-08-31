@@ -802,6 +802,41 @@ const MIGRATIONS: &[&str] = &[
     // Both NULL for anything queued from a streaming source, and for every row queued before this.
     "ALTER TABLE jam_tracks ADD COLUMN content_hash TEXT;
      ALTER TABLE jam_tracks ADD COLUMN added_by_device TEXT;",
+    // The shared fingerprint catalogue.
+    //
+    // Every client already identifies its own recordings without this; the catalogue exists so
+    // that what one device worked out is not worked out again by every other device, and so that
+    // a source with poor tags inherits the metadata a source with good ones supplied for the same
+    // audio. Nothing here is required for a client to function alone.
+    //
+    // `sub_hashes` is the fingerprint itself, four bytes per entry. `catalog_sub_hashes` indexes
+    // sixteen-bit halves of those, because a single flipped bit changes a whole sub-hash and an
+    // index on whole ones matches nothing once audio has been through a lossy encoder.
+    "CREATE TABLE IF NOT EXISTS catalog_recordings (
+         recording_id   TEXT PRIMARY KEY,
+         sub_hashes     BLOB NOT NULL,
+         duration_ms    INTEGER NOT NULL,
+         title          TEXT,
+         artist         TEXT,
+         album          TEXT,
+         updated_at     INTEGER NOT NULL
+     );
+     CREATE TABLE IF NOT EXISTS catalog_sub_hashes (
+         half         INTEGER NOT NULL,
+         recording_id TEXT NOT NULL,
+         PRIMARY KEY (half, recording_id)
+     );
+     CREATE INDEX IF NOT EXISTS idx_catalog_sub_hashes_recording
+         ON catalog_sub_hashes(recording_id);
+     CREATE TABLE IF NOT EXISTS catalog_sources (
+         source_uri   TEXT PRIMARY KEY,
+         recording_id TEXT NOT NULL,
+         updated_at   INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_catalog_sources_recording
+         ON catalog_sources(recording_id);
+     CREATE INDEX IF NOT EXISTS idx_catalog_recordings_updated
+         ON catalog_recordings(updated_at);",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
