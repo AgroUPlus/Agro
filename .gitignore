@@ -11,3 +11,6 @@ agro_data.db
 dashboard/dist/
 dashboard/node_modules/
 backups/
+
+# Personal post-merge test checklist, not part of the repo.
+TESTING.md
