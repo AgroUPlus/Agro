@@ -54,6 +54,17 @@ pub struct JamNowPlayingPayload {
     /// How far in the room is *now*, worked out here from `started_at`. A client seeks to this
     /// rather than starting from zero, which is what lets somebody join late and land in step.
     pub position_ms: i64,
+    /// The member who queued it, the device of theirs that holds it, and the bytes it names.
+    ///
+    /// `content_hash` is `None` for anything queued from a streaming source, which is what sends
+    /// the rest of the room back to matching the track by name.
+    pub added_by: String,
+    pub device_id: Option<String>,
+    pub content_hash: Option<String>,
+    /// Where to reach that device on this network, and the token to present. Set only when the
+    /// server judged the two devices to share one — see [`crate::ws::WsHub::same_network`].
+    pub peer_lan_address: Option<String>,
+    pub peer_lan_token: Option<String>,
     /// Votes to skip this track so far.
     pub skip_votes: i64,
     /// How many are needed. More than half the room, everybody counted.
@@ -100,7 +111,43 @@ pub struct FriendJamPayload {
 
 /// The jam the caller is in, fully described. The single shape every mutation answers with, so a
 /// client never has to stitch a view together from a mutation result and a stale query.
-fn describe(db: &Db, jam: &Jam, viewer: &str) -> async_graphql::Result<JamPayload> {
+/// Where `viewer` could reach `holder`'s device directly, if anywhere.
+///
+/// Returns both halves or neither: the address is useless without a grant to present with it, and
+/// handing one over without the other would disclose a private address for nothing. A holder who
+/// never named a device, or who is not on the viewer's network, yields `(None, None)` and the
+/// caller falls through to the relay.
+fn peer_route(
+    ws_hub: &crate::ws::WsHub,
+    holder: &str,
+    holder_device: Option<&str>,
+    viewer: &str,
+) -> (Option<String>, Option<String>) {
+    let Some(device) = holder_device else {
+        return (None, None);
+    };
+    if holder.eq_ignore_ascii_case(viewer) {
+        // Your own copy. There is nothing to fetch over the network.
+        return (None, None);
+    }
+    if !ws_hub.shares_network_with_user(holder, device, viewer) {
+        return (None, None);
+    }
+    let Some(address) = ws_hub.get_lan_address(holder, device) else {
+        return (None, None);
+    };
+    match ws_hub.grant_p2p_token(holder, device, viewer) {
+        Some(token) => (Some(address), Some(token)),
+        None => (None, None),
+    }
+}
+
+fn describe(
+    db: &Db,
+    ws_hub: &crate::ws::WsHub,
+    jam: &Jam,
+    viewer: &str,
+) -> async_graphql::Result<JamPayload> {
     let payload = |t: crate::db_jam::JamTrack| JamTrackPayload {
         id: t.id,
         added_by: t.added_by,
@@ -143,17 +190,32 @@ fn describe(db: &Db, jam: &Jam, viewer: &str) -> async_graphql::Result<JamPayloa
             .map(payload)
             .collect(),
         visibility: jam.visibility.as_str().to_string(),
-        now_playing: db.jam_now_playing(jam)?.map(|now| JamNowPlayingPayload {
-            track_id: now.track_id,
-            title: now.title,
-            artist: now.artist,
-            artwork_url: now.artwork_url,
-            duration_ms: now.duration_ms,
-            started_at: now.started_at,
-            position_ms: now.position_ms,
-            skip_votes: skips.0,
-            skips_needed: skips_needed,
-            you_skipped: skips.1,
+        now_playing: db.jam_now_playing(jam)?.map(|now| {
+            // The member who queued the track holds it, so they are the peer here — the same
+            // pairwise question Listen Along asks, with the queueing member in the host's place.
+            let (peer_lan_address, peer_lan_token) = peer_route(
+                ws_hub,
+                &now.added_by,
+                now.added_by_device.as_deref(),
+                viewer,
+            );
+            JamNowPlayingPayload {
+                track_id: now.track_id,
+                title: now.title,
+                artist: now.artist,
+                added_by: now.added_by,
+                device_id: now.added_by_device,
+                content_hash: now.content_hash,
+                peer_lan_address,
+                peer_lan_token,
+                artwork_url: now.artwork_url,
+                duration_ms: now.duration_ms,
+                started_at: now.started_at,
+                position_ms: now.position_ms,
+                skip_votes: skips.0,
+                skips_needed: skips_needed,
+                you_skipped: skips.1,
+            }
         }),
         approvals_needed: db.jam_approvals_needed(&jam.id)?,
     })
@@ -213,7 +275,7 @@ impl JamQuery {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
         match db.jam_for_member(authed.username())? {
-            Some(jam) => Ok(Some(describe(db, &jam, authed.username())?)),
+            Some(jam) => Ok(Some(describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())?)),
             None => Ok(None),
         }
     }
@@ -243,7 +305,7 @@ impl JamMutation {
         let mode = mode.as_deref().map(JamMode::parse).unwrap_or(JamMode::Democracy);
         let jam = db.create_jam(authed.username(), mode)?;
         announce(ctx, db, &jam);
-        describe(db, &jam, authed.username())
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
     }
 
     /// Joins a jam by its code.
@@ -264,7 +326,7 @@ impl JamMutation {
         }
         db.join_jam(&jam.id, authed.username())?;
         announce(ctx, db, &jam);
-        describe(db, &jam, authed.username())
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
     }
 
     /// Joins a friend's jam by its id, with no code.
@@ -293,7 +355,7 @@ impl JamMutation {
         }
         db.join_jam(&jam.id, authed.username())?;
         announce(ctx, db, &jam);
-        describe(db, &jam, authed.username())
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
     }
 
     /// Opens the jam to friends, or shuts it back to code-only. The creator decides.
@@ -310,7 +372,7 @@ impl JamMutation {
         db.set_jam_visibility(&jam.id, JamVisibility::parse(&visibility))?;
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, &updated, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
     }
 
     /// Votes to skip whatever is playing.
@@ -335,7 +397,7 @@ impl JamMutation {
         }
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, &updated, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
     }
 
     /// Leaves the jam, and deletes it once nobody is left.
@@ -379,6 +441,11 @@ impl JamMutation {
         // `is_live` marks a stream with no end: it holds the room until someone skips it, rather
         // than being retired by a clock that has no way to know a broadcast is over.
         is_live: Option<bool>,
+        // `device_id` and `content_hash` are only meaningful together: they are what lets another
+        // member play the queueing member's own copy instead of hunting for the track by name.
+        // Omitted for anything queued from a streaming source, which is most of a queue.
+        device_id: Option<String>,
+        content_hash: Option<String>,
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -397,9 +464,11 @@ impl JamMutation {
             duration_ms.unwrap_or(0),
             is_live.unwrap_or(false),
             jam.mode,
+            device_id.as_deref(),
+            content_hash.as_deref(),
         )?;
         announce(ctx, db, &jam);
-        describe(db, &jam, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
     }
 
     /// Accepts somebody's suggestion.
@@ -423,7 +492,7 @@ impl JamMutation {
         }
         db.approve_jam_track(&jam.id, &track_id, &me)?;
         announce(ctx, db, &jam);
-        describe(db, &jam, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
     }
 
     /// Removes a track. Your own, or anyone's if you are the host.
@@ -444,7 +513,7 @@ impl JamMutation {
         }
         db.remove_jam_track(&jam.id, &track_id)?;
         announce(ctx, db, &jam);
-        describe(db, &jam, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
     }
 
     // `advanceJam` used to live here. It is gone: the server advances the room on its own clock
@@ -462,6 +531,6 @@ impl JamMutation {
         db.set_jam_mode(&jam.id, JamMode::parse(&mode))?;
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, &updated, &me)
+        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
     }
 }

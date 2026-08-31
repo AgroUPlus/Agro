@@ -792,6 +792,16 @@ const MIGRATIONS: &[&str] = &[
     // the honest answer — without a file there is nothing to transfer — and it is what makes the
     // peer-to-peer and relay tiers degrade to a name match instead of failing.
     "ALTER TABLE handoff_state ADD COLUMN content_hash TEXT;",
+    // 35 — a jam track can name the file behind it, and the device holding it.
+    //
+    // `added_by` already records *who* queued a track, which is most of the answer: the member who
+    // put it in the room is the one who can hand it over. What was missing is which of their
+    // devices, and which bytes — without both, a room member with no copy of a track has nothing
+    // to ask for and falls back to matching by name, which is what Jam did for every track.
+    //
+    // Both NULL for anything queued from a streaming source, and for every row queued before this.
+    "ALTER TABLE jam_tracks ADD COLUMN content_hash TEXT;
+     ALTER TABLE jam_tracks ADD COLUMN added_by_device TEXT;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so

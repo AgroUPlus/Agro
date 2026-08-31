@@ -764,7 +764,7 @@ async fn a_suggestion_waits_for_the_room() {
 
     let (track, state) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Suggested", "A", None, 1000, false, JamMode::Democracy)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Suggested", "A", None, 1000, false, JamMode::Democracy, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Proposed, "it went straight into the queue");
     assert!(h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty());
@@ -796,7 +796,7 @@ async fn a_solo_jam_queues_without_asking() {
 
     let (_, state) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Only me", "A", None, 1000, false, JamMode::Democracy)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Only me", "A", None, 1000, false, JamMode::Democracy, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Queued, "a solo jam could never pass anything");
 }
@@ -810,7 +810,7 @@ async fn open_mode_queues_immediately() {
 
     let (_, state) = h
         .db
-        .add_jam_track(&jam.id, "beta", "u:1", "Straight in", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:1", "Straight in", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Queued);
     assert!(h.db.jam_tracks(&jam.id, JamTrackState::Proposed, "beta").unwrap().is_empty());
@@ -824,10 +824,10 @@ async fn approvals_do_not_reorder_the_queue() {
     h.db.join_jam(&jam.id, "beta").unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:2", "Second", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:2", "Second", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     // Piling approvals on the later track must not move it up: votes decide entry, not position.
@@ -845,10 +845,10 @@ async fn the_server_advances_the_room_on_its_own() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 40, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 40, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Second", "A", None, 40, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Second", "A", None, 40, false, JamMode::Open, None, None)
         .unwrap();
 
     // Nobody has asked for anything: the clock starts the room.
@@ -879,7 +879,7 @@ async fn now_playing_reports_the_rooms_position() {
     let h = harness();
     let hub = std::sync::Arc::new(WsHub::new());
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "Long one", "A", None, 60_000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:1", "Long one", "A", None, 60_000, false, JamMode::Open, None, None)
         .unwrap();
 
     crate::jam_clock::tick(&h.db, &hub);
@@ -913,7 +913,7 @@ async fn only_the_owner_or_the_creator_removes_a_track() {
     h.db.join_jam(&jam.id, "beta").unwrap();
     h.db.join_jam(&jam.id, "stranger").unwrap();
     let (track, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:1", "Beta's pick", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:1", "Beta's pick", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let refused = h
@@ -933,7 +933,7 @@ async fn a_non_member_cannot_touch_the_queue() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     let (track, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let refused = h
@@ -956,7 +956,7 @@ async fn ending_a_jam_clears_it_from_the_server() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let left = h.run_as(&h.alpha, "mutation { leaveJam }").await;
@@ -1110,9 +1110,9 @@ async fn a_majority_skips_the_playing_track() {
     h.db.join_jam(&jam.id, "stranger").unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Skip me", "A", None, 600_000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Skip me", "A", None, 600_000, false, JamMode::Open, None, None)
         .unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:2", "Next", "A", None, 600_000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:2", "Next", "A", None, 600_000, false, JamMode::Open, None, None)
         .unwrap();
     crate::jam_clock::tick(&h.db, &hub);
     assert_eq!(
@@ -1807,11 +1807,11 @@ async fn a_jam_moves_on_from_a_track_with_no_duration() {
 
     let (first, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "No Duration", "A", None, 0, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "No Duration", "A", None, 0, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());
@@ -1859,11 +1859,11 @@ async fn a_live_track_holds_a_jam_until_it_is_skipped() {
 
     let (radio, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Some Radio", "A", None, 0, true, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Some Radio", "A", None, 0, true, JamMode::Open, None, None)
         .unwrap();
     let (next, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());

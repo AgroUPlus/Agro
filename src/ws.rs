@@ -650,6 +650,26 @@ mod tests {
             assert_ne!(first, other);
         }
 
+        /// A device sharing its own account's network is still a match — the same-account case is
+        /// the original point of the LAN transfer — but callers that mean "somebody else" filter
+        /// the holder out themselves.
+        #[test]
+        fn your_own_second_device_is_on_your_network() {
+            let hub = hub_with(&[
+                ("alpha", "phone", "203.0.113.7"),
+                ("alpha", "laptop", "203.0.113.7"),
+            ]);
+            assert!(hub.shares_network_with_user("alpha", "phone", "alpha"));
+        }
+
+        /// The device being asked about is never its own peer, or every host would look reachable
+        /// from itself.
+        #[test]
+        fn a_device_is_not_its_own_peer() {
+            let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
+            assert!(!hub.shares_network_with_user("alpha", "phone", "alpha"));
+        }
+
         /// A disconnect takes the address and every grant issued for that device with it.
         #[test]
         fn disconnecting_clears_the_address_and_the_grants() {

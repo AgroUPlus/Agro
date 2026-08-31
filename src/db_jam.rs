@@ -68,6 +68,12 @@ pub struct JamNowPlaying {
     pub track_id: String,
     pub title: String,
     pub artist: String,
+    /// The member who queued it, and so the one who can hand the file over.
+    pub added_by: String,
+    /// Which of their devices holds it. `None` for anything queued from a streaming source.
+    pub added_by_device: Option<String>,
+    /// SHA-256 of the bytes, when the queueing device knew them.
+    pub content_hash: Option<String>,
     pub artwork_url: Option<String>,
     pub duration_ms: i64,
     /// A stream with no end. It plays until the room skips it — see `jam_clock`.
@@ -301,6 +307,8 @@ impl Db {
         duration_ms: i64,
         is_live: bool,
         mode: JamMode,
+        added_by_device: Option<&str>,
+        content_hash: Option<&str>,
     ) -> Result<(String, JamTrackState)> {
         // Alone in the room, a proposal could never reach a majority of the people who are not
         // you, because there are none. Queue it rather than leaving it permanently stuck.
@@ -317,8 +325,8 @@ impl Db {
         conn.execute(
             "INSERT INTO jam_tracks
                (id, jam_id, added_by, track_uri, title, artist, artwork_url, added_at, played,
-                duration_ms, state, is_live)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
+                duration_ms, state, is_live, added_by_device, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12, ?13)",
             params![
                 id,
                 jam_id,
@@ -330,7 +338,9 @@ impl Db {
                 chrono::Utc::now().to_rfc3339(),
                 duration_ms.max(0),
                 state.as_str(),
-                is_live as i64
+                is_live as i64,
+                added_by_device.map(str::trim).filter(|d| !d.is_empty()),
+                content_hash.map(str::trim).filter(|h| !h.is_empty())
             ],
         )?;
         Ok((id, state))
@@ -523,7 +533,9 @@ impl Db {
         };
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT title, artist, artwork_url, duration_ms, is_live FROM jam_tracks WHERE id = ?1",
+            "SELECT title, artist, artwork_url, duration_ms, is_live, added_by, added_by_device,
+                    content_hash
+               FROM jam_tracks WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![track_id], |row| {
             Ok((
@@ -532,15 +544,31 @@ impl Db {
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)? != 0,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
             ))
         })?;
-        let Some((title, artist, artwork_url, duration_ms, is_live)) = rows.next().transpose()? else {
+        let Some((
+            title,
+            artist,
+            artwork_url,
+            duration_ms,
+            is_live,
+            added_by,
+            added_by_device,
+            content_hash,
+        )) = rows.next().transpose()?
+        else {
             return Ok(None);
         };
         Ok(Some(JamNowPlaying {
             track_id: track_id.clone(),
             title,
             artist,
+            added_by,
+            added_by_device,
+            content_hash,
             artwork_url,
             duration_ms,
             is_live,
