@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Copy, Check, ArrowLeft, Loader2, KeyRound, ShieldCheck } from 'lucide-react';
 import { login, ssoConfig, TotpRequiredError } from './api.js';
+import Field from './components/form/Field.jsx';
+import TextInput from './components/form/TextInput.jsx';
 
 /**
  * The whole of the signed-out experience: signing in, and creating an account.
@@ -31,6 +33,13 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
   const [needsCode, setNeedsCode] = useState(false);
   const [totpCode, setTotpCode] = useState('');
   const [sso, setSso] = useState({ enabled: false });
+  /**
+   * Which fields the user has actually left. Validation that fires on the first keystroke
+   * marks an empty username as wrong before anything has been typed, which reads as the form
+   * being broken rather than as guidance.
+   */
+  const [touched, setTouched] = useState({});
+  const touch = (name) => setTouched((prev) => ({ ...prev, [name]: true }));
 
   useEffect(() => {
     ssoConfig().then(setSso);
@@ -135,67 +144,86 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
 
   const signingUp = mode === 'signup';
 
+  // Client-side validation says only what the client can actually know: a field is empty, or a
+  // code is not the shape a code has. Whether the credential is *right* is the server's answer,
+  // and guessing at it here would either leak which usernames exist or contradict the response.
+  const usernameError = touched.username && !username.trim() ? 'Enter your username.' : '';
+  const passphraseError = touched.passphrase && !passphrase ? 'Enter your passphrase.' : '';
+  const totpError =
+    touched.totpCode && totpCode && !/^[0-9]{6}$|^[A-Za-z0-9-]{8,}$/.test(totpCode.trim())
+      ? 'Enter the 6-digit code, or one of your recovery codes.'
+      : '';
+
   return (
     <AuthShell subtitle={signingUp ? 'Create an account' : 'Sign in to continue'}>
       <form onSubmit={signingUp ? handleSignUp : handleSignIn}>
-        <label className="auth-label" htmlFor="auth-username">Username</label>
-        <input
-          id="auth-username"
-          className="auth-input"
-          type="text"
-          autoFocus
-          autoComplete="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="username"
-        />
+        <Field id="auth-username" label="Username" error={usernameError}>
+          {(field) => (
+            <TextInput
+              {...field}
+              type="text"
+              autoFocus
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onBlur={() => touch('username')}
+              placeholder="username"
+            />
+          )}
+        </Field>
 
         {signingUp ? (
           <>
-            <label className="auth-label" htmlFor="auth-invite">
-              Invite code <span className="auth-optional">optional</span>
-            </label>
-            <input
-              id="auth-invite"
-              className="auth-input"
-              type="text"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="skips the approval queue"
-            />
+            <Field id="auth-invite" label="Invite code" optional>
+              {(field) => (
+                <TextInput
+                  {...field}
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="skips the approval queue"
+                />
+              )}
+            </Field>
           </>
         ) : (
           <>
-            <label className="auth-label" htmlFor="auth-passphrase">Passphrase</label>
-            <input
-              id="auth-passphrase"
-              className="auth-input"
-              type="password"
-              autoComplete="current-password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              placeholder="four-word-pass-phrase"
-            />
+            <Field id="auth-passphrase" label="Passphrase" error={passphraseError}>
+              {(field) => (
+                <TextInput
+                  {...field}
+                  type="password"
+                  autoComplete="current-password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  onBlur={() => touch('passphrase')}
+                  placeholder="four-word-pass-phrase"
+                />
+              )}
+            </Field>
 
             {needsCode && (
               <>
-                <label className="auth-label" htmlFor="auth-totp">
-                  <ShieldCheck size={13} /> Authenticator code
-                </label>
-                <input
+                <Field
                   id="auth-totp"
-                  className="auth-input"
-                  type="text"
-                  autoFocus
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="123456"
-                />
-                <p className="auth-hint">
-                  Lost your authenticator? Use one of your recovery codes here instead.
-                </p>
+                  label={<><ShieldCheck size={13} /> Authenticator code</>}
+                  hint="Lost your authenticator? Use one of your recovery codes here instead."
+                  error={totpError}
+                >
+                  {(field) => (
+                    <TextInput
+                      {...field}
+                      type="text"
+                      autoFocus
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value)}
+                      onBlur={() => touch('totpCode')}
+                      placeholder="123456"
+                    />
+                  )}
+                </Field>
               </>
             )}
           </>
