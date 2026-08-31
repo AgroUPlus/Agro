@@ -781,6 +781,17 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist ON playlist_items(playlist_id, position);
     ",
+    // 34 — a handoff can name the file it is playing.
+    //
+    // Presence already travels on this row, and a listener following along needs to ask the host's
+    // device for *these bytes* rather than for a title. The host's `track_uri` cannot serve: it
+    // names a row in their Navidrome or a video in their YouTube session and means nothing on
+    // anyone else's device.
+    //
+    // NULL for everything that is not a hashed local file, which is most of what plays. That is
+    // the honest answer — without a file there is nothing to transfer — and it is what makes the
+    // peer-to-peer and relay tiers degrade to a name match instead of failing.
+    "ALTER TABLE handoff_state ADD COLUMN content_hash TEXT;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -1283,12 +1294,13 @@ impl Db {
         device_id: &str,
         queue_json: Option<&str>,
         queue_index: Option<i64>,
+        content_hash: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(user_id, device_id) DO UPDATE SET
              track_uri = excluded.track_uri,
              track_title = excluded.track_title,
@@ -1306,8 +1318,11 @@ impl Db {
              -- A heartbeat that carries no queue must not erase the one already stored: only a
              -- client that actually sent a queue replaces it.
              queue_json = COALESCE(excluded.queue_json, handoff_state.queue_json),
-             queue_index = COALESCE(excluded.queue_index, handoff_state.queue_index)",
-            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms],
+             queue_index = COALESCE(excluded.queue_index, handoff_state.queue_index),
+             -- Same rule as the queue: a heartbeat that does not name a hash must not erase the
+             -- one the track change already established.
+             content_hash = COALESCE(excluded.content_hash, handoff_state.content_hash)",
+            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms, content_hash],
         )?;
         Ok(())
     }
@@ -1344,7 +1359,8 @@ impl Db {
         // scramble the order rather than erroring.
         let mut stmt = conn.prepare(
             "SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms,
-                    is_playing, device_id, updated_at, queue_json, queue_index, duration_ms
+                    is_playing, device_id, updated_at, queue_json, queue_index, duration_ms,
+                    content_hash
                FROM handoff_state
               WHERE user_id = ?1 AND (?2 IS NULL OR device_id != ?2)
               ORDER BY updated_at DESC
@@ -1365,6 +1381,7 @@ impl Db {
                 queue_json: row.get(9)?,
                 queue_index: row.get(10)?,
                 duration_ms: row.get(11)?,
+                content_hash: row.get(12)?,
             }))
         } else {
             Ok(None)
@@ -2194,6 +2211,10 @@ pub struct HandoffRecord {
     pub is_playing: bool,
     pub device_id: String,
     pub updated_at: String,
+    /// SHA-256 of the bytes being played, when the sender knows it. `None` for anything that is
+    /// not a hashed local file, which is what makes a direct transfer impossible and a name match
+    /// the only option left.
+    pub content_hash: Option<String>,
     /// The whole queue as a JSON array, so a resumed session continues rather than stopping after
     /// one track. Kept opaque here: the clients agree on the shape, the server only stores it.
     pub queue_json: Option<String>,
@@ -2620,6 +2641,7 @@ mod retention_tests {
             "phone",
             Some("[\"one\"]"),
             Some(0),
+            None,
         )
         .unwrap();
 
@@ -2737,6 +2759,7 @@ mod handoff_tests {
             duration_ms,
             playing,
             device,
+            None,
             None,
             None,
         )

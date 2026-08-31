@@ -24,14 +24,63 @@ pub struct WsMessage {
     pub target_device: Option<String>,
 }
 
+/// Whether two observed public addresses put their devices behind the same edge.
+///
+/// IPv4 must match exactly. IPv6 matches on the `/64` prefix, which is the unit a router hands to
+/// a LAN; comparing the full address there would answer "no" for every pair of devices on the same
+/// network, since each picks its own host portion.
+fn same_egress(a: &str, b: &str) -> bool {
+    use std::net::IpAddr;
+    match (a.parse::<IpAddr>(), b.parse::<IpAddr>()) {
+        (Ok(IpAddr::V4(a)), Ok(IpAddr::V4(b))) => a == b,
+        (Ok(IpAddr::V6(a)), Ok(IpAddr::V6(b))) => a.octets()[..8] == b.octets()[..8],
+        // One of the two is not an address the server could parse. Refusing is the safe answer:
+        // it costs a fallback to the relay, and guessing costs a private address.
+        _ => false,
+    }
+}
+
+/// What is known about where a connected device sits on the network.
+///
+/// Both halves are volatile and both are needed together: the LAN address is where a peer would
+/// connect, and the egress address is the only evidence the server has about whether connecting
+/// could possibly work.
+#[derive(Default, Clone)]
+struct PeerNetwork {
+    /// `host:port` on the device's own local network, as the device reported it.
+    lan: Option<String>,
+    /// The public address this device's connection arrived from, as seen by the server.
+    ///
+    /// Never handed to another client. It exists only to be compared with another device's, and a
+    /// public address is a far more identifying thing than the RFC1918 address it gates.
+    egress: Option<String>,
+}
+
+/// How long a peer-to-peer grant stays usable.
+///
+/// Long enough to cover a listening session's worth of track changes without reminting on every
+/// frame, short enough that a token which escapes stops working the same afternoon.
+const P2P_GRANT_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Reissue rather than hand out a token about to expire mid-transfer.
+const P2P_GRANT_MIN_REMAINING: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub struct WsHub {
     pub tx: broadcast::Sender<WsMessage>,
-    /// Live LAN addresses of actively connected devices, held strictly in memory.
+    /// Live network facts about actively connected devices, held strictly in memory.
     ///
     /// Keyed by `(user_id, device_id)`. Volatile on purpose: when a device disconnects or the
     /// server restarts, the network address is wiped immediately from RAM and leaves zero residue
     /// on disk.
-    live_lan_addresses: std::sync::RwLock<std::collections::HashMap<(String, String), String>>,
+    live_peers: std::sync::RwLock<std::collections::HashMap<(String, String), PeerNetwork>>,
+    /// Outstanding peer-to-peer grants, keyed by `(host_user, host_device, listener_user)`.
+    ///
+    /// A grant is a bearer token the listener presents to the host's local HTTP server. It is
+    /// minted here so that neither client has to trust the other, and it is what stops a shared
+    /// LAN — a hotel, a campus, a coffee shop — from being a trusted one.
+    p2p_grants: std::sync::RwLock<
+        std::collections::HashMap<(String, String, String), (String, std::time::Instant)>,
+    >,
 }
 
 impl WsHub {
@@ -39,32 +88,166 @@ impl WsHub {
         let (tx, _) = broadcast::channel(100);
         Self {
             tx,
-            live_lan_addresses: std::sync::RwLock::new(std::collections::HashMap::new()),
+            live_peers: std::sync::RwLock::new(std::collections::HashMap::new()),
+            p2p_grants: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
     /// Stores a node's local LAN address in memory for peer-to-peer transfers while online.
     pub fn set_lan_address(&self, user_id: &str, device_id: &str, lan_address: &str) {
-        if let Ok(mut map) = self.live_lan_addresses.write() {
-            map.insert(
-                (user_id.to_string(), device_id.to_string()),
-                lan_address.to_string(),
-            );
+        if let Ok(mut map) = self.live_peers.write() {
+            map.entry((user_id.to_string(), device_id.to_string()))
+                .or_default()
+                .lan = Some(lan_address.to_string());
+        }
+    }
+
+    /// Records where a device's connection reached the server from.
+    ///
+    /// Separate from the LAN address because the server learns them at different moments and from
+    /// different sources: the LAN address is claimed by the client, this is observed.
+    pub fn set_egress_address(&self, user_id: &str, device_id: &str, egress: &str) {
+        if let Ok(mut map) = self.live_peers.write() {
+            map.entry((user_id.to_string(), device_id.to_string()))
+                .or_default()
+                .egress = Some(egress.to_string());
         }
     }
 
     /// Looks up a node's active local LAN address from memory.
     pub fn get_lan_address(&self, user_id: &str, device_id: &str) -> Option<String> {
-        self.live_lan_addresses
+        self.live_peers
             .read()
             .ok()
             .and_then(|map| map.get(&(user_id.to_string(), device_id.to_string())).cloned())
+            .and_then(|peer| peer.lan)
     }
 
-    /// Purges a node's local LAN address when it disconnects.
+    /// Whether two connected devices look like they are on the same local network.
+    ///
+    /// The test is that both connections reached the server from the same public address, which is
+    /// what being behind one NAT looks like from here. It is a heuristic in one direction only:
+    ///
+    /// - **False positives exist.** Carrier-grade NAT puts thousands of unrelated mobile
+    ///   subscribers behind one IPv4 address, as do large campus and office networks. This is why
+    ///   the LAN address it unlocks is never the *authorisation* for anything — the grant token is
+    ///   — and why the worst case is a connection that is refused rather than a disclosure.
+    /// - **False negatives are harmless.** Two devices that really are on one LAN but egress
+    ///   differently simply fall through to the relay, which is the tier below.
+    ///
+    /// IPv6 is compared on the `/64` prefix rather than the whole address. There is no NAT to hide
+    /// behind, so every device on a LAN has a distinct global address but shares the prefix its
+    /// router advertises — which makes it a stronger signal here than the IPv4 case, not a weaker
+    /// one.
+    pub fn same_network(
+        &self,
+        a_user: &str,
+        a_device: &str,
+        b_user: &str,
+        b_device: &str,
+    ) -> bool {
+        let Ok(map) = self.live_peers.read() else {
+            return false;
+        };
+        let egress_of = |user: &str, device: &str| -> Option<String> {
+            map.get(&(user.to_string(), device.to_string()))
+                .and_then(|peer| peer.egress.clone())
+        };
+        let (Some(a), Some(b)) = (egress_of(a_user, a_device), egress_of(b_user, b_device)) else {
+            return false;
+        };
+        same_egress(&a, &b)
+    }
+
+    /// Whether *any* device belonging to `viewer_user` shares a network with `host_device`.
+    ///
+    /// The pairwise question the callers actually have. A listener does not tell the server which
+    /// of their devices is asking — and should not have to, since the answer is the same either
+    /// way: if any of their connected devices could reach the host directly, the direct tier is
+    /// worth offering.
+    pub fn shares_network_with_user(
+        &self,
+        host_user: &str,
+        host_device: &str,
+        viewer_user: &str,
+    ) -> bool {
+        let Ok(map) = self.live_peers.read() else {
+            return false;
+        };
+        let Some(host_egress) = map
+            .get(&(host_user.to_string(), host_device.to_string()))
+            .and_then(|peer| peer.egress.clone())
+        else {
+            return false;
+        };
+        map.iter().any(|((user, device), peer)| {
+            user == viewer_user
+                && !(user == host_user && device == host_device)
+                && peer
+                    .egress
+                    .as_deref()
+                    .is_some_and(|egress| same_egress(&host_egress, egress))
+        })
+    }
+
+    /// A bearer token letting `listener_user` fetch audio from `host_device`'s local server.
+    ///
+    /// Reused while it has real life left in it, so a listening session does not mint a token per
+    /// track change, and pushed to the host the moment it is created — the host cannot accept a
+    /// token it has never been told about.
+    pub fn grant_p2p_token(
+        &self,
+        host_user: &str,
+        host_device: &str,
+        listener_user: &str,
+    ) -> Option<String> {
+        let key = (
+            host_user.to_string(),
+            host_device.to_string(),
+            listener_user.to_string(),
+        );
+        let now = std::time::Instant::now();
+
+        if let Ok(grants) = self.p2p_grants.read() {
+            if let Some((token, expires)) = grants.get(&key) {
+                if expires.saturating_duration_since(now) > P2P_GRANT_MIN_REMAINING {
+                    return Some(token.clone());
+                }
+            }
+        }
+
+        // 256 bits from the OS CSPRNG, minted by the same helper as a device token.
+        let token = crate::credentials::mint_token().secret;
+        {
+            let mut grants = self.p2p_grants.write().ok()?;
+            grants.retain(|_, (_, expires)| *expires > now);
+            grants.insert(key, (token.clone(), now + P2P_GRANT_TTL));
+        }
+
+        // The host is told before the listener is, because a grant the host has not seen is one it
+        // is obliged to refuse.
+        self.notify_device(
+            host_user,
+            host_device,
+            "P2P_GRANT",
+            serde_json::json!({
+                "token": token,
+                "forUser": listener_user,
+                "ttlSeconds": P2P_GRANT_TTL.as_secs(),
+            }),
+        );
+        Some(token)
+    }
+
+    /// Purges a node's local network facts and its grants when it disconnects.
     pub fn clear_lan_address(&self, user_id: &str, device_id: &str) {
-        if let Ok(mut map) = self.live_lan_addresses.write() {
+        if let Ok(mut map) = self.live_peers.write() {
             map.remove(&(user_id.to_string(), device_id.to_string()));
+        }
+        if let Ok(mut grants) = self.p2p_grants.write() {
+            grants.retain(|(host_user, host_device, _), _| {
+                !(host_user == user_id && host_device == device_id)
+            });
         }
     }
 
@@ -145,10 +328,22 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     user: Option<axum::Extension<AuthedUser>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     Query(query): Query<SocketQuery>,
 ) -> Response {
     let username = user.map(|u| u.username().to_string());
     let device = query.device;
+
+    // Where this connection actually reached the server from. Recorded for every authenticated
+    // socket, not only ones that claim a LAN address, because the comparison needs both ends and
+    // only one of them is the device asking. `client_ip` is the same reading the rate limiter
+    // trusts, so a reverse proxy does not collapse every device onto one address.
+    if let (Some(u), Some(d)) = (&username, &device) {
+        state
+            .ws_hub
+            .set_egress_address(u, d, &crate::login::client_ip(peer, &headers));
+    }
 
     // Before the node upsert, so a device is reachable as soon as its socket is up.
     if let (Some(u), Some(d), Some(lan)) = (&username, &device, query.lan.as_deref()) {
@@ -378,6 +573,97 @@ mod tests {
         assert!(is_for(&m, Some("alpha"), Some("phone")));
         assert!(!is_for(&m, Some("alpha"), Some("laptop")));
         assert!(!is_for(&m, Some("alpha"), None));
+    }
+
+    /// The same-network test is what decides whether a private address is ever handed to another
+    /// account, so both directions of it are pinned here.
+    mod same_network {
+        use super::*;
+
+        fn hub_with(peers: &[(&str, &str, &str)]) -> WsHub {
+            let hub = WsHub::new();
+            for (user, device, egress) in peers {
+                hub.set_egress_address(user, device, egress);
+                hub.set_lan_address(user, device, "192.168.1.50:8702");
+            }
+            hub
+        }
+
+        #[test]
+        fn one_public_address_means_one_network() {
+            let hub = hub_with(&[
+                ("alpha", "phone", "203.0.113.7"),
+                ("beta", "laptop", "203.0.113.7"),
+            ]);
+            assert!(hub.same_network("alpha", "phone", "beta", "laptop"));
+            assert!(hub.shares_network_with_user("alpha", "phone", "beta"));
+        }
+
+        #[test]
+        fn different_public_addresses_mean_different_networks() {
+            let hub = hub_with(&[
+                ("alpha", "phone", "203.0.113.7"),
+                ("beta", "laptop", "198.51.100.4"),
+            ]);
+            assert!(!hub.same_network("alpha", "phone", "beta", "laptop"));
+            assert!(!hub.shares_network_with_user("alpha", "phone", "beta"));
+        }
+
+        /// A device nobody has heard from has no egress address, and an unknown answer is not a
+        /// yes: it falls through to the relay rather than disclosing an address.
+        #[test]
+        fn an_unseen_device_is_never_on_your_network() {
+            let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
+            assert!(!hub.same_network("alpha", "phone", "beta", "laptop"));
+            assert!(!hub.shares_network_with_user("alpha", "phone", "beta"));
+        }
+
+        /// IPv6 has no NAT, so two devices on one LAN never share a full address — they share the
+        /// prefix their router advertises. Comparing the whole address would answer "no" for every
+        /// real pair.
+        #[test]
+        fn ipv6_is_compared_on_the_routed_prefix() {
+            assert!(same_egress(
+                "2001:db8:1:2::1000",
+                "2001:db8:1:2::abcd"
+            ));
+            assert!(!same_egress("2001:db8:1:2::1", "2001:db8:9:9::1"));
+        }
+
+        /// Mixing families, or anything unparseable, is refused rather than guessed at.
+        #[test]
+        fn an_unparseable_address_is_refused() {
+            assert!(!same_egress("203.0.113.7", "::ffff:203.0.113.7"));
+            assert!(!same_egress("not-an-address", "not-an-address"));
+            assert!(!same_egress("", ""));
+        }
+
+        /// The token is the gate, so it has to be stable enough to use across a track change and
+        /// scoped to the one listener it was minted for.
+        #[test]
+        fn a_grant_is_reused_for_the_same_pair_and_distinct_per_listener() {
+            let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
+            let first = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
+            let again = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
+            let other = hub.grant_p2p_token("alpha", "phone", "gamma").unwrap();
+            assert_eq!(first, again);
+            assert_ne!(first, other);
+        }
+
+        /// A disconnect takes the address and every grant issued for that device with it.
+        #[test]
+        fn disconnecting_clears_the_address_and_the_grants() {
+            let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
+            let token = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
+            hub.clear_lan_address("alpha", "phone");
+            assert!(hub.get_lan_address("alpha", "phone").is_none());
+            assert!(!hub.shares_network_with_user("alpha", "phone", "beta"));
+            assert_ne!(
+                token,
+                hub.grant_p2p_token("alpha", "phone", "beta").unwrap(),
+                "a grant must not survive the socket it was minted for"
+            );
+        }
     }
 
     /// The regression that made the volatile design worth fixing rather than reverting: an

@@ -157,7 +157,7 @@ fn is_trusted_proxy(peer: IpAddr) -> bool {
 /// The *rightmost* untrusted entry is taken, not the leftmost. `X-Forwarded-For` is appended to as
 /// it passes through each hop, so the left end is whatever the original client chose to send and
 /// only the right end was written by infrastructure that can be trusted.
-fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> String {
+pub(crate) fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> String {
     if is_trusted_proxy(peer.ip()) {
         if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
             let candidate = forwarded

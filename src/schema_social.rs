@@ -133,6 +133,21 @@ pub struct FriendNowPlaying {
     pub position_ms: i64,
     pub is_playing: bool,
     pub updated_at: String,
+    /// Which of the host's devices is playing it.
+    ///
+    /// A listener needs this to ask for the audio at all: both the direct transfer and the relay
+    /// address one device, not an account.
+    pub device_id: String,
+    /// SHA-256 of the file the host is playing, when they have one. `None` for anything streamed,
+    /// which is what sends a listener back to matching by name.
+    pub content_hash: Option<String>,
+    /// Where to reach the host's device directly, and the token to present when doing so.
+    ///
+    /// Both are `Some` only when the two devices look like they share a local network *and* the
+    /// viewer is allowed to see this account at all. Neither is the authorisation on its own — see
+    /// [`crate::ws::WsHub::same_network`] for why the address is a hint and the token is the gate.
+    pub peer_lan_address: Option<String>,
+    pub peer_lan_token: Option<String>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -257,7 +272,40 @@ fn now_playing_of(db: &Db, username: &str) -> async_graphql::Result<Option<Frien
         position_ms: handoff.position_ms,
         is_playing: handoff.is_playing,
         updated_at: handoff.updated_at,
+        device_id: handoff.device_id,
+        content_hash: handoff.content_hash,
+        // No viewer, no pairwise answer. Whether a direct transfer is possible is a fact about two
+        // devices, so a projection that does not know who is asking cannot fill these in.
+        peer_lan_address: None,
+        peer_lan_token: None,
     }))
+}
+
+/// The same, answered for a specific viewer on a specific device.
+///
+/// The direct-transfer fields are pairwise — they depend on where *both* devices are — so they can
+/// only be filled in once the asker is known. Everything else is identical, and a viewer who
+/// cannot be told about this host never reaches here: the caller has already applied the
+/// friendship and visibility gates.
+fn now_playing_for_viewer(
+    db: &Db,
+    ws_hub: &crate::ws::WsHub,
+    host: &str,
+    viewer: &str,
+) -> async_graphql::Result<Option<FriendNowPlaying>> {
+    let Some(mut now) = now_playing_of(db, host)? else {
+        return Ok(None);
+    };
+    if ws_hub.shares_network_with_user(host, &now.device_id, viewer) {
+        if let Some(lan) = ws_hub.get_lan_address(host, &now.device_id) {
+            now.peer_lan_token = ws_hub.grant_p2p_token(host, &now.device_id, viewer);
+            // The address is only worth handing over alongside a token to use it with.
+            if now.peer_lan_token.is_some() {
+                now.peer_lan_address = Some(lan);
+            }
+        }
+    }
+    Ok(Some(now))
 }
 
 #[derive(Default)]
@@ -459,9 +507,10 @@ impl SocialQuery {
             db.clear_listen_along(authed.username())?;
             return Ok(None);
         }
+        let ws_hub = ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?;
         Ok(Some(ListenAlongPayload {
             listeners: db.listeners_of(&session.host)?,
-            now_playing: now_playing_of(db, &session.host)?,
+            now_playing: now_playing_for_viewer(db, ws_hub, &session.host, authed.username())?,
             host: session.host,
         }))
     }
@@ -999,9 +1048,15 @@ impl SocialMutation {
         }
 
         db.set_listen_along(authed.username(), &subject.username)?;
+        let ws_hub = ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?;
         let payload = ListenAlongPayload {
             listeners: db.listeners_of(&subject.username)?,
-            now_playing: now_playing_of(db, &subject.username)?,
+            now_playing: now_playing_for_viewer(
+                db,
+                ws_hub,
+                &subject.username,
+                authed.username(),
+            )?,
             host: subject.username.clone(),
         };
 
@@ -1121,10 +1176,26 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
 
     // `listeners_of` re-checks the friendship, so someone who was unfriended mid-session stops
     // receiving frames whether or not their row was cleaned up.
+    //
+    // Sent one listener at a time rather than as a single fan-out, because two of these fields are
+    // *pairwise*: whether the host is directly reachable, and the token to reach them with, are
+    // facts about this listener and this host together. Broadcasting one payload would hand every
+    // listener the first one's answer — including a LAN address and a bearer token that were never
+    // theirs.
     if let Ok(listeners) = db.listeners_of(user) {
-        if !listeners.is_empty() {
-            ws_hub.notify_users(
-                &listeners,
+        for listener in listeners {
+            let mut peer_lan_address = None;
+            let mut peer_lan_token = None;
+            if ws_hub.shares_network_with_user(user, &now.device_id, &listener) {
+                if let Some(lan) = ws_hub.get_lan_address(user, &now.device_id) {
+                    peer_lan_token = ws_hub.grant_p2p_token(user, &now.device_id, &listener);
+                    if peer_lan_token.is_some() {
+                        peer_lan_address = Some(lan);
+                    }
+                }
+            }
+            ws_hub.notify_user(
+                &listener,
                 "LISTEN_ALONG",
                 serde_json::json!({
                     "host": user,
@@ -1136,6 +1207,10 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
                     "positionMs": now.position_ms,
                     "isPlaying": now.is_playing,
                     "updatedAt": now.updated_at,
+                    "deviceId": now.device_id,
+                    "contentHash": now.content_hash,
+                    "peerLanAddress": peer_lan_address,
+                    "peerLanToken": peer_lan_token,
                 }),
             );
         }
