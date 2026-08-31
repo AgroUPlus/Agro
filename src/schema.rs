@@ -21,6 +21,7 @@ pub struct Query(
     crate::schema_feed::FeedQuery,
     crate::schema_drops::DropsQuery,
     crate::schema_playlists::PlaylistsQuery,
+    crate::schema_catalog::CatalogQuery,
 );
 
 #[derive(async_graphql::MergedObject, Default)]
@@ -30,6 +31,7 @@ pub struct Mutation(
     crate::schema_jam::JamMutation,
     crate::schema_drops::DropsMutation,
     crate::schema_playlists::PlaylistsMutation,
+    crate::schema_catalog::CatalogMutation,
 );
 
 pub type AgroSchema = Schema<Query, Mutation, async_graphql::EmptySubscription>;
