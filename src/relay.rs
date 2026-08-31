@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::auth::AuthedUser;
+use crate::db_social::FriendState;
 use crate::AppState;
 
 const SESSION_TTL: Duration = Duration::from_secs(60);
@@ -154,14 +155,20 @@ pub async fn open_relay(
         }
     };
 
+    // `friend_state` answers `Some(..)` for a *pending* request and for a *block* as well as for
+    // an accepted friendship, so testing it with `is_some()` would let a stranger who merely sent a
+    // request — or someone this account has blocked — name this account's device as the sender, and
+    // the `RELAY_REQUEST` below would make that device upload a hash of the caller's choosing.
+    // `are_friends` is the accepted-only test, and a block outranks a shared jam.
     let allowed = if sender_user.eq_ignore_ascii_case(user_id) {
         true
+    } else if matches!(
+        state.db.friend_state(user_id, &sender_user).unwrap_or(None),
+        Some(FriendState::Blocked)
+    ) {
+        false
     } else {
-        let is_friend = state
-            .db
-            .friend_state(user_id, &sender_user)
-            .unwrap_or(None)
-            .is_some();
+        let is_friend = state.db.are_friends(user_id, &sender_user).unwrap_or(false);
         let is_in_same_jam = match (
             state.db.jam_for_member(user_id),
             state.db.jam_for_member(&sender_user),
@@ -459,10 +466,36 @@ mod tests {
             let (state, alpha) = two_accounts();
             // Accept friend relation
             state.db.send_friend_request("alpha", "friend").unwrap();
-            state.db.respond_friend_request("friend", "alpha", true).unwrap();
+            state.db.accept_friend_request("friend", "alpha").unwrap();
             assert_eq!(
                 open(state, alpha, "friend-phone", "alpha-pc").await,
                 StatusCode::OK
+            );
+        }
+
+        /// A request that has been *sent* and not answered is not a friendship. Treating any
+        /// `friend_state` row as permission let a stranger who merely asked make this account's
+        /// device upload a hash of their choosing.
+        #[tokio::test]
+        async fn a_relay_from_a_pending_request_is_refused() {
+            let (state, alpha) = two_accounts();
+            state.db.send_friend_request("friend", "alpha").unwrap();
+            assert_eq!(
+                open(state, alpha, "friend-phone", "alpha-pc").await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        /// And a block is the strongest answer there is, including over a shared jam.
+        #[tokio::test]
+        async fn a_relay_from_a_blocked_account_is_refused() {
+            let (state, alpha) = two_accounts();
+            state.db.send_friend_request("alpha", "friend").unwrap();
+            state.db.accept_friend_request("friend", "alpha").unwrap();
+            state.db.block_user("alpha", "friend").unwrap();
+            assert_eq!(
+                open(state, alpha, "friend-phone", "alpha-pc").await,
+                StatusCode::FORBIDDEN
             );
         }
 
