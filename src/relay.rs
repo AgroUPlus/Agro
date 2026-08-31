@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::auth::AuthedUser;
 use crate::db_social::FriendState;
@@ -31,19 +31,56 @@ use crate::AppState;
 const SESSION_TTL: Duration = Duration::from_secs(60);
 const CHANNEL_BUFFER_CHUNKS: usize = 8;
 
+/// Chunks held for a jam listener that has fallen behind the others.
+///
+/// Larger than the direct buffer because the slowest listener sets the pace for nobody: a
+/// listener that cannot keep up is dropped from the fanout rather than stalling the host, and
+/// this is how much jitter it may absorb before that happens.
+const FANOUT_BUFFER_CHUNKS: usize = 16;
+
+/// Where a relay session's bytes go.
+pub enum RelayPipe {
+    /// One sender to one receiver. The receiving device is named when the session is opened.
+    Direct {
+        tx: Mutex<Option<mpsc::Sender<Result<Bytes, std::io::Error>>>>,
+        rx: Mutex<Option<mpsc::Receiver<Result<Bytes, std::io::Error>>>>,
+    },
+    /// One sender to every listener in a jam who asks for it.
+    ///
+    /// The host encrypts and uploads a chunk once; the server copies the ciphertext to whoever is
+    /// attached. That is the whole reason this exists: with a session per listener the host would
+    /// upload the same bytes once per person, which is the cost a phone cannot pay.
+    ///
+    /// Nothing is buffered for a listener that has not attached yet. A jam plays in lockstep, so
+    /// arriving late means joining the stream in progress, not receiving it from the beginning.
+    Fanout {
+        tx: broadcast::Sender<Bytes>,
+        sender_attached: std::sync::atomic::AtomicBool,
+    },
+}
+
 pub struct RelayChannel {
     pub session_id: String,
     pub content_hash: String,
     pub sender_user: String,
     pub sender_device: String,
+    /// The single authorised receiver, for a [`RelayPipe::Direct`] session. Empty for a fanout,
+    /// where membership of [`RelayChannel::jam_id`] decides instead.
     pub receiver_user: String,
     pub receiver_device: String,
+    /// Set when this session fans out to a jam. Authorisation reads it on every attach, so a
+    /// listener who leaves the jam stops being able to receive.
+    pub jam_id: Option<String>,
     pub created_at: Instant,
     pub is_encrypted: Mutex<bool>,
     pub nonce: Mutex<Option<String>>,
     pub key_fingerprint: Mutex<Option<String>>,
-    tx: Mutex<Option<mpsc::Sender<Result<Bytes, std::io::Error>>>>,
-    rx: Mutex<Option<mpsc::Receiver<Result<Bytes, std::io::Error>>>>,
+    /// The room key, sealed by the host to the listener's identity key.
+    ///
+    /// Opaque here. The server carries it from the one device to the other because it is already
+    /// carrying their bytes, and it can no more read this than it can read those.
+    pub sealed_key: Mutex<Option<String>>,
+    pub pipe: RelayPipe,
 }
 
 #[derive(Clone, Default)]
@@ -79,12 +116,55 @@ impl RelayHub {
             sender_device: sender_device.to_string(),
             receiver_user: receiver_user.to_string(),
             receiver_device: receiver_device.to_string(),
+            jam_id: None,
             created_at: now,
             is_encrypted: Mutex::new(false),
             nonce: Mutex::new(None),
             key_fingerprint: Mutex::new(None),
-            tx: Mutex::new(Some(tx)),
-            rx: Mutex::new(Some(rx)),
+            sealed_key: Mutex::new(None),
+            pipe: RelayPipe::Direct {
+                tx: Mutex::new(Some(tx)),
+                rx: Mutex::new(Some(rx)),
+            },
+        });
+
+        guard.insert(session_id.clone(), channel.clone());
+        (session_id, channel)
+    }
+
+    /// Opens a session the whole jam can attach to, fed by one upload from the host.
+    pub fn create_jam_session(
+        &self,
+        jam_id: &str,
+        sender_user: &str,
+        sender_device: &str,
+        content_hash: &str,
+    ) -> (String, Arc<RelayChannel>) {
+        let mut guard = self.sessions.lock().unwrap();
+        let now = Instant::now();
+        guard.retain(|_, s| now.duration_since(s.created_at) < SESSION_TTL);
+
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let (tx, _) = broadcast::channel(FANOUT_BUFFER_CHUNKS);
+
+        let channel = Arc::new(RelayChannel {
+            session_id: session_id.clone(),
+            content_hash: content_hash.to_string(),
+            sender_user: sender_user.to_string(),
+            sender_device: sender_device.to_string(),
+            // Named on attach instead: a fanout has as many receivers as the jam has listeners.
+            receiver_user: String::new(),
+            receiver_device: String::new(),
+            jam_id: Some(jam_id.to_string()),
+            created_at: now,
+            is_encrypted: Mutex::new(false),
+            nonce: Mutex::new(None),
+            key_fingerprint: Mutex::new(None),
+            sealed_key: Mutex::new(None),
+            pipe: RelayPipe::Fanout {
+                tx,
+                sender_attached: std::sync::atomic::AtomicBool::new(false),
+            },
         });
 
         guard.insert(session_id.clone(), channel.clone());
@@ -114,6 +194,19 @@ pub struct OpenRelayRequest {
     pub content_hash: String,
     pub from_device: String,
     pub to_device: String,
+    /// The requesting device's X25519 identity key, so the host can seal a room key to it.
+    ///
+    /// Passed straight through to the host and never used by the server, which has no business
+    /// holding either half of this exchange. Absent means the listener cannot do E2EE, and the
+    /// host will relay in the clear as before.
+    #[serde(default)]
+    pub listener_public_key: Option<String>,
+    /// Set to fan one upload out to a jam instead of to a single device.
+    ///
+    /// `to_device` is ignored when this is present: the audience is whoever is in the jam at the
+    /// moment they attach, which is not knowable when the session is opened.
+    #[serde(default)]
+    pub jam_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -129,6 +222,34 @@ pub async fn open_relay(
     Json(body): Json<OpenRelayRequest>,
 ) -> Response {
     let user_id = user.username();
+
+    // A fanout is opened by the host, for its own jam, and is authorised entirely differently:
+    // there is no single receiving device to check, and the sender is by definition the caller.
+    // Listeners are authorised when they attach, against the jam's membership at that moment.
+    if let Some(jam_id) = body.jam_id.as_deref().map(str::trim).filter(|j| !j.is_empty()) {
+        if !state
+            .db
+            .device_belongs_to(user_id, body.from_device.trim())
+            .unwrap_or(false)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                "source device does not belong to this account",
+            )
+                .into_response();
+        }
+        if !state.db.is_jam_member(jam_id, user_id).unwrap_or(false) {
+            return (StatusCode::FORBIDDEN, "not a member of this jam").into_response();
+        }
+
+        let (session_id, _) = state.relay_hub.create_jam_session(
+            jam_id,
+            user_id,
+            body.from_device.trim(),
+            body.content_hash.trim(),
+        );
+        return Json(OpenRelayResponse { session_id }).into_response();
+    }
 
     // 1. The receiver must be a device belonging to the caller.
     if !state
@@ -204,6 +325,7 @@ pub async fn open_relay(
             "sessionId": session_id,
             "contentHash": body.content_hash,
             "toDevice": body.to_device,
+            "listenerPublicKey": body.listener_public_key,
         }),
     );
 
@@ -242,9 +364,40 @@ pub async fn send_relay(
             *session.key_fingerprint.lock().unwrap() = Some(val.to_string());
         }
     }
+    if let Some(sealed) = headers.get("x-agro-sealed-key") {
+        if let Ok(val) = sealed.to_str() {
+            *session.sealed_key.lock().unwrap() = Some(val.to_string());
+        }
+    }
 
+    if let RelayPipe::Fanout {
+        tx,
+        sender_attached,
+    } = &session.pipe
+    {
+        use std::sync::atomic::Ordering;
+        if sender_attached.swap(true, Ordering::SeqCst) {
+            return (StatusCode::CONFLICT, "relay sender already connected").into_response();
+        }
+
+        let mut stream = body.into_data_stream();
+        while let Some(chunk) = stream.next().await {
+            let Ok(bytes) = chunk else { break };
+            // An error here means nobody is attached *at this instant*, which is not a reason to
+            // abandon the upload: a jam listener can attach a moment later, and the host is
+            // playing the track regardless.
+            let _ = tx.send(bytes);
+        }
+        // Dropping the hub's session ends every attached listener's stream together.
+        state.relay_hub.remove_session(&session_id);
+        return (StatusCode::OK, "streaming to relay").into_response();
+    }
+
+    let RelayPipe::Direct { tx: pipe_tx, .. } = &session.pipe else {
+        unreachable!("fanout handled above");
+    };
     let tx = {
-        let mut guard = session.tx.lock().unwrap();
+        let mut guard = pipe_tx.lock().unwrap();
         guard.take()
     };
 
@@ -291,12 +444,65 @@ pub async fn receive_relay(
         return (StatusCode::NOT_FOUND, "relay session not found or expired").into_response();
     };
 
-    if !session.receiver_user.eq_ignore_ascii_case(user.username()) {
+    // A fanout is addressed to a jam rather than to a device, so membership is what authorises
+    // attaching — and it is read now, not when the session was opened, so someone who has left
+    // the jam stops being able to receive.
+    if let Some(jam_id) = &session.jam_id {
+        let is_member = state
+            .db
+            .is_jam_member(jam_id, user.username())
+            .unwrap_or(false);
+        if !is_member {
+            return (StatusCode::FORBIDDEN, "not a member of this jam").into_response();
+        }
+    } else if !session.receiver_user.eq_ignore_ascii_case(user.username()) {
         return (StatusCode::FORBIDDEN, "not the receiver of this relay session").into_response();
     }
 
+    if let RelayPipe::Fanout { tx, .. } = &session.pipe {
+        let stream = futures_util::stream::unfold(tx.subscribe(), |mut rx| async move {
+            match rx.recv().await {
+                Ok(bytes) => Some((Ok::<Bytes, std::io::Error>(bytes), rx)),
+                // Closed: the upload finished or the session was swept.
+                //
+                // Lagged: this listener could not keep up. Ending its stream is the honest
+                // answer — the bytes it skipped are gone, and audio resumed past a hole is
+                // noise. It falls back to another tier, and the rest of the jam is unaffected.
+                Err(_) => None,
+            }
+        });
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            "application/octet-stream".parse().unwrap(),
+        );
+        if *session.is_encrypted.lock().unwrap() {
+            headers.insert("x-agro-encrypted", "true".parse().unwrap());
+        }
+        if let Some(nonce) = session.nonce.lock().unwrap().clone() {
+            if let Ok(value) = nonce.parse() {
+                headers.insert("x-agro-nonce", value);
+            }
+        }
+        if let Some(fp) = session.key_fingerprint.lock().unwrap().clone() {
+            if let Ok(value) = fp.parse() {
+                headers.insert("x-agro-key-fingerprint", value);
+            }
+        }
+        if let Some(sealed) = session.sealed_key.lock().unwrap().clone() {
+            if let Ok(value) = sealed.parse() {
+                headers.insert("x-agro-sealed-key", value);
+            }
+        }
+        return (headers, Body::from_stream(stream)).into_response();
+    }
+
+    let RelayPipe::Direct { rx: pipe_rx, .. } = &session.pipe else {
+        unreachable!("fanout handled above");
+    };
     let rx = {
-        let mut guard = session.rx.lock().unwrap();
+        let mut guard = pipe_rx.lock().unwrap();
         guard.take()
     };
 
@@ -315,6 +521,7 @@ pub async fn receive_relay(
     let is_encrypted = *session.is_encrypted.lock().unwrap();
     let nonce = session.nonce.lock().unwrap().clone();
     let key_fp = session.key_fingerprint.lock().unwrap().clone();
+    let sealed_key = session.sealed_key.lock().unwrap().clone();
 
     // Cleanup and bookkeeping happen when the stream *ends*, not on a timer.
     let mut transferred: u64 = 0;
@@ -361,6 +568,11 @@ pub async fn receive_relay(
             response_headers.insert("x-agro-key-fingerprint", v);
         }
     }
+    if let Some(sealed) = sealed_key {
+        if let Ok(v) = sealed.parse() {
+            response_headers.insert("x-agro-sealed-key", v);
+        }
+    }
 
     (StatusCode::OK, response_headers, body).into_response()
 }
@@ -387,12 +599,77 @@ mod tests {
         assert!(hub.get_session(&id).is_none());
     }
 
+    /// One upload, every listener. This is the whole point of the fanout.
     #[tokio::test]
+    async fn a_jam_upload_reaches_every_attached_listener() {
+        let hub = RelayHub::new();
+        let (_, session) = hub.create_jam_session("jam-1", "host", "host-phone", "hash-1");
+
+        let RelayPipe::Fanout { tx, .. } = &session.pipe else {
+            panic!("create_jam_session makes a fanout pipe");
+        };
+        let mut first = tx.subscribe();
+        let mut second = tx.subscribe();
+
+        tx.send(Bytes::from_static(b"chunk")).expect("listeners attached");
+
+        assert_eq!(first.recv().await.unwrap(), Bytes::from_static(b"chunk"));
+        assert_eq!(second.recv().await.unwrap(), Bytes::from_static(b"chunk"));
+    }
+
+    /// A listener attaching after the upload started joins in progress; a jam plays in lockstep,
+    /// so there is nothing sensible to replay to it.
+    #[tokio::test]
+    async fn a_late_listener_does_not_receive_earlier_chunks() {
+        let hub = RelayHub::new();
+        let (_, session) = hub.create_jam_session("jam-1", "host", "host-phone", "hash-1");
+        let RelayPipe::Fanout { tx, .. } = &session.pipe else {
+            panic!("fanout");
+        };
+
+        // Nobody attached yet: the send fails and the chunk is gone, which is intended.
+        let _ = tx.send(Bytes::from_static(b"early"));
+        let mut late = tx.subscribe();
+        tx.send(Bytes::from_static(b"later")).expect("listener attached");
+
+        assert_eq!(late.recv().await.unwrap(), Bytes::from_static(b"later"));
+    }
+
+    /// The host uploads once. A second upload to the same session is refused rather than
+    /// interleaved into the listeners' streams.
+    #[test]
+    fn a_fanout_accepts_only_one_sender() {
+        use std::sync::atomic::Ordering;
+        let hub = RelayHub::new();
+        let (_, session) = hub.create_jam_session("jam-1", "host", "host-phone", "hash-1");
+        let RelayPipe::Fanout { sender_attached, .. } = &session.pipe else {
+            panic!("fanout");
+        };
+
+        assert!(!sender_attached.swap(true, Ordering::SeqCst), "first upload attaches");
+        assert!(sender_attached.swap(true, Ordering::SeqCst), "second is refused");
+    }
+
+    /// A fanout carries the jam it belongs to, because that is what every attach is checked
+    /// against — not a receiver fixed when the session was opened.
+    #[test]
+    fn a_fanout_is_addressed_to_a_jam_not_a_device() {
+        let hub = RelayHub::new();
+        let (id, session) = hub.create_jam_session("jam-1", "host", "host-phone", "hash-1");
+
+        assert_eq!(session.jam_id.as_deref(), Some("jam-1"));
+        assert!(session.receiver_device.is_empty());
+        assert!(hub.get_session(&id).is_some());
+    }
+
     async fn pipes_bytes_between_sender_and_receiver() {
         let hub = RelayHub::new();
         let (id, session) = hub.create_session("alpha", "phone", "alpha", "pc", "hash123");
-        let tx = session.tx.lock().unwrap().take().unwrap();
-        let mut rx = session.rx.lock().unwrap().take().unwrap();
+        let RelayPipe::Direct { tx, rx } = &session.pipe else {
+            panic!("create_session makes a direct pipe");
+        };
+        let tx = tx.lock().unwrap().take().unwrap();
+        let mut rx = rx.lock().unwrap().take().unwrap();
 
         tokio::spawn(async move {
             tx.send(Ok(Bytes::from_static(b"audio stream chunk 1"))).await.unwrap();
@@ -439,6 +716,8 @@ mod tests {
                 State(state),
                 axum::Extension(user),
                 Json(OpenRelayRequest {
+                    jam_id: None,
+                    listener_public_key: None,
                     content_hash: "hash123".to_string(),
                     from_device: from.to_string(),
                     to_device: to.to_string(),

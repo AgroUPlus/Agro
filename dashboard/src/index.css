@@ -972,28 +972,6 @@ input:checked + .slider:before {
   color: var(--text-muted);
 }
 
-.auth-optional {
-  text-transform: none;
-  letter-spacing: 0;
-  opacity: 0.65;
-}
-
-.auth-input {
-  width: 100%;
-  padding: 11px 12px;
-  margin-bottom: 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm, 6px);
-  color: var(--text-main);
-  font-size: 14px;
-}
-
-.auth-input:focus {
-  outline: none;
-  border-color: var(--accent, #7aa2f7);
-}
-
 .auth-hint,
 .auth-lede {
   margin: -6px 0 18px;
@@ -2090,4 +2068,85 @@ input:checked + .slider:before {
 
 .cover-delete-btn:hover {
   background: var(--danger);
+}
+
+/* ---------------------------------------------------------------------------
+   Form fields
+
+   One place for what a labelled input looks like. This replaced the per-screen
+   `.auth-input` rules, which set a 14px font and no hover, error or disabled
+   state at all.
+   --------------------------------------------------------------------------- */
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.field-optional {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.field-input {
+  width: 100%;
+  padding: 11px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-main);
+  /* 16px, not the 14px the old .auth-input used: anything smaller makes iOS Safari zoom the
+     viewport on focus, which is the input clipping people were reporting on phones. */
+  font-size: 16px;
+  line-height: 1.4;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.field-input::placeholder {
+  color: var(--text-muted);
+}
+
+.field-input:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  background: var(--bg-surface-elevated);
+}
+
+/* Focus stays visible on an invalid field — the error colour is information, not a focus ring. */
+.field-input-invalid,
+.field-input-invalid:hover:not(:focus) {
+  border-color: var(--status-error);
+}
+
+.field-input:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.field-error {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--status-error);
 }

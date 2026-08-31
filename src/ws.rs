@@ -22,6 +22,14 @@ pub struct WsMessage {
     /// means every device on the account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_device: Option<String>,
+    /// Position in the hub's total order, assigned on the way out.
+    ///
+    /// A client remembers the highest it has seen and asks to resume from it, which is the whole
+    /// of how a message survives a reconnect. Absent on frames the server writes directly to one
+    /// socket (`AUTH_SUCCESS`, `RESUMED`): those are not part of the ordered stream and replaying
+    /// them would be meaningless.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
 }
 
 /// Whether two observed public addresses put their devices behind the same edge.
@@ -81,7 +89,29 @@ pub struct WsHub {
     p2p_grants: std::sync::RwLock<
         std::collections::HashMap<(String, String, String), (String, std::time::Instant)>,
     >,
+    /// The next position in the total order.
+    next_seq: std::sync::atomic::AtomicU64,
+    /// Recently sent messages, newest last, for replaying to a socket that reconnects.
+    ///
+    /// A `broadcast` channel drops what a disconnected receiver never took, so a client that
+    /// changed network mid-session came back having silently missed frames — the E2EE negotiation
+    /// among them, which is why a handover could leave a session unable to decrypt. This is the
+    /// short memory that makes reconnection lossless.
+    ///
+    /// In memory and bounded twice over, by age and by count: it holds live control traffic for
+    /// long enough to reconnect, and is not a message store.
+    replay: std::sync::RwLock<std::collections::VecDeque<(std::time::Instant, WsMessage)>>,
 }
+
+/// How far back a reconnecting socket can resume from.
+///
+/// Long enough to cover a Wi-Fi-to-cellular handover and the backoff before the client retries,
+/// short enough that the buffer stays small and a client gone longer than this is told to
+/// resynchronise rather than handed a stale prefix of the stream.
+const REPLAY_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A ceiling on the buffer regardless of age, so a burst cannot grow it without bound.
+const REPLAY_CAPACITY: usize = 512;
 
 impl WsHub {
     pub fn new() -> Self {
@@ -90,7 +120,66 @@ impl WsHub {
             tx,
             live_peers: std::sync::RwLock::new(std::collections::HashMap::new()),
             p2p_grants: std::sync::RwLock::new(std::collections::HashMap::new()),
+            next_seq: std::sync::atomic::AtomicU64::new(1),
+            replay: std::sync::RwLock::new(std::collections::VecDeque::new()),
         }
+    }
+
+    /// Stamps a message with its position, remembers it, and sends it.
+    ///
+    /// Every ordered message leaves through here, so the sequence has no gaps and the buffer can
+    /// never disagree with what was actually sent.
+    fn publish(&self, mut msg: WsMessage) {
+        let seq = self
+            .next_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        msg.seq = Some(seq);
+
+        if let Ok(mut buffer) = self.replay.write() {
+            let now = std::time::Instant::now();
+            buffer.push_back((now, msg.clone()));
+            // Trimmed on the way in rather than on a timer: the buffer only grows when something
+            // is sent, so that is the only moment it can be too large.
+            while buffer
+                .front()
+                .is_some_and(|(at, _)| now.duration_since(*at) > REPLAY_TTL)
+            {
+                buffer.pop_front();
+            }
+            while buffer.len() > REPLAY_CAPACITY {
+                buffer.pop_front();
+            }
+        }
+
+        let _ = self.tx.send(msg);
+    }
+
+    /// Messages after [`after_seq`] that this socket should have seen, oldest first.
+    ///
+    /// `None` means the buffer cannot answer — the client has been gone longer than [`REPLAY_TTL`]
+    /// or a burst pushed its position out — and the caller must tell it to resynchronise rather
+    /// than hand it a prefix with a hole at the front, which would be worse than admitting the gap.
+    fn replay_after(
+        &self,
+        after_seq: u64,
+        username: Option<&str>,
+        device: Option<&str>,
+    ) -> Option<Vec<WsMessage>> {
+        let buffer = self.replay.read().ok()?;
+        let oldest = buffer.front().map(|(_, m)| m.seq.unwrap_or(0))?;
+        // The client's next expected message must still be in the buffer. Equality is fine: it
+        // means nothing has been dropped since it left.
+        if oldest > after_seq + 1 {
+            return None;
+        }
+        Some(
+            buffer
+                .iter()
+                .filter(|(_, m)| m.seq.is_some_and(|s| s > after_seq))
+                .filter(|(_, m)| is_for(m, username, device))
+                .map(|(_, m)| m.clone())
+                .collect(),
+        )
     }
 
     /// Stores a node's local LAN address in memory for peer-to-peer transfers while online.
@@ -253,21 +342,23 @@ impl WsHub {
 
     /// Sends to every device on every account. Used for things that are not account-specific.
     pub fn broadcast(&self, msg_type: &str, payload: serde_json::Value) {
-        let _ = self.tx.send(WsMessage {
+        self.publish(WsMessage {
             msg_type: msg_type.to_string(),
             payload,
             user_id: None,
             target_device: None,
+            seq: None,
         });
     }
 
     /// Sends to one account's devices.
     pub fn notify_user(&self, user_id: &str, msg_type: &str, payload: serde_json::Value) {
-        let _ = self.tx.send(WsMessage {
+        self.publish(WsMessage {
             msg_type: msg_type.to_string(),
             payload,
             user_id: Some(user_id.to_string()),
             target_device: None,
+            seq: None,
         });
     }
 
@@ -290,11 +381,12 @@ impl WsHub {
         msg_type: &str,
         payload: serde_json::Value,
     ) {
-        let _ = self.tx.send(WsMessage {
+        self.publish(WsMessage {
             msg_type: msg_type.to_string(),
             payload,
             user_id: Some(user_id.to_string()),
             target_device: Some(device_id.to_string()),
+            seq: None,
         });
     }
 }
@@ -474,6 +566,23 @@ async fn handle_socket(
         }
     }
 
+    // Both loops below need to write to the socket — the live stream, and a RESUME being answered
+    // — so the sink is owned by one task and fed through a channel rather than shared behind a
+    // lock. A bounded channel also means a socket that stops reading applies backpressure here
+    // instead of growing a queue.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(64);
+    let writer = tokio::spawn(async move {
+        while let Some(text) = out_rx.recv().await {
+            if sender.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let hub = state.ws_hub.clone();
+    let (user_for_recv, device_for_recv) = (username.clone(), device.clone());
+    let resume_tx = out_tx.clone();
+
     tokio::select! {
         _ = async {
             while let Ok(msg) = rx.recv().await {
@@ -481,18 +590,56 @@ async fn handle_socket(
                     continue;
                 }
                 if let Ok(text) = serde_json::to_string(&msg) {
-                    if sender.send(Message::Text(text.into())).await.is_err() {
+                    if out_tx.send(text).await.is_err() {
                         break;
                     }
                 }
             }
         } => {},
         _ = async {
-            while let Some(Ok(_)) = receiver.next().await {
-                // Read and dropped. See above.
+            while let Some(Ok(msg)) = receiver.next().await {
+                let Message::Text(text) = msg else { continue };
+                let Ok(frame) = serde_json::from_str::<WsMessage>(&text) else { continue };
+                if !frame.msg_type.eq_ignore_ascii_case("RESUME") {
+                    // Every other inbound frame is still read and dropped. See above.
+                    continue;
+                }
+
+                // A client that has never seen a message sends 0 and is caught up by definition.
+                let after = frame.payload.get("last_seq").and_then(|v| v.as_u64()).unwrap_or(0);
+                let missed = hub.replay_after(
+                    after,
+                    user_for_recv.as_deref(),
+                    device_for_recv.as_deref(),
+                );
+
+                // The answer goes first, so the client knows whether what follows is the rest of
+                // its stream or the start of a new one before it reads any of it.
+                let answer = serde_json::json!({
+                    "msg_type": "RESUMED",
+                    "payload": {
+                        "from": after,
+                        "replayed": missed.as_ref().map(Vec::len).unwrap_or(0),
+                        // The client must refetch state rather than trust its own: the gap is
+                        // longer than the server can account for.
+                        "resync_required": missed.is_none(),
+                    }
+                });
+                if resume_tx.send(answer.to_string()).await.is_err() {
+                    break;
+                }
+
+                for msg in missed.unwrap_or_default() {
+                    let Ok(text) = serde_json::to_string(&msg) else { continue };
+                    if resume_tx.send(text).await.is_err() {
+                        return;
+                    }
+                }
             }
         } => {}
     }
+
+    writer.abort();
 
     if let (Some(u), Some(d)) = (username.as_deref(), device.as_deref()) {
         state.ws_hub.clear_lan_address(u, d);
@@ -552,6 +699,7 @@ mod tests {
             payload: json!({}),
             user_id: user.map(str::to_string),
             target_device: device.map(str::to_string),
+            seq: None,
         }
     }
 
@@ -755,5 +903,69 @@ mod tests {
             Some("10.0.0.5:8702".to_string())
         );
         assert_eq!(hub.get_lan_address("alpha", "laptop"), None);
+    }
+
+    /// A reconnecting socket is handed exactly what it missed, in order.
+    #[test]
+    fn replay_returns_messages_after_the_client_s_position() {
+        let hub = WsHub::new();
+        hub.notify_user("alice", "JAM_UPDATED", serde_json::json!({ "n": 1 }));
+        hub.notify_user("alice", "JAM_UPDATED", serde_json::json!({ "n": 2 }));
+        hub.notify_user("alice", "JAM_UPDATED", serde_json::json!({ "n": 3 }));
+
+        let all = hub.replay_after(0, Some("alice"), None).expect("in buffer");
+        assert_eq!(all.len(), 3);
+        assert!(all.windows(2).all(|w| w[0].seq < w[1].seq), "ordered");
+
+        let tail = hub.replay_after(2, Some("alice"), None).expect("in buffer");
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].payload["n"], 3);
+    }
+
+    /// Replay is not a way around addressing: it answers with the socket's own messages only.
+    #[test]
+    fn replay_does_not_cross_accounts_or_devices() {
+        let hub = WsHub::new();
+        hub.notify_user("alice", "FRIEND_PRESENCE", serde_json::json!({}));
+        hub.notify_device("alice", "phone", "SYNC_OFFER", serde_json::json!({}));
+
+        assert_eq!(hub.replay_after(0, Some("bob"), None).unwrap().len(), 0);
+        // Alice's laptop sees the account-wide message but not the one addressed to her phone.
+        let laptop = hub.replay_after(0, Some("alice"), Some("laptop")).unwrap();
+        assert_eq!(laptop.len(), 1);
+        assert_eq!(laptop[0].msg_type, "FRIEND_PRESENCE");
+        assert_eq!(hub.replay_after(0, Some("alice"), Some("phone")).unwrap().len(), 2);
+    }
+
+    /// Gone too long is answered with "resynchronise", never with a prefix missing its front.
+    #[test]
+    fn replay_refuses_when_the_client_s_position_has_been_dropped() {
+        let hub = WsHub::new();
+        for n in 0..(REPLAY_CAPACITY + 50) {
+            hub.notify_user("alice", "JAM_UPDATED", serde_json::json!({ "n": n }));
+        }
+        // Position 0 fell out of the buffer when it was trimmed, so the gap cannot be filled.
+        assert!(hub.replay_after(0, Some("alice"), None).is_none());
+        // A position still inside the buffer is answered normally.
+        let recent = hub.next_seq.load(std::sync::atomic::Ordering::Relaxed) - 2;
+        assert!(hub.replay_after(recent, Some("alice"), None).is_some());
+    }
+
+    /// The sequence is the buffer's index into the stream; a hole in it would misplace a replay.
+    #[test]
+    fn every_published_message_is_numbered_without_gaps() {
+        let hub = WsHub::new();
+        hub.broadcast("RELEASE", serde_json::json!({}));
+        hub.notify_user("alice", "JAM_UPDATED", serde_json::json!({}));
+        hub.notify_device("alice", "phone", "SYNC_OFFER", serde_json::json!({}));
+
+        let seqs: Vec<u64> = hub
+            .replay
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(_, m)| m.seq.expect("published messages are numbered"))
+            .collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
     }
 }

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Shield, Check, KeyRound, Loader2 } from 'lucide-react';
 import { gql, setToken } from './api.js';
+import Field from './components/form/Field.jsx';
+import TextInput from './components/form/TextInput.jsx';
 
 const BEGIN = `mutation { beginTotp { otpauthUri secretBase32 } }`;
 const CONFIRM = `mutation Confirm($code: String!) {
@@ -23,6 +25,7 @@ const CONFIRM = `mutation Confirm($code: String!) {
 export default function EnrolTotpScreen({ onEnrolled }) {
   const [enrolment, setEnrolment] = useState(null);
   const [code, setCode] = useState('');
+  const [touched, setTouched] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState(null);
   const [signedOut, setSignedOut] = useState(0);
   const [error, setError] = useState('');
@@ -107,18 +110,29 @@ export default function EnrolTotpScreen({ onEnrolled }) {
           <code className="enrol-secret">{enrolment.secretBase32}</code>
 
           <form onSubmit={confirm}>
-            <label className="auth-label" htmlFor="enrol-code">Code from your app</label>
-            <input
+            <Field
               id="enrol-code"
-              className="auth-input"
-              type="text"
-              autoFocus
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="123456"
-            />
+              label="Code from your app"
+              error={
+                touched && code.trim() && code.trim().length !== 6
+                  ? 'The code is six digits.'
+                  : ''
+              }
+            >
+              {(field) => (
+                <TextInput
+                  {...field}
+                  type="text"
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  onBlur={() => setTouched(true)}
+                  placeholder="123456"
+                />
+              )}
+            </Field>
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button type="submit" className="auth-submit" disabled={busy || code.trim().length !== 6}>
               {busy ? <Loader2 size={14} className="auth-spin" /> : <Shield size={14} />}
