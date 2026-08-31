@@ -213,7 +213,7 @@ fn describe(
                 started_at: now.started_at,
                 position_ms: now.position_ms,
                 skip_votes: skips.0,
-                skips_needed: skips_needed,
+                skips_needed,
                 you_skipped: skips.1,
             }
         }),
