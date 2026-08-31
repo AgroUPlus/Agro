@@ -99,20 +99,59 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
     match next {
         Some(track) => {
             db.set_jam_now_playing(&jam.id, &track.id)?;
-            hub.notify_users(
-                &members,
-                "JAM_NOW_PLAYING",
-                serde_json::json!({
-                    "jamId": jam.id,
-                    "trackId": track.id,
-                    "title": track.title,
-                    "artist": track.artist,
-                    "artworkUrl": track.artwork_url,
-                    "durationMs": track.duration_ms,
-                    // Zero rather than the elapsed time: this frame *is* the start.
-                    "positionMs": 0,
-                }),
-            );
+            let now = db.jam_now_playing(&jam)?;
+            let (holder, holder_device, content_hash) = now
+                .as_ref()
+                .map(|n| {
+                    (
+                        n.added_by.clone(),
+                        n.added_by_device.clone(),
+                        n.content_hash.clone(),
+                    )
+                })
+                .unwrap_or_default();
+
+            // One frame per member rather than one for the room: whether the track can be fetched
+            // directly, and the token to fetch it with, are facts about each member and the one
+            // holding the file. A shared frame would hand the whole room the first member's
+            // address and bearer token.
+            for member in &members {
+                let (peer_lan_address, peer_lan_token) = match holder_device.as_deref() {
+                    Some(device) if !holder.eq_ignore_ascii_case(member) => {
+                        if hub.shares_network_with_user(&holder, device, member) {
+                            match (
+                                hub.get_lan_address(&holder, device),
+                                hub.grant_p2p_token(&holder, device, member),
+                            ) {
+                                (Some(address), Some(token)) => (Some(address), Some(token)),
+                                _ => (None, None),
+                            }
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    _ => (None, None),
+                };
+                hub.notify_user(
+                    member,
+                    "JAM_NOW_PLAYING",
+                    serde_json::json!({
+                        "jamId": jam.id,
+                        "trackId": track.id,
+                        "title": track.title,
+                        "artist": track.artist,
+                        "artworkUrl": track.artwork_url,
+                        "durationMs": track.duration_ms,
+                        // Zero rather than the elapsed time: this frame *is* the start.
+                        "positionMs": 0,
+                        "addedBy": holder,
+                        "deviceId": holder_device,
+                        "contentHash": content_hash,
+                        "peerLanAddress": peer_lan_address,
+                        "peerLanToken": peer_lan_token,
+                    }),
+                );
+            }
         }
         None => {
             // Nothing queued. Said out loud rather than left playing the last track forever.

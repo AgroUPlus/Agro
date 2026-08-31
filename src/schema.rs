@@ -432,6 +432,12 @@ pub struct HandoffInput {
     /// omitted the stored queue is kept as-is.
     pub queue: Option<Vec<HandoffTrackInput>>,
     pub queue_index: Option<i32>,
+    /// SHA-256 of the file being played, when this device has one and has hashed it.
+    ///
+    /// Optional for the same reason `duration_ms` is: an older client is still a valid sender, and
+    /// omitting it leaves whatever hash the track change already established alone rather than
+    /// erasing it on every heartbeat.
+    pub content_hash: Option<String>,
 }
 
 /// See `update_handoff`.
@@ -2066,6 +2072,7 @@ impl MutationRoot {
             &input.device_id,
             queue_json.as_deref(),
             input.queue_index.map(|i| i as i64),
+            input.content_hash.as_deref(),
         )?;
 
         let track_summary = format!("{} • {}", input.track_title, input.artist_name);

@@ -189,6 +189,7 @@ impl Harness {
                 "device-1",
                 None,
                 None,
+                None,
             )
             .unwrap();
     }
@@ -763,7 +764,7 @@ async fn a_suggestion_waits_for_the_room() {
 
     let (track, state) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Suggested", "A", None, 1000, false, JamMode::Democracy)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Suggested", "A", None, 1000, false, JamMode::Democracy, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Proposed, "it went straight into the queue");
     assert!(h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty());
@@ -795,7 +796,7 @@ async fn a_solo_jam_queues_without_asking() {
 
     let (_, state) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Only me", "A", None, 1000, false, JamMode::Democracy)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Only me", "A", None, 1000, false, JamMode::Democracy, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Queued, "a solo jam could never pass anything");
 }
@@ -809,7 +810,7 @@ async fn open_mode_queues_immediately() {
 
     let (_, state) = h
         .db
-        .add_jam_track(&jam.id, "beta", "u:1", "Straight in", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:1", "Straight in", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
     assert_eq!(state, JamTrackState::Queued);
     assert!(h.db.jam_tracks(&jam.id, JamTrackState::Proposed, "beta").unwrap().is_empty());
@@ -823,10 +824,10 @@ async fn approvals_do_not_reorder_the_queue() {
     h.db.join_jam(&jam.id, "beta").unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:2", "Second", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:2", "Second", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     // Piling approvals on the later track must not move it up: votes decide entry, not position.
@@ -844,10 +845,10 @@ async fn the_server_advances_the_room_on_its_own() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 40, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 40, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Second", "A", None, 40, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Second", "A", None, 40, false, JamMode::Open, None, None)
         .unwrap();
 
     // Nobody has asked for anything: the clock starts the room.
@@ -878,7 +879,7 @@ async fn now_playing_reports_the_rooms_position() {
     let h = harness();
     let hub = std::sync::Arc::new(WsHub::new());
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "Long one", "A", None, 60_000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:1", "Long one", "A", None, 60_000, false, JamMode::Open, None, None)
         .unwrap();
 
     crate::jam_clock::tick(&h.db, &hub);
@@ -912,7 +913,7 @@ async fn only_the_owner_or_the_creator_removes_a_track() {
     h.db.join_jam(&jam.id, "beta").unwrap();
     h.db.join_jam(&jam.id, "stranger").unwrap();
     let (track, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:1", "Beta's pick", "B", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "beta", "u:1", "Beta's pick", "B", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let refused = h
@@ -932,7 +933,7 @@ async fn a_non_member_cannot_touch_the_queue() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     let (track, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let refused = h
@@ -955,7 +956,7 @@ async fn ending_a_jam_clears_it_from_the_server() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let left = h.run_as(&h.alpha, "mutation { leaveJam }").await;
@@ -1002,7 +1003,7 @@ async fn a_paused_or_stale_friend_is_not_listening_now() {
     // The same row, but paused: they are not listening to anything.
     h.db.update_handoff(
         "alpha", "track://1", "Currently On", "Some Artist", None, None, 0, 0, false,
-        "device-1", None, None,
+        "device-1", None, None, None,
     )
     .unwrap();
     let feed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
@@ -1109,9 +1110,9 @@ async fn a_majority_skips_the_playing_track() {
     h.db.join_jam(&jam.id, "stranger").unwrap();
 
     let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Skip me", "A", None, 600_000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Skip me", "A", None, 600_000, false, JamMode::Open, None, None)
         .unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:2", "Next", "A", None, 600_000, false, JamMode::Open)
+    h.db.add_jam_track(&jam.id, "alpha", "u:2", "Next", "A", None, 600_000, false, JamMode::Open, None, None)
         .unwrap();
     crate::jam_clock::tick(&h.db, &hub);
     assert_eq!(
@@ -1806,11 +1807,11 @@ async fn a_jam_moves_on_from_a_track_with_no_duration() {
 
     let (first, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "No Duration", "A", None, 0, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "No Duration", "A", None, 0, false, JamMode::Open, None, None)
         .unwrap();
     let (second, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());
@@ -1858,11 +1859,11 @@ async fn a_live_track_holds_a_jam_until_it_is_skipped() {
 
     let (radio, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Some Radio", "A", None, 0, true, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:1", "Some Radio", "A", None, 0, true, JamMode::Open, None, None)
         .unwrap();
     let (next, _) = h
         .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open)
+        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());
@@ -2013,4 +2014,100 @@ async fn one_account_cannot_read_anothers_incognito_state() {
         r#"{incognito: false}"#,
         "the query answered about somebody other than the caller"
     );
+}
+
+/// The exact fields Wanda selects, asserted against the built schema.
+///
+/// Both clients name these in a hand-written selection set rather than through generated bindings,
+/// so a rename here is not a compile error anywhere — it is a query that fails at runtime, on a
+/// device, against a server that has already shipped. `async-graphql` camel-cases the Rust names,
+/// which is the other half of what these pin: `peer_lan_address` reaching the wire as anything but
+/// `peerLanAddress` breaks the direct-transfer tier silently.
+mod wire_contract {
+    use super::*;
+
+    async fn assert_selects(query: &str) {
+        let h = harness();
+        let response = h.run_as(&h.alpha, query).await;
+        // A resolver may legitimately answer null here; an *unknown field* is the failure this
+        // catches, and that arrives as an error rather than as data.
+        assert!(
+            response.errors.is_empty(),
+            "selection was rejected by the schema: {:?}",
+            response.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn listen_along_now_playing_selects_the_direct_transfer_fields() {
+        assert_selects(
+            "{ listenAlong { host listeners nowPlaying {
+                 username trackUri trackTitle artistName albumName artworkUrl positionMs
+                 isPlaying updatedAt deviceId contentHash peerLanAddress peerLanToken
+             } } }",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn friends_now_playing_selects_the_same_fields() {
+        assert_selects(
+            "{ friendsNowPlaying {
+                 username trackTitle artistName positionMs isPlaying updatedAt
+                 deviceId contentHash peerLanAddress peerLanToken
+             } }",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn jam_now_playing_selects_the_holder_and_the_route() {
+        assert_selects(
+            "{ jam { id nowPlaying {
+                 trackId title artist artworkUrl durationMs positionMs
+                 skipVotes skipsNeeded youSkipped
+                 addedBy deviceId contentHash peerLanAddress peerLanToken
+             } } }",
+        )
+        .await;
+    }
+
+    /// The handoff and jam-queue mutations are the other direction: what the clients *send*.
+    #[tokio::test]
+    async fn the_handoff_input_accepts_a_content_hash() {
+        assert_selects(
+            r#"mutation { updateHandoff(input: {
+                 userId: "alpha", trackUri: "u", trackTitle: "t", artistName: "a",
+                 positionMs: 0, isPlaying: true, deviceId: "phone", contentHash: "abc123"
+             }) }"#,
+        )
+        .await;
+    }
+
+    /// Queueing names the device and the bytes, which is what lets the rest of the room play the
+    /// queueing member's own copy instead of each hunting for the track by name.
+    #[tokio::test]
+    async fn the_jam_queue_mutation_accepts_a_device_and_a_hash() {
+        let h = harness();
+        // Not in a jam, so this is refused on those grounds — but an unknown *argument* is caught
+        // by the schema before any resolver runs, which is what this is checking.
+        let response = h
+            .run_as(
+                &h.alpha,
+                r#"mutation { addJamTrack(
+                     trackUri: "u", title: "t", artist: "a",
+                     deviceId: "phone", contentHash: "abc123"
+                   ) { id } }"#,
+            )
+            .await;
+        let unknown_argument = response
+            .errors
+            .iter()
+            .any(|e| e.message.contains("Unknown argument"));
+        assert!(
+            !unknown_argument,
+            "the mutation rejected an argument the client sends: {:?}",
+            response.errors
+        );
+    }
 }

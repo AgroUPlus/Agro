@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::auth::AuthedUser;
+use crate::db_social::FriendState;
 use crate::AppState;
 
 const SESSION_TTL: Duration = Duration::from_secs(60);
@@ -33,9 +34,10 @@ const CHANNEL_BUFFER_CHUNKS: usize = 8;
 pub struct RelayChannel {
     pub session_id: String,
     pub content_hash: String,
+    pub sender_user: String,
     pub sender_device: String,
+    pub receiver_user: String,
     pub receiver_device: String,
-    pub user_id: String,
     pub created_at: Instant,
     pub is_encrypted: Mutex<bool>,
     pub nonce: Mutex<Option<String>>,
@@ -56,8 +58,9 @@ impl RelayHub {
 
     pub fn create_session(
         &self,
-        user_id: &str,
+        receiver_user: &str,
         receiver_device: &str,
+        sender_user: &str,
         sender_device: &str,
         content_hash: &str,
     ) -> (String, Arc<RelayChannel>) {
@@ -72,9 +75,10 @@ impl RelayHub {
         let channel = Arc::new(RelayChannel {
             session_id: session_id.clone(),
             content_hash: content_hash.to_string(),
+            sender_user: sender_user.to_string(),
             sender_device: sender_device.to_string(),
+            receiver_user: receiver_user.to_string(),
             receiver_device: receiver_device.to_string(),
-            user_id: user_id.to_string(),
             created_at: now,
             is_encrypted: Mutex::new(false),
             nonce: Mutex::new(None),
@@ -126,38 +130,74 @@ pub async fn open_relay(
 ) -> Response {
     let user_id = user.username();
 
-    // Both device ids come from the request body, and a device id is chosen by the client. Until
-    // this check existed the comment here claimed the ownership was verified and nothing verified
-    // it: naming another account's device as `fromDevice` made *this* server send that account's
-    // device a RELAY_REQUEST for a hash of the caller's choosing, and naming it as `toDevice` aimed
-    // the resulting stream at it. The session's `user_id` guard on send/receive did not help — the
-    // session was created under the caller's own name, so it looked entirely legitimate.
-    for device in [&body.from_device, &body.to_device] {
-        if !state
-            .db
-            .device_belongs_to(user_id, device.trim())
-            .unwrap_or(false)
-        {
-            // One shape for both devices, so the response cannot be used to find out which device
-            // ids exist on other accounts.
+    // 1. The receiver must be a device belonging to the caller.
+    if !state
+        .db
+        .device_belongs_to(user_id, body.to_device.trim())
+        .unwrap_or(false)
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            "target device does not belong to this account",
+        )
+            .into_response();
+    }
+
+    // 2. The sender device can belong to caller's account, OR to a friend, OR to a member of the same Jam.
+    let sender_user = match state.db.owner_of_device(body.from_device.trim()) {
+        Ok(Some(owner)) => owner,
+        _ => {
             return (
                 StatusCode::FORBIDDEN,
-                "that device does not belong to this account",
+                "unknown source device",
             )
                 .into_response();
         }
+    };
+
+    // `friend_state` answers `Some(..)` for a *pending* request and for a *block* as well as for
+    // an accepted friendship, so testing it with `is_some()` would let a stranger who merely sent a
+    // request — or someone this account has blocked — name this account's device as the sender, and
+    // the `RELAY_REQUEST` below would make that device upload a hash of the caller's choosing.
+    // `are_friends` is the accepted-only test, and a block outranks a shared jam.
+    let allowed = if sender_user.eq_ignore_ascii_case(user_id) {
+        true
+    } else if matches!(
+        state.db.friend_state(user_id, &sender_user).unwrap_or(None),
+        Some(FriendState::Blocked)
+    ) {
+        false
+    } else {
+        let is_friend = state.db.are_friends(user_id, &sender_user).unwrap_or(false);
+        let is_in_same_jam = match (
+            state.db.jam_for_member(user_id),
+            state.db.jam_for_member(&sender_user),
+        ) {
+            (Ok(Some(j1)), Ok(Some(j2))) => j1.id == j2.id,
+            _ => false,
+        };
+        is_friend || is_in_same_jam
+    };
+
+    if !allowed {
+        return (
+            StatusCode::FORBIDDEN,
+            "source device is not authorized for relay with this account",
+        )
+            .into_response();
     }
 
     let (session_id, _) = state.relay_hub.create_session(
         user_id,
         &body.to_device,
+        &sender_user,
         &body.from_device,
         &body.content_hash,
     );
 
     // Notify the holding device over WebSocket that a relay stream is requested
     state.ws_hub.notify_device(
-        user_id,
+        &sender_user,
         &body.from_device,
         "RELAY_REQUEST",
         serde_json::json!({
@@ -182,8 +222,8 @@ pub async fn send_relay(
         return (StatusCode::NOT_FOUND, "relay session not found or expired").into_response();
     };
 
-    if session.user_id != user.username() {
-        return (StatusCode::FORBIDDEN, "not your relay session").into_response();
+    if !session.sender_user.eq_ignore_ascii_case(user.username()) {
+        return (StatusCode::FORBIDDEN, "not the sender of this relay session").into_response();
     }
 
     // Capture encryption headers if present for E2EE relaying
@@ -251,8 +291,8 @@ pub async fn receive_relay(
         return (StatusCode::NOT_FOUND, "relay session not found or expired").into_response();
     };
 
-    if session.user_id != user.username() {
-        return (StatusCode::FORBIDDEN, "not your relay session").into_response();
+    if !session.receiver_user.eq_ignore_ascii_case(user.username()) {
+        return (StatusCode::FORBIDDEN, "not the receiver of this relay session").into_response();
     }
 
     let rx = {
@@ -265,7 +305,7 @@ pub async fn receive_relay(
     };
 
     let db = state.db.clone();
-    let user_id = user.username().to_string();
+    let user_id = session.receiver_user.clone();
     let receiver_device = session.receiver_device.clone();
     let content_hash = session.content_hash.clone();
     let hub = state.relay_hub.clone();
@@ -332,8 +372,9 @@ mod tests {
     #[test]
     fn creates_and_retrieves_relay_session() {
         let hub = RelayHub::new();
-        let (id, session) = hub.create_session("alpha", "phone", "pc", "hash123");
-        assert_eq!(session.user_id, "alpha");
+        let (id, session) = hub.create_session("alpha", "phone", "alpha", "pc", "hash123");
+        assert_eq!(session.receiver_user, "alpha");
+        assert_eq!(session.sender_user, "alpha");
         assert_eq!(session.sender_device, "pc");
         assert_eq!(session.receiver_device, "phone");
         assert_eq!(session.content_hash, "hash123");
@@ -349,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn pipes_bytes_between_sender_and_receiver() {
         let hub = RelayHub::new();
-        let (id, session) = hub.create_session("alpha", "phone", "pc", "hash123");
+        let (id, session) = hub.create_session("alpha", "phone", "alpha", "pc", "hash123");
         let tx = session.tx.lock().unwrap().take().unwrap();
         let mut rx = session.rx.lock().unwrap().take().unwrap();
 
@@ -365,10 +406,8 @@ mod tests {
         hub.remove_session(&id);
     }
 
-    /// The three tests below exercise the handler rather than the hub, because the bug they pin was
-    /// in the handler: `create_session` stamps the session with whatever account asked for it, so a
-    /// session opened against someone else's device is indistinguishable from a legitimate one by
-    /// the time `send_relay` checks it.
+    /// The tests below exercise the handler rather than the hub, ensuring device ownership and
+    /// friend / jam permissions are strictly enforced.
     mod device_ownership {
         use super::*;
         use crate::db::{Db, NodeName};
@@ -377,7 +416,7 @@ mod tests {
         /// Two accounts, each with one registered device.
         fn two_accounts() -> (AppState, AuthedUser) {
             let db = Db::new_in_memory().unwrap();
-            for (user, device) in [("alpha", "alpha-pc"), ("mallory", "mallory-pc")] {
+            for (user, device) in [("alpha", "alpha-pc"), ("mallory", "mallory-pc"), ("friend", "friend-phone")] {
                 db.create_account(user, "passphrase", Role::Member, AccountState::Active)
                     .unwrap();
                 db.upsert_node(device, user, NodeName::Set(device), "wander", None, None)
@@ -422,10 +461,47 @@ mod tests {
             );
         }
 
-        /// Naming someone else's device as the *sender* made this server send that account's device
-        /// a RELAY_REQUEST for a hash of the caller's choosing.
         #[tokio::test]
-        async fn i_cannot_make_another_accounts_device_the_sender() {
+        async fn a_relay_from_a_friend_is_allowed() {
+            let (state, alpha) = two_accounts();
+            // Accept friend relation
+            state.db.send_friend_request("alpha", "friend").unwrap();
+            state.db.accept_friend_request("friend", "alpha").unwrap();
+            assert_eq!(
+                open(state, alpha, "friend-phone", "alpha-pc").await,
+                StatusCode::OK
+            );
+        }
+
+        /// A request that has been *sent* and not answered is not a friendship. Treating any
+        /// `friend_state` row as permission let a stranger who merely asked make this account's
+        /// device upload a hash of their choosing.
+        #[tokio::test]
+        async fn a_relay_from_a_pending_request_is_refused() {
+            let (state, alpha) = two_accounts();
+            state.db.send_friend_request("friend", "alpha").unwrap();
+            assert_eq!(
+                open(state, alpha, "friend-phone", "alpha-pc").await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        /// And a block is the strongest answer there is, including over a shared jam.
+        #[tokio::test]
+        async fn a_relay_from_a_blocked_account_is_refused() {
+            let (state, alpha) = two_accounts();
+            state.db.send_friend_request("alpha", "friend").unwrap();
+            state.db.accept_friend_request("friend", "alpha").unwrap();
+            state.db.block_user("alpha", "friend").unwrap();
+            assert_eq!(
+                open(state, alpha, "friend-phone", "alpha-pc").await,
+                StatusCode::FORBIDDEN
+            );
+        }
+
+        /// Naming an unrelated stranger's device as the sender is forbidden.
+        #[tokio::test]
+        async fn i_cannot_make_a_strangers_device_the_sender() {
             let (state, alpha) = two_accounts();
             assert_eq!(
                 open(state, alpha, "mallory-pc", "alpha-pc").await,
@@ -433,7 +509,7 @@ mod tests {
             );
         }
 
-        /// And naming it as the *receiver* aimed the stream at it.
+        /// And naming someone else's device as the *receiver* is always forbidden.
         #[tokio::test]
         async fn i_cannot_aim_a_relay_at_another_accounts_device() {
             let (state, alpha) = two_accounts();
@@ -443,8 +519,7 @@ mod tests {
             );
         }
 
-        /// A device id nobody has registered is refused the same way a device someone else owns is,
-        /// so the response cannot be used to enumerate other accounts' device ids.
+        /// A device id nobody has registered is refused.
         #[tokio::test]
         async fn an_unknown_device_is_refused_like_someone_elses() {
             let (state, alpha) = two_accounts();
