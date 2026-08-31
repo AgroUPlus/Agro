@@ -715,6 +715,7 @@ pub(crate) mod tests {
             storage: crate::storage::Storage::for_tests(),
             offers: crate::offers::OfferBatcher::spawn(db, ws_hub),
             relay_hub: crate::relay::RelayHub::new(),
+            http_client: reqwest::Client::new(),
             setup_token: crate::auth::SetupToken::for_fresh_server(1),
             rate_limiter: std::sync::Arc::new(RateLimiter::new()),
             oidc_flows: std::sync::Arc::new(crate::oidc::FlowStore::new()),
