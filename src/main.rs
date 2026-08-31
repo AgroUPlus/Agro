@@ -63,6 +63,8 @@ pub struct AppState {
     pub storage: storage::Storage,
     pub offers: offers::OfferBatcher,
     pub relay_hub: relay::RelayHub,
+    /// Shared HTTP client with connection pool for outbound proxy requests.
+    pub http_client: reqwest::Client,
     /// Live only while the server has no accounts at all. See [`auth::SetupToken`].
     pub setup_token: Arc<auth::SetupToken>,
     /// Throttles the two endpoints that can be reached without a token.
@@ -99,6 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let setup_token = auth::SetupToken::for_fresh_server(db.user_count().unwrap_or(0));
+    let http_client = reqwest::Client::builder().build()?;
 
     let state = AppState {
         db: db.clone(),
@@ -106,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         storage: store,
         offers: offers::OfferBatcher::spawn(db.clone(), ws_hub.clone()),
         relay_hub: relay::RelayHub::new(),
+        http_client,
         setup_token: setup_token.clone(),
         rate_limiter: Arc::new(login::RateLimiter::new()),
         oidc_flows: Arc::new(oidc::FlowStore::new()),

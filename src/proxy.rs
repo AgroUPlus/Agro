@@ -1,20 +1,32 @@
 use axum::{
-    extract::State,
-
     body::Body,
-    extract::{Extension, Request},
-    http::{HeaderMap, HeaderValue, StatusCode},
-    response::Response,
+    extract::{Extension, Request, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
-use axum::response::IntoResponse;
-use std::sync::Arc;
 use crate::auth::AuthedUser;
-use crate::db::Db;
 use crate::AppState;
+
+/// Whitelisted external domains allowed through the privacy relay.
+const ALLOWED_PROXY_DOMAINS: &[&str] = &["archive.org", "lrclib.net", "nyaa.si"];
+
+/// Strictly verifies that `host` is one of the allowed domains or a valid subdomain thereof.
+///
+/// Prevents SSRF attacks where malicious hosts (e.g. `evil-archive.org.attacker.com`) could
+/// bypass substring matching.
+pub fn is_allowed_proxy_domain(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    ALLOWED_PROXY_DOMAINS
+        .iter()
+        .any(|&d| host == d || host.ends_with(&format!(".{d}")))
+}
 
 pub async fn proxy_handler(
     State(state): State<AppState>,
-    Extension(user): Extension<AuthedUser>,
+    Extension(_user): Extension<AuthedUser>,
     headers: HeaderMap,
     req: Request<Body>,
 ) -> Response {
@@ -32,14 +44,13 @@ pub async fn proxy_handler(
         None => return (StatusCode::BAD_REQUEST, "Missing X-Agro-Proxy-Url").into_response(),
     };
 
-    let allowed_domains = ["archive.org", "lrclib.net", "nyaa.si"];
     let parsed_url = match reqwest::Url::parse(target_url) {
         Ok(url) => url,
         Err(_) => return (StatusCode::BAD_REQUEST, "Invalid URL").into_response(),
     };
 
     let host = parsed_url.host_str().unwrap_or("");
-    if !allowed_domains.iter().any(|d| host.contains(d)) {
+    if !is_allowed_proxy_domain(host) {
         return (StatusCode::FORBIDDEN, "Domain not allowed for proxying").into_response();
     }
 
@@ -57,7 +68,6 @@ pub async fn proxy_handler(
         }
     }
 
-    let client = reqwest::Client::builder().build().unwrap();
     let method = req.method().clone();
     
     // Read the body fully (preventing media streams from being sent here anyway)
@@ -66,7 +76,7 @@ pub async fn proxy_handler(
         Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "Payload too large").into_response(),
     };
 
-    let mut proxy_req = client.request(method.clone(), target_url)
+    let mut proxy_req = state.http_client.request(method.clone(), target_url)
         .body(body_bytes);
         
     for (k, v) in headers.iter() {
@@ -104,4 +114,32 @@ pub async fn proxy_handler(
     }
 
     builder.body(Body::from(response_body)).unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Response build failed").into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allowed_domains_pass() {
+        assert!(is_allowed_proxy_domain("archive.org"));
+        assert!(is_allowed_proxy_domain("ia8000.us.archive.org"));
+        assert!(is_allowed_proxy_domain("lrclib.net"));
+        assert!(is_allowed_proxy_domain("api.lrclib.net"));
+        assert!(is_allowed_proxy_domain("nyaa.si"));
+        assert!(is_allowed_proxy_domain("s.nyaa.si"));
+    }
+
+    #[test]
+    fn malicious_domains_and_ssrf_attacks_are_rejected() {
+        assert!(!is_allowed_proxy_domain("evil-archive.org.attacker.com"));
+        assert!(!is_allowed_proxy_domain("archive.org.attacker.com"));
+        assert!(!is_allowed_proxy_domain("fake-lrclib.net"));
+        assert!(!is_allowed_proxy_domain("lrclib.net.evil.com"));
+        assert!(!is_allowed_proxy_domain("attacker.nyaa.si.fake"));
+        assert!(!is_allowed_proxy_domain("google.com"));
+        assert!(!is_allowed_proxy_domain("127.0.0.1"));
+        assert!(!is_allowed_proxy_domain("localhost"));
+        assert!(!is_allowed_proxy_domain(""));
+    }
 }
