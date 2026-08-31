@@ -260,6 +260,20 @@ impl Db {
         Ok(count > 0)
     }
 
+    /// Looks up the username that registered a device.
+    pub fn owner_of_device(&self, device_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT user_id FROM registered_nodes WHERE device_id = ?1 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![device_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Tracks another device of this account holds that [`device_id`] does not.
     ///
     /// Two filters, and both matter:
