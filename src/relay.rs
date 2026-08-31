@@ -75,6 +75,11 @@ pub struct RelayChannel {
     pub is_encrypted: Mutex<bool>,
     pub nonce: Mutex<Option<String>>,
     pub key_fingerprint: Mutex<Option<String>>,
+    /// The room key, sealed by the host to the listener's identity key.
+    ///
+    /// Opaque here. The server carries it from the one device to the other because it is already
+    /// carrying their bytes, and it can no more read this than it can read those.
+    pub sealed_key: Mutex<Option<String>>,
     pub pipe: RelayPipe,
 }
 
@@ -116,6 +121,7 @@ impl RelayHub {
             is_encrypted: Mutex::new(false),
             nonce: Mutex::new(None),
             key_fingerprint: Mutex::new(None),
+            sealed_key: Mutex::new(None),
             pipe: RelayPipe::Direct {
                 tx: Mutex::new(Some(tx)),
                 rx: Mutex::new(Some(rx)),
@@ -154,6 +160,7 @@ impl RelayHub {
             is_encrypted: Mutex::new(false),
             nonce: Mutex::new(None),
             key_fingerprint: Mutex::new(None),
+            sealed_key: Mutex::new(None),
             pipe: RelayPipe::Fanout {
                 tx,
                 sender_attached: std::sync::atomic::AtomicBool::new(false),
@@ -187,6 +194,13 @@ pub struct OpenRelayRequest {
     pub content_hash: String,
     pub from_device: String,
     pub to_device: String,
+    /// The requesting device's X25519 identity key, so the host can seal a room key to it.
+    ///
+    /// Passed straight through to the host and never used by the server, which has no business
+    /// holding either half of this exchange. Absent means the listener cannot do E2EE, and the
+    /// host will relay in the clear as before.
+    #[serde(default)]
+    pub listener_public_key: Option<String>,
     /// Set to fan one upload out to a jam instead of to a single device.
     ///
     /// `to_device` is ignored when this is present: the audience is whoever is in the jam at the
@@ -311,6 +325,7 @@ pub async fn open_relay(
             "sessionId": session_id,
             "contentHash": body.content_hash,
             "toDevice": body.to_device,
+            "listenerPublicKey": body.listener_public_key,
         }),
     );
 
@@ -347,6 +362,11 @@ pub async fn send_relay(
     if let Some(fp) = headers.get("x-agro-key-fingerprint") {
         if let Ok(val) = fp.to_str() {
             *session.key_fingerprint.lock().unwrap() = Some(val.to_string());
+        }
+    }
+    if let Some(sealed) = headers.get("x-agro-sealed-key") {
+        if let Ok(val) = sealed.to_str() {
+            *session.sealed_key.lock().unwrap() = Some(val.to_string());
         }
     }
 
@@ -470,6 +490,11 @@ pub async fn receive_relay(
                 headers.insert("x-agro-key-fingerprint", value);
             }
         }
+        if let Some(sealed) = session.sealed_key.lock().unwrap().clone() {
+            if let Ok(value) = sealed.parse() {
+                headers.insert("x-agro-sealed-key", value);
+            }
+        }
         return (headers, Body::from_stream(stream)).into_response();
     }
 
@@ -496,6 +521,7 @@ pub async fn receive_relay(
     let is_encrypted = *session.is_encrypted.lock().unwrap();
     let nonce = session.nonce.lock().unwrap().clone();
     let key_fp = session.key_fingerprint.lock().unwrap().clone();
+    let sealed_key = session.sealed_key.lock().unwrap().clone();
 
     // Cleanup and bookkeeping happen when the stream *ends*, not on a timer.
     let mut transferred: u64 = 0;
@@ -540,6 +566,11 @@ pub async fn receive_relay(
     if let Some(fp) = key_fp {
         if let Ok(v) = fp.parse() {
             response_headers.insert("x-agro-key-fingerprint", v);
+        }
+    }
+    if let Some(sealed) = sealed_key {
+        if let Ok(v) = sealed.parse() {
+            response_headers.insert("x-agro-sealed-key", v);
         }
     }
 
@@ -686,6 +717,7 @@ mod tests {
                 axum::Extension(user),
                 Json(OpenRelayRequest {
                     jam_id: None,
+                    listener_public_key: None,
                     content_hash: "hash123".to_string(),
                     from_device: from.to_string(),
                     to_device: to.to_string(),
