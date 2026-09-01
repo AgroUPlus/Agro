@@ -1,0 +1,19 @@
+# Counts only genuine credential rejections.
+#
+# `credentials-rejected` is the sole stage that means "someone presented credentials that were not
+# accepted". The two second-factor stages are deliberately absent: one is a normal step of every
+# 2FA login, and the other is bounded by Agro's own per-address-and-account limiter, which knows
+# something CrowdSec cannot — that the passphrase was already correct, so this is the account's
+# owner far more often than it is an attacker.
+type: leaky
+name: agro/http-bruteforce
+description: "Detect passphrase guessing against Agro"
+filter: "evt.Meta.log_type == 'agro_auth_credentials-rejected'"
+groupby: "evt.Meta.source_ip"
+capacity: 8
+leakspeed: "20s"
+blackhole: 5m
+labels:
+  service: agro
+  type: bruteforce
+  remediation: true

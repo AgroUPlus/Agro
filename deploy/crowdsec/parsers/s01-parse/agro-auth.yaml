@@ -1,0 +1,29 @@
+# Reads Agro's authentication lines and says which of them is actually a failure.
+#
+# The whole point of this file. Agro's login endpoint answers 401 to three different situations,
+# and only one of them is a failed authentication:
+#
+#   credentials-rejected      a wrong passphrase, or an account that does not exist  -> count it
+#   second-factor-required    the ordinary first step of every 2FA login             -> ignore it
+#   second-factor-rejected    a wrong or expired code, from someone whose passphrase was right
+#
+# A bouncer counting bare 401s on this endpoint counts the second one, which happens on every
+# single successful login, and the third, which happens whenever somebody's code expires while they
+# are reading it. That is how legitimate users were being banned mid-login.
+#
+# Agro rate-limits the second factor itself, per address *and* account, so this file does not need
+# to be the thing that stops a code-guessing run — and if it tried, it would be doing so with a
+# counter that cannot tell a household apart.
+name: agro/auth
+description: "Parse Agro authentication events by login stage"
+filter: "evt.Parsed.program == 'agro'"
+onsuccess: next_stage
+nodes:
+  - grok:
+      pattern: 'stage="?%{DATA:auth_stage}"?'
+      apply_on: message
+    statics:
+      - meta: log_type
+        expression: "'agro_auth_' + evt.Parsed.auth_stage"
+      - meta: service
+        value: agro
