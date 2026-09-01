@@ -25,9 +25,33 @@ use crate::db_identity::{AccountState, Role};
 use crate::passphrase::generate_passphrase;
 use crate::AppState;
 
+/// Names which step of a login an answer belongs to.
+///
+/// A 401 from this endpoint means three different things — the credentials were wrong, a code is
+/// needed, a code was wrong — and only the first is a failed authentication. They were
+/// indistinguishable to anything reading responses, so a bouncer counting 401s counted the normal
+/// path. The status code is unchanged, because clients match on the body and changing it would
+/// break every existing install; this says what the status code cannot.
+const AUTH_STAGE_HEADER: &str = "X-Agro-Auth-Stage";
+
 /// How many attempts one address gets per window.
 const MAX_ATTEMPTS: usize = 10;
 const WINDOW: Duration = Duration::from_secs(300);
+
+/// How many second-factor attempts one address gets per window, once a passphrase has been proved.
+///
+/// Deliberately far more generous than [`MAX_ATTEMPTS`], because it is counting something else. A
+/// TOTP code lives for thirty seconds: a person who opens their authenticator, reads six digits and
+/// mistypes one has already spent two attempts, and the code they carefully re-read may expire
+/// between the reading and the tapping. Under the anonymous bucket that was ten tries for the whole
+/// login — and the *first* request of every login, the one that asks whether a code is needed at
+/// all, spent one of them before the user had done anything.
+///
+/// This is not a hole. Reaching this bucket at all requires a correct passphrase, so an attacker
+/// here is one who already has the password and is guessing a six-digit code that changes every
+/// thirty seconds; 30 tries per five minutes against a million possibilities is not a threat the
+/// smaller number was protecting anyone from.
+const MAX_SECOND_FACTOR_ATTEMPTS: usize = 30;
 
 /// How many consecutive failures an account tolerates before answers start being slowed.
 const FREE_FAILURES: u32 = 5;
@@ -61,6 +85,8 @@ const FAILURE_MEMORY: Duration = Duration::from_secs(900);
 #[derive(Default)]
 pub struct RateLimiter {
     hits: Mutex<HashMap<String, (Instant, usize)>>,
+    /// Second-factor attempts, kept apart from [`hits`]. See [`MAX_SECOND_FACTOR_ATTEMPTS`].
+    second_factor_hits: Mutex<HashMap<String, (Instant, usize)>>,
     failures: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
@@ -106,6 +132,28 @@ impl RateLimiter {
             .lock()
             .unwrap()
             .remove(&account.to_ascii_lowercase());
+    }
+
+    /// Records a second-factor attempt and reports whether it is allowed.
+    ///
+    /// Keyed on address *and* account together. Per-address alone would let one person's fumbling
+    /// with an authenticator lock out everybody else behind the same NAT — a household, an office,
+    /// a campus — which is the failure this whole change exists to stop, reintroduced one level
+    /// down. Per-account alone would let anyone who knows a username exhaust that account's bucket
+    /// from anywhere, which is the lockout weapon `backoff_for` is written to avoid.
+    fn allow_second_factor(&self, client_ip: &str, account: &str) -> bool {
+        let key = format!("{client_ip}|{}", account.to_ascii_lowercase());
+        let mut hits = self.second_factor_hits.lock().unwrap();
+        let now = Instant::now();
+        if hits.len() > 4096 {
+            hits.retain(|_, (started, _)| now.duration_since(*started) < WINDOW);
+        }
+        let entry = hits.entry(key).or_insert((now, 0));
+        if now.duration_since(entry.0) >= WINDOW {
+            *entry = (now, 0);
+        }
+        entry.1 += 1;
+        entry.1 <= MAX_SECOND_FACTOR_ATTEMPTS
     }
 
     /// Records an attempt and reports whether it is allowed.
@@ -258,14 +306,38 @@ pub async fn login(
     if needs_totp {
         let presented = body.totp_code.as_deref().unwrap_or_default();
         if presented.trim().is_empty() {
+            // Not a failure, and it must not be logged or counted as one.
+            //
+            // This is the *ordinary first step* of every 2FA login: the client cannot know a code
+            // is wanted until it has asked, so it sends the passphrase alone and is told. Counting
+            // it meant every single login began by spending an attempt from the anonymous bucket,
+            // and any log parser watching for repeated 401s on this endpoint saw one per login —
+            // which is exactly how a person doing nothing wrong ends up banned.
+            tracing::info!(
+                target: "agro::auth",
+                stage = "second-factor-required",
+                "a second factor was requested"
+            );
             return (
                 StatusCode::UNAUTHORIZED,
+                [(AUTH_STAGE_HEADER, "second-factor-required")],
                 Json(json!({
                     "error": "This account needs a code from its authenticator",
                     "totpRequired": true,
                 })),
             )
                 .into_response();
+        }
+
+        // From here the passphrase is already proved, so these attempts belong in their own bucket
+        // rather than the anonymous one they used to share.
+        if !state.rate_limiter.allow_second_factor(&client_ip, &account.username) {
+            tracing::warn!(
+                target: "agro::auth",
+                stage = "second-factor-throttled",
+                "too many second-factor attempts"
+            );
+            return too_many();
         }
         match state.db.verify_totp(&account.username, presented) {
             Ok(outcome) if outcome.is_satisfied() => {
@@ -277,7 +349,19 @@ pub async fn login(
                 }
             }
             Ok(outcome) => {
-                state.rate_limiter.note_failure(&username);
+                // Deliberately *not* `note_failure`. That counter drives the per-account backoff
+                // against passphrase guessing, and a wrong code from someone who already typed the
+                // right passphrase is a different event: usually the owner, whose code expired
+                // while they were reading it. Feeding it into the same counter meant a fumbled
+                // authenticator slowed the account's real logins for the next fifteen minutes.
+                //
+                // It is still bounded — by `allow_second_factor` above, which cuts this off at 30
+                // tries per five minutes from one address for one account.
+                tracing::warn!(
+                    target: "agro::auth",
+                    stage = "second-factor-rejected",
+                    "a second factor was rejected"
+                );
                 state.db.record_event(
                     crate::audit::Event::TotpFailed,
                     crate::audit::Record::new()
@@ -290,6 +374,7 @@ pub async fn login(
                 );
                 return (
                     StatusCode::UNAUTHORIZED,
+                    [(AUTH_STAGE_HEADER, "second-factor-rejected")],
                     Json(json!({
                         "error": "That code was not accepted",
                         "totpRequired": true,
@@ -599,8 +684,17 @@ pub async fn signup(
     .into_response()
 }
 
+/// A genuine authentication failure — the one a bouncer *should* count.
+///
+/// Tagged as such so that it can be told apart from the two other things this endpoint answers 401
+/// to, both of which are ordinary steps of a login that is going fine.
 fn refused(message: &str) -> Response {
-    (StatusCode::UNAUTHORIZED, Json(json!({ "error": message }))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        [(AUTH_STAGE_HEADER, "credentials-rejected")],
+        Json(json!({ "error": message })),
+    )
+        .into_response()
 }
 
 fn too_many() -> Response {
@@ -823,5 +917,68 @@ mod client_ip_tests {
         let proxy: SocketAddr = "10.0.0.5:44100".parse().unwrap();
         assert_eq!(client_ip(proxy, &HeaderMap::new()), "10.0.0.5");
         assert_eq!(client_ip(proxy, &forwarded("not-an-address")), "10.0.0.5");
+    }
+
+    /// The bug: fumbling an authenticator used to spend the anonymous login bucket.
+    #[test]
+    fn second_factor_attempts_do_not_exhaust_the_login_bucket() {
+        let limiter = RateLimiter::new();
+        for _ in 0..MAX_SECOND_FACTOR_ATTEMPTS {
+            assert!(limiter.allow_second_factor("203.0.113.7", "ada"));
+        }
+        assert!(
+            limiter.allow("203.0.113.7"),
+            "second-factor attempts consumed the address's login attempts"
+        );
+    }
+
+    /// Bounded, though — a correct passphrase does not buy unlimited guesses at the code.
+    #[test]
+    fn second_factor_attempts_are_still_capped() {
+        let limiter = RateLimiter::new();
+        for _ in 0..MAX_SECOND_FACTOR_ATTEMPTS {
+            limiter.allow_second_factor("203.0.113.7", "ada");
+        }
+        assert!(!limiter.allow_second_factor("203.0.113.7", "ada"));
+    }
+
+    /// One person's authenticator trouble must not lock out the household behind the same NAT.
+    #[test]
+    fn one_account_exhausting_its_codes_does_not_block_another_behind_one_address() {
+        let limiter = RateLimiter::new();
+        for _ in 0..(MAX_SECOND_FACTOR_ATTEMPTS + 5) {
+            limiter.allow_second_factor("203.0.113.7", "ada");
+        }
+        assert!(
+            limiter.allow_second_factor("203.0.113.7", "grace"),
+            "a housemate was locked out by someone else's authenticator"
+        );
+    }
+
+    /// And nobody can lock an account out from elsewhere by burning its bucket.
+    #[test]
+    fn an_account_cannot_be_locked_out_from_another_address() {
+        let limiter = RateLimiter::new();
+        for _ in 0..(MAX_SECOND_FACTOR_ATTEMPTS + 5) {
+            limiter.allow_second_factor("198.51.100.4", "ada");
+        }
+        assert!(
+            limiter.allow_second_factor("203.0.113.7", "ada"),
+            "an attacker elsewhere locked this account out of its own second factor"
+        );
+    }
+
+    /// A wrong code must not slow the account's real logins: that counter is for passphrases.
+    #[test]
+    fn a_wrong_code_does_not_add_passphrase_backoff() {
+        let limiter = RateLimiter::new();
+        for _ in 0..(FREE_FAILURES + 4) {
+            limiter.allow_second_factor("203.0.113.7", "ada");
+        }
+        assert_eq!(
+            limiter.backoff_for("ada"),
+            Duration::ZERO,
+            "second-factor attempts leaked into the passphrase backoff"
+        );
     }
 }
