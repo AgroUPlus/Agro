@@ -837,6 +837,32 @@ const MIGRATIONS: &[&str] = &[
          ON catalog_sources(recording_id);
      CREATE INDEX IF NOT EXISTS idx_catalog_recordings_updated
          ON catalog_recordings(updated_at);",
+    // Blinded popularity counters.
+    //
+    // **There is no account column here, and there must never be one.** That is the whole design:
+    // the table cannot answer "what did this person listen to" because it does not hold the
+    // information, rather than because a query declines to ask. Every other privacy property below
+    // is a refinement of that one.
+    //
+    // Keyed on the same normalised columns as `library_tracks`, from `norm.rs`, so a track counted
+    // by one client and a track counted by another are one row without either of them agreeing on
+    // spelling — and so `reindex_normalisation` keeps this consistent with the library index.
+    //
+    // `bucket_day` is a whole day since the epoch, UTC, and is the *only* time recorded. A play at
+    // 03:12 and a play at 22:47 are indistinguishable once counted, which is what stops the table
+    // reconstructing a routine.
+    "CREATE TABLE IF NOT EXISTS popularity_counters (
+         bucket_day    INTEGER NOT NULL,
+         norm_artist   TEXT NOT NULL,
+         norm_title    TEXT NOT NULL,
+         norm_variants TEXT NOT NULL,
+         title         TEXT NOT NULL,
+         artist        TEXT NOT NULL,
+         album         TEXT,
+         count         INTEGER NOT NULL DEFAULT 0,
+         PRIMARY KEY (bucket_day, norm_artist, norm_title, norm_variants)
+     );
+     CREATE INDEX IF NOT EXISTS idx_popularity_bucket ON popularity_counters(bucket_day);",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
