@@ -863,6 +863,32 @@ const MIGRATIONS: &[&str] = &[
          PRIMARY KEY (bucket_day, norm_artist, norm_title, norm_variants)
      );
      CREATE INDEX IF NOT EXISTS idx_popularity_bucket ON popularity_counters(bucket_day);",
+    // Crowd-averaged acoustic vectors, for "more like this".
+    //
+    // **No account column here either**, for the same structural reason as the counters above and
+    // one of its own: what a person's library *contains* is at least as revealing as what they
+    // play, and a submitter column would make this exactly that list.
+    //
+    // `version` is part of the key rather than a column beside it. Vectors measured under two
+    // different definitions of brightness are not comparable, so they must never average together
+    // or share a neighbour search; keying on it makes mixing them impossible rather than merely
+    // discouraged.
+    "CREATE TABLE IF NOT EXISTS acoustic_vectors (
+         norm_artist   TEXT NOT NULL,
+         norm_title    TEXT NOT NULL,
+         norm_variants TEXT NOT NULL,
+         version       INTEGER NOT NULL,
+         title         TEXT NOT NULL,
+         artist        TEXT NOT NULL,
+         tempo         REAL NOT NULL,
+         energy        REAL NOT NULL,
+         brightness    REAL NOT NULL,
+         danceability  REAL NOT NULL,
+         key_x         REAL NOT NULL,
+         key_y         REAL NOT NULL,
+         observations  INTEGER NOT NULL DEFAULT 1,
+         PRIMARY KEY (norm_artist, norm_title, norm_variants, version)
+     );",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
