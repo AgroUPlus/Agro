@@ -172,6 +172,17 @@ pub(crate) fn normalise_username(raw: &str) -> async_graphql::Result<String> {
 
 
 #[derive(SimpleObject, Clone)]
+/// What one call to `reindexNormalisation` rewrote.
+pub struct ReindexPayload {
+    /// `library_tracks` rows brought up to date this call.
+    pub tracks: i32,
+    /// `playlist_items` rows brought up to date this call.
+    pub playlist_items: i32,
+    /// False means stale rows remain — call again with the same batch size.
+    pub done: bool,
+}
+
+#[derive(SimpleObject, Clone)]
 /// An account as its owner sees it.
 ///
 /// Carries **no credential**. It used to return `apiKey` and `passphrase` in cleartext, which meant
@@ -1766,6 +1777,33 @@ impl MutationRoot {
             return Err("No such account".into());
         }
         Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+    }
+
+    /// Recomputes the normalised matching columns from the metadata already stored.
+    ///
+    /// The columns are derived in Rust at insert time, so changing `norm.rs` leaves every existing
+    /// row on the old convention and no amount of SQL can repair them. This is the entry point that
+    /// can — run it after any deploy that touches normalisation.
+    ///
+    /// Admin-only, and not because the data is sensitive: it is a write across the whole index, and
+    /// nobody should be able to schedule that from an ordinary account. It reads nothing about who
+    /// listened to what — these columns are facts about titles.
+    ///
+    /// Bounded per call. Keep calling while `done` is false.
+    async fn reindex_normalisation(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 500)] batch: i32,
+    ) -> async_graphql::Result<ReindexPayload> {
+        require_admin(ctx)?;
+        let db = ctx.data::<Db>()?;
+        let batch = batch.clamp(1, 10_000) as usize;
+        let outcome = db.reindex_normalisation(batch)?;
+        Ok(ReindexPayload {
+            tracks: outcome.tracks as i32,
+            playlist_items: outcome.playlist_items as i32,
+            done: outcome.done,
+        })
     }
 
     /// Allows or disallows a user from permanently saving music into the server's archive.
