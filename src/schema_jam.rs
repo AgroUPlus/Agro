@@ -118,6 +118,7 @@ pub struct FriendJamPayload {
 /// never named a device, or who is not on the viewer's network, yields `(None, None)` and the
 /// caller falls through to the relay.
 fn peer_route(
+    db: &Db,
     ws_hub: &crate::ws::WsHub,
     holder: &str,
     holder_device: Option<&str>,
@@ -136,7 +137,8 @@ fn peer_route(
     let Some(address) = ws_hub.get_lan_address(holder, device) else {
         return (None, None);
     };
-    match ws_hub.grant_p2p_token(holder, device, viewer) {
+    let viewer_keys = crate::schema_social::published_keys(db, viewer);
+    match ws_hub.grant_p2p_token(holder, device, viewer, &viewer_keys) {
         Some(token) => (Some(address), Some(token)),
         None => (None, None),
     }
@@ -194,6 +196,7 @@ fn describe(
             // The member who queued the track holds it, so they are the peer here — the same
             // pairwise question Listen Along asks, with the queueing member in the host's place.
             let (peer_lan_address, peer_lan_token) = peer_route(
+                db,
                 ws_hub,
                 &now.added_by,
                 now.added_by_device.as_deref(),

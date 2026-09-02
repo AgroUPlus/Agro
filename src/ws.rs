@@ -68,6 +68,16 @@ struct PeerNetwork {
 ///
 /// Long enough to cover a listening session's worth of track changes without reminting on every
 /// frame, short enough that a token which escapes stops working the same afternoon.
+/// Live P2P grants, keyed by `(host user, host device, listener user)`.
+///
+/// The value is the bearer token, the listener device keys it was minted against, and when it
+/// expires. The key set is part of the value rather than of the key because a grant is looked up
+/// by *who* is listening and only then checked against *what* they can be sealed to.
+type P2pGrants = std::collections::HashMap<
+    (String, String, String),
+    (String, Vec<String>, std::time::Instant),
+>;
+
 const P2P_GRANT_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// Reissue rather than hand out a token about to expire mid-transfer.
@@ -86,9 +96,11 @@ pub struct WsHub {
     /// A grant is a bearer token the listener presents to the host's local HTTP server. It is
     /// minted here so that neither client has to trust the other, and it is what stops a shared
     /// LAN — a hotel, a campus, a coffee shop — from being a trusted one.
-    p2p_grants: std::sync::RwLock<
-        std::collections::HashMap<(String, String, String), (String, std::time::Instant)>,
-    >,
+    ///
+    /// The keys the grant was minted against are held beside it, so a listener that has since
+    /// added or removed a device is issued a fresh grant rather than handed one whose bound set no
+    /// longer describes them.
+    p2p_grants: std::sync::RwLock<P2pGrants>,
     /// The next position in the total order.
     next_seq: std::sync::atomic::AtomicU64,
     /// Recently sent messages, newest last, for replaying to a socket that reconnects.
@@ -284,11 +296,28 @@ impl WsHub {
     /// Reused while it has real life left in it, so a listening session does not mint a token per
     /// track change, and pushed to the host the moment it is created — the host cannot accept a
     /// token it has never been told about.
+    ///
+    /// ## What `listener_keys` is for
+    ///
+    /// The host seals the audio's room key to an X25519 public key so that a shared network cannot
+    /// read the stream. Until this argument existed, that key arrived in a request *header*, and
+    /// nothing tied it to the grant: an attacker able to rewrite the request in flight could
+    /// substitute their own key and be sealed to. The bearer token proved the requester was
+    /// authorised; it did not prove they were the party whose key was in the header.
+    ///
+    /// So the grant carries the listener's published device keys, and the host seals only to a key
+    /// it finds in that set. A substituted key is not in it and is refused.
+    ///
+    /// It is the whole *set* rather than one key because a listener may have several devices and
+    /// the grant is minted for the account, not for whichever device happens to answer. Passing an
+    /// empty set is meaningful and permitted: it says this account has published no keys, and the
+    /// host falls back to the header exactly as before rather than refusing to serve at all.
     pub fn grant_p2p_token(
         &self,
         host_user: &str,
         host_device: &str,
         listener_user: &str,
+        listener_keys: &[String],
     ) -> Option<String> {
         let key = (
             host_user.to_string(),
@@ -298,8 +327,13 @@ impl WsHub {
         let now = std::time::Instant::now();
 
         if let Ok(grants) = self.p2p_grants.read() {
-            if let Some((token, expires)) = grants.get(&key) {
-                if expires.saturating_duration_since(now) > P2P_GRANT_MIN_REMAINING {
+            if let Some((token, bound, expires)) = grants.get(&key) {
+                // A grant whose bound set no longer matches the listener's devices is not reusable:
+                // reusing it would leave a device they have just added unable to be sealed to, and
+                // one they have just removed still able to be.
+                if expires.saturating_duration_since(now) > P2P_GRANT_MIN_REMAINING
+                    && bound.as_slice() == listener_keys
+                {
                     return Some(token.clone());
                 }
             }
@@ -309,8 +343,11 @@ impl WsHub {
         let token = crate::credentials::mint_token().secret;
         {
             let mut grants = self.p2p_grants.write().ok()?;
-            grants.retain(|_, (_, expires)| *expires > now);
-            grants.insert(key, (token.clone(), now + P2P_GRANT_TTL));
+            grants.retain(|_, (_, _, expires)| *expires > now);
+            grants.insert(
+                key,
+                (token.clone(), listener_keys.to_vec(), now + P2P_GRANT_TTL),
+            );
         }
 
         // The host is told before the listener is, because a grant the host has not seen is one it
@@ -322,6 +359,7 @@ impl WsHub {
             serde_json::json!({
                 "token": token,
                 "forUser": listener_user,
+                "forKeys": listener_keys,
                 "ttlSeconds": P2P_GRANT_TTL.as_secs(),
             }),
         );
@@ -791,11 +829,32 @@ mod tests {
         #[test]
         fn a_grant_is_reused_for_the_same_pair_and_distinct_per_listener() {
             let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
-            let first = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
-            let again = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
-            let other = hub.grant_p2p_token("alpha", "phone", "gamma").unwrap();
+            let first = hub.grant_p2p_token("alpha", "phone", "beta", &[]).unwrap();
+            let again = hub.grant_p2p_token("alpha", "phone", "beta", &[]).unwrap();
+            let other = hub.grant_p2p_token("alpha", "phone", "gamma", &[]).unwrap();
             assert_eq!(first, again);
             assert_ne!(first, other);
+        }
+
+        /// The bound key set is part of what a grant *is*, so it cannot be reused across a
+        /// change to it. A listener that has just added a phone would otherwise be handed a grant
+        /// that cannot seal to it, and one that has just signed a phone out would be handed a
+        /// grant that still can.
+        #[test]
+        fn a_grant_is_reminted_when_the_listeners_keys_change() {
+            let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
+            let one = vec!["key-one".to_string()];
+            let two = vec!["key-one".to_string(), "key-two".to_string()];
+
+            let first = hub.grant_p2p_token("alpha", "phone", "beta", &one).unwrap();
+            let same = hub.grant_p2p_token("alpha", "phone", "beta", &one).unwrap();
+            assert_eq!(first, same, "an unchanged key set reuses the grant");
+
+            let after = hub.grant_p2p_token("alpha", "phone", "beta", &two).unwrap();
+            assert_ne!(first, after, "an added device must force a fresh grant");
+
+            let back = hub.grant_p2p_token("alpha", "phone", "beta", &one).unwrap();
+            assert_ne!(after, back, "a removed device must force a fresh grant too");
         }
 
         /// A device sharing its own account's network is still a match — the same-account case is
@@ -822,13 +881,13 @@ mod tests {
         #[test]
         fn disconnecting_clears_the_address_and_the_grants() {
             let hub = hub_with(&[("alpha", "phone", "203.0.113.7")]);
-            let token = hub.grant_p2p_token("alpha", "phone", "beta").unwrap();
+            let token = hub.grant_p2p_token("alpha", "phone", "beta", &[]).unwrap();
             hub.clear_lan_address("alpha", "phone");
             assert!(hub.get_lan_address("alpha", "phone").is_none());
             assert!(!hub.shares_network_with_user("alpha", "phone", "beta"));
             assert_ne!(
                 token,
-                hub.grant_p2p_token("alpha", "phone", "beta").unwrap(),
+                hub.grant_p2p_token("alpha", "phone", "beta", &[]).unwrap(),
                 "a grant must not survive the socket it was minted for"
             );
         }

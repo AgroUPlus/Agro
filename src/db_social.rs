@@ -13,6 +13,13 @@ use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
 
+/// The device id migration 36 files pre-registry keys under.
+///
+/// An account that has only ever had one device has a key but no device id to attribute it to —
+/// it was published before device ids existed here. Sealing to it keeps that phone working until
+/// it next signs in and claims its own entry.
+pub const LEGACY_DEVICE_ID: &str = "legacy";
+
 /// Where a pair of accounts stands.
 ///
 /// Stored as text rather than an integer so a human reading the table with `sqlite3` can tell what
@@ -73,6 +80,16 @@ pub struct Profile {
     pub incognito: bool,
     /// The public identity key (e.g. X25519) used for end-to-end encrypted track drops and messages.
     pub public_key: Option<String>,
+}
+
+/// One device's published identity key.
+///
+/// A device id is chosen by the client and is only ever meaningful within one account — see the
+/// composite primary key in migration 36, and the same reasoning in migration 10.
+#[derive(Clone, Debug)]
+pub struct DeviceKey {
+    pub device_id: String,
+    pub public_key: String,
 }
 
 /// An edge as the *viewer* experiences it: who, and which way the unanswered request points.
@@ -168,6 +185,11 @@ impl Db {
         Ok(changed > 0)
     }
 
+    /// Writes the account-wide key column.
+    ///
+    /// Kept, and kept written, only as the mirror older clients read. It is last-writer-wins by
+    /// construction — which is the bug [`register_device_key`] exists to fix — so nothing that
+    /// seals a message should read this. Use [`device_keys_for`](Self::device_keys_for).
     pub fn set_public_key(&self, username: &str, public_key: Option<&str>) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
@@ -175,6 +197,75 @@ impl Db {
             params![public_key, username.trim()],
         )?;
         Ok(changed > 0)
+    }
+
+    /// Records `public_key` as the key held by one device of `username`.
+    ///
+    /// An upsert on `(user_id, device_id)`, so a device that regenerated its keypair — a
+    /// reinstall, or a restore that could not carry the private half — replaces its own entry and
+    /// only its own. That is the entire difference from [`set_public_key`](Self::set_public_key),
+    /// where writing the single column replaced every other device's key as a side effect.
+    ///
+    /// The `legacy` row migration 36 carried over is dropped once a real device claims the same
+    /// key, so an account that has signed in again is not sealed to twice for one device.
+    pub fn register_device_key(
+        &self,
+        username: &str,
+        device_id: &str,
+        public_key: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let user = username.trim();
+        let device = device_id.trim();
+        let key = public_key.trim();
+        conn.execute(
+            "INSERT INTO user_device_keys (user_id, device_id, public_key, registered_at)
+                  VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(user_id, device_id) DO UPDATE
+                SET public_key = excluded.public_key, registered_at = excluded.registered_at",
+            params![user, device, key, chrono::Utc::now().to_rfc3339()],
+        )?;
+        if device != LEGACY_DEVICE_ID {
+            conn.execute(
+                "DELETE FROM user_device_keys
+                   WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2 AND public_key = ?3",
+                params![user, LEGACY_DEVICE_ID, key],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Every device key published for `username`, oldest registration first.
+    ///
+    /// Deciding whether the caller may ask is not this method's job — `deviceKeys` in
+    /// `schema_social` gates on friendship, with the same message `dropTrack` uses, so that a key
+    /// list cannot be used to probe for accounts.
+    pub fn device_keys_for(&self, username: &str) -> Result<Vec<DeviceKey>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT device_id, public_key FROM user_device_keys
+              WHERE user_id = ?1 COLLATE NOCASE
+              ORDER BY registered_at ASC, device_id ASC",
+        )?;
+        let keys = stmt
+            .query_map(params![username.trim()], |row| {
+                Ok(DeviceKey {
+                    device_id: row.get(0)?,
+                    public_key: row.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(keys)
+    }
+
+    /// Removes one device's key, so a phone that is signed out stops being sealed to.
+    pub fn forget_device_key(&self, username: &str, device_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let removed = conn.execute(
+            "DELETE FROM user_device_keys WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
+            params![username.trim(), device_id.trim()],
+        )?;
+        Ok(removed > 0)
     }
 
     pub fn set_discoverable(&self, username: &str, discoverable: bool) -> Result<bool> {

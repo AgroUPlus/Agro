@@ -13,10 +13,10 @@
 //! Reading is self-only. An inbox is nobody else's business, including the sender's — `sentDrops`
 //! shows what you sent, never whether it was read.
 
-use async_graphql::{Context, Object, SimpleObject};
+use async_graphql::{Context, InputObject, Object, SimpleObject};
 
 use crate::db::Db;
-use crate::db_drops::{Drop, NewDrop};
+use crate::db_drops::{DeviceCiphertext, Drop, NewDrop};
 use crate::schema::{bounded, caller, forbidden, normalise_username};
 
 /// The longest note that may ride along with a drop.
@@ -25,6 +25,14 @@ use crate::schema::{bounded, caller, forbidden, normalise_username};
 /// stays a row.
 const MAX_NOTE_LEN: usize = 500;
 const MAX_CIPHERTEXT_LEN: usize = 4096;
+
+/// How many devices one note may be sealed to.
+///
+/// A sender seals once per key in the recipient's registry plus once to its own, so this is a
+/// bound on somebody's device count, not on anything they type. Well clear of a person with a
+/// phone, a tablet and a desktop, and low enough that a client claiming a thousand devices cannot
+/// turn one drop into a megabyte of rows.
+const MAX_SEALED_COPIES: usize = 16;
 
 /// The longest any piece of track description may be. Titles are attacker-controlled here in a way
 /// they are not elsewhere: this is text one account writes into another account's inbox.
@@ -47,6 +55,14 @@ const MAX_PAGE: i64 = 100;
 /// points — and far too short to be a message.
 const MAX_REACTION_CHARS: usize = 8;
 
+/// One sealed copy of a note, as the client sends and reads it.
+#[derive(SimpleObject, InputObject, Clone)]
+#[graphql(input_name = "DeviceCiphertextInput")]
+pub struct DeviceCiphertextPayload {
+    pub device_id: String,
+    pub ciphertext: String,
+}
+
 #[derive(SimpleObject, Clone)]
 pub struct DropPayload {
     pub id: String,
@@ -61,8 +77,13 @@ pub struct DropPayload {
     pub content_hash: Option<String>,
     pub track_uri: Option<String>,
     pub note: Option<String>,
-    /// Sealed E2EE ciphertext note or payload.
+    /// The recipient's sealed copy, duplicated out of `noteCiphertexts`.
+    ///
+    /// Kept for clients that predate the per-device list. A client that understands
+    /// `noteCiphertexts` should read that instead — this field cannot carry the sender's own copy.
     pub note_ciphertext: Option<String>,
+    /// Every sealed copy of the note, by device — the recipient's devices and the sender's own.
+    pub note_ciphertexts: Vec<DeviceCiphertextPayload>,
     pub is_encrypted: bool,
     pub created_at: String,
     /// Null while unread. Only ever populated on the recipient's own view; see `sentDrops`.
@@ -89,6 +110,14 @@ fn to_payload(drop: Drop) -> DropPayload {
         track_uri: drop.track_uri,
         note: drop.note,
         note_ciphertext: drop.note_ciphertext,
+        note_ciphertexts: drop
+            .note_ciphertexts
+            .into_iter()
+            .map(|copy| DeviceCiphertextPayload {
+                device_id: copy.device_id,
+                ciphertext: copy.ciphertext,
+            })
+            .collect(),
         is_encrypted: drop.is_encrypted,
         created_at: drop.created_at,
         read_at: drop.read_at,
@@ -212,6 +241,7 @@ impl DropsMutation {
         track_uri: Option<String>,
         note: Option<String>,
         note_ciphertext: Option<String>,
+        note_ciphertexts: Option<Vec<DeviceCiphertextPayload>>,
         is_encrypted: Option<bool>,
     ) -> async_graphql::Result<DropPayload> {
         let authed = caller(ctx)?;
@@ -249,6 +279,7 @@ impl DropsMutation {
             track_uri: optional(track_uri.as_deref(), MAX_FIELD_LEN, "trackUri")?,
             note: optional(note.as_deref(), MAX_NOTE_LEN, "note")?,
             note_ciphertext: optional(note_ciphertext.as_deref(), MAX_CIPHERTEXT_LEN, "noteCiphertext")?,
+            note_ciphertexts: sealed_copies(note_ciphertexts)?,
             is_encrypted: is_encrypted.unwrap_or(false),
         };
 
@@ -275,6 +306,14 @@ impl DropsMutation {
                     "trackUri": drop.track_uri,
                     "note": drop.note,
                     "noteCiphertext": drop.note_ciphertext,
+                    "noteCiphertexts": drop
+                        .note_ciphertexts
+                        .iter()
+                        .map(|copy| serde_json::json!({
+                            "deviceId": copy.device_id,
+                            "ciphertext": copy.ciphertext,
+                        }))
+                        .collect::<Vec<_>>(),
                     "isEncrypted": drop.is_encrypted,
                     "createdAt": drop.created_at,
                 }),
@@ -334,6 +373,51 @@ fn page(limit: Option<i64>, offset: Option<i64>) -> (i64, i64) {
 /// [`bounded`], but for a field that may legitimately be absent. An empty string is treated as
 /// absent rather than stored, so a client that sends `""` for "no album" does not produce a row
 /// that renders as a blank album name.
+/// Bounds and normalises the per-device sealed copies a sender supplied.
+///
+/// Each entry is checked exactly as the single `noteCiphertext` is, and the *list* is bounded
+/// separately — one argument that can repeat is one argument that can be repeated too often.
+/// Duplicate device ids collapse to the last one given, because the storage key is
+/// `(drop_id, device_id)` and a client that sent two copies for one device has already decided
+/// which it meant last.
+fn sealed_copies(
+    raw: Option<Vec<DeviceCiphertextPayload>>,
+) -> async_graphql::Result<Vec<crate::db_drops::DeviceCiphertext>> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    if raw.len() > MAX_SEALED_COPIES {
+        return Err(format!("A note may be sealed to at most {MAX_SEALED_COPIES} devices").into());
+    }
+
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for copy in raw {
+        let device_id = bounded(&copy.device_id, MAX_FIELD_LEN, "deviceId")?;
+        if device_id.is_empty() {
+            return Err("A sealed copy needs a device id".into());
+        }
+        let ciphertext = bounded(&copy.ciphertext, MAX_CIPHERTEXT_LEN, "ciphertext")?;
+        if ciphertext.is_empty() {
+            return Err("A sealed copy needs a ciphertext".into());
+        }
+        if seen.insert(device_id.clone(), ciphertext).is_none() {
+            order.push(device_id);
+        }
+    }
+
+    Ok(order
+        .into_iter()
+        .map(|device_id| {
+            let ciphertext = seen[&device_id].clone();
+            DeviceCiphertext {
+                device_id,
+                ciphertext,
+            }
+        })
+        .collect())
+}
+
 fn optional(raw: Option<&str>, max: usize, field: &str) -> async_graphql::Result<Option<String>> {
     match raw {
         None => Ok(None),
