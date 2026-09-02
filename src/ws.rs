@@ -326,17 +326,26 @@ impl WsHub {
         );
         let now = std::time::Instant::now();
 
-        if let Ok(grants) = self.p2p_grants.read() {
-            if let Some((token, bound, expires)) = grants.get(&key) {
+        let reusable = self.p2p_grants.read().ok().and_then(|grants| {
+            grants.get(&key).and_then(|(token, bound, expires)| {
                 // A grant whose bound set no longer matches the listener's devices is not reusable:
                 // reusing it would leave a device they have just added unable to be sealed to, and
                 // one they have just removed still able to be.
-                if expires.saturating_duration_since(now) > P2P_GRANT_MIN_REMAINING
-                    && bound.as_slice() == listener_keys
-                {
-                    return Some(token.clone());
-                }
-            }
+                let live = expires.saturating_duration_since(now) > P2P_GRANT_MIN_REMAINING;
+                (live && bound.as_slice() == listener_keys).then(|| token.clone())
+            })
+        });
+
+        // A reused grant is pushed again rather than returned quietly, and that is not redundant.
+        // The host keeps its grants in memory only, so a restart — which for a backgrounded
+        // Android process is ordinary, not exceptional — loses every one of them. This side would
+        // then go on handing the listener the same cached token for the rest of its ten minutes
+        // while the host refused it, and replaying the track could not help: nothing on this path
+        // mints a new one. The host treats a repeat as an upsert, so re-announcing costs a frame
+        // and makes the pair self-healing.
+        if let Some(token) = reusable {
+            self.announce_p2p_grant(host_user, host_device, listener_user, &token, listener_keys);
+            return Some(token);
         }
 
         // 256 bits from the OS CSPRNG, minted by the same helper as a device token.
@@ -352,6 +361,22 @@ impl WsHub {
 
         // The host is told before the listener is, because a grant the host has not seen is one it
         // is obliged to refuse.
+        self.announce_p2p_grant(host_user, host_device, listener_user, &token, listener_keys);
+        Some(token)
+    }
+
+    /// Tells the host about a grant it is expected to honour.
+    ///
+    /// Sent on every hand-out, not only on the first, so that a host which has lost its in-memory
+    /// grants is told again rather than left refusing a token this side still considers live.
+    fn announce_p2p_grant(
+        &self,
+        host_user: &str,
+        host_device: &str,
+        listener_user: &str,
+        token: &str,
+        listener_keys: &[String],
+    ) {
         self.notify_device(
             host_user,
             host_device,
@@ -363,7 +388,6 @@ impl WsHub {
                 "ttlSeconds": P2P_GRANT_TTL.as_secs(),
             }),
         );
-        Some(token)
     }
 
     /// Purges a node's local network facts and its grants when it disconnects.
