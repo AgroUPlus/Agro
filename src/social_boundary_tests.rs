@@ -1541,6 +1541,43 @@ async fn you_cannot_drop_a_track_to_yourself() {
     assert_refused(&refused, "dropping to yourself");
 }
 
+/// A key list is only useful to somebody who may send you something, and answering for a stranger
+/// would make it a way to learn whether an account exists. Refused with the same words `dropTrack`
+/// uses, so the two cannot be told apart.
+#[tokio::test]
+async fn a_stranger_cannot_read_your_device_keys() {
+    let h = harness();
+    h.db.register_device_key("alpha", "phone", "key-phone").unwrap();
+
+    let refused = h
+        .run_as(&h.stranger, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .await;
+    assert_refused(&refused, "a stranger reading a key list");
+
+    h.befriend("alpha", "beta");
+    let allowed = h
+        .run_as(&h.beta, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .await;
+    assert_allowed(&allowed, "a friend reading a key list");
+}
+
+/// A client has to be able to seal a copy to its *own* other devices, so reading your own list is
+/// never gated on being your own friend.
+#[tokio::test]
+async fn you_can_always_read_your_own_device_keys() {
+    let h = harness();
+    h.db.register_device_key("alpha", "phone", "key-phone").unwrap();
+    h.db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+
+    let response = h
+        .run_as(&h.alpha, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .await;
+    assert_allowed(&response, "reading your own key list");
+    let rendered = format!("{:?}", response.data);
+    assert!(rendered.contains("phone"), "own list should carry every device: {rendered}");
+    assert!(rendered.contains("laptop"), "own list should carry every device: {rendered}");
+}
+
 /// A friend may hand you a song. A friend may not fill your inbox.
 #[tokio::test]
 async fn a_sender_is_rate_limited_per_recipient() {

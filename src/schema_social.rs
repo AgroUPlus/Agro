@@ -12,7 +12,7 @@
 use async_graphql::{Context, Object, SimpleObject};
 
 use crate::db::Db;
-use crate::db_social::{FriendState, Profile};
+use crate::db_social::{FriendState, Profile, LEGACY_DEVICE_ID};
 use crate::schema::{bounded, caller, forbidden, normalise_username, require_admin, StatEntry};
 
 /// Which of the subject's flags a read is gated on.
@@ -172,6 +172,16 @@ pub struct ListenAlongPayload {
     pub now_playing: Option<FriendNowPlaying>,
 }
 
+/// One device's published identity key.
+///
+/// The device id is opaque to the server and meaningful only within the account — it exists so a
+/// sender can seal one copy per device and a device can recognise its own copy on the way back.
+#[derive(SimpleObject, Clone, Debug)]
+pub struct DeviceKeyPayload {
+    pub device_id: String,
+    pub public_key: String,
+}
+
 /// A friend code as a client renders it.
 ///
 /// [`ttl_seconds`] is sent rather than left for the client to derive from [`expires_at`], because
@@ -287,6 +297,17 @@ fn now_playing_of(db: &Db, username: &str) -> async_graphql::Result<Option<Frien
 /// only be filled in once the asker is known. Everything else is identical, and a viewer who
 /// cannot be told about this host never reaches here: the caller has already applied the
 /// friendship and visibility gates.
+/// The identity keys an account has published, for binding into a P2P grant.
+///
+/// Answers an empty list when the lookup fails rather than propagating. A grant that cannot name
+/// the listener's keys is the pre-registry behaviour — the host falls back to the request header —
+/// and losing the ability to listen along because a key lookup errored would be the worse failure.
+pub(crate) fn published_keys(db: &Db, username: &str) -> Vec<String> {
+    db.device_keys_for(username)
+        .map(|keys| keys.into_iter().map(|k| k.public_key).collect())
+        .unwrap_or_default()
+}
+
 fn now_playing_for_viewer(
     db: &Db,
     ws_hub: &crate::ws::WsHub,
@@ -298,7 +319,9 @@ fn now_playing_for_viewer(
     };
     if ws_hub.shares_network_with_user(host, &now.device_id, viewer) {
         if let Some(lan) = ws_hub.get_lan_address(host, &now.device_id) {
-            now.peer_lan_token = ws_hub.grant_p2p_token(host, &now.device_id, viewer);
+            let viewer_keys = published_keys(db, viewer);
+            now.peer_lan_token =
+                ws_hub.grant_p2p_token(host, &now.device_id, viewer, &viewer_keys);
             // The address is only worth handing over alongside a token to use it with.
             if now.peer_lan_token.is_some() {
                 now.peer_lan_address = Some(lan);
@@ -385,6 +408,41 @@ impl SocialQuery {
             .iter()
             .any(|e| e.profile.username.eq_ignore_ascii_case(&subject));
         Ok(Some(profile_payload(&profile, state, outgoing)))
+    }
+
+    /// Every identity key `username` has published, one per device.
+    ///
+    /// Gated on friendship with the same refusal `dropTrack` uses, and for the same reason: a key
+    /// list that answered differently for a stranger and for an account that does not exist would
+    /// be a way to probe for accounts. Reading your own list is always allowed — a client needs it
+    /// to seal a copy to its own other devices.
+    ///
+    /// A sender seals one copy per entry here. An account with no entries is one whose devices
+    /// have never published a key, and the caller should fall back to sending the note in clear or
+    /// not at all — never to sealing it to nobody.
+    async fn device_keys(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+    ) -> async_graphql::Result<Vec<DeviceKeyPayload>> {
+        let authed = caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+        let subject = normalise_username(&username)?;
+
+        if !authed.username().eq_ignore_ascii_case(&subject)
+            && !db.are_friends(authed.username(), &subject)?
+        {
+            return Err(forbidden("no such account, or it is not visible to you"));
+        }
+
+        Ok(db
+            .device_keys_for(&subject)?
+            .into_iter()
+            .map(|key| DeviceKeyPayload {
+                device_id: key.device_id,
+                public_key: key.public_key,
+            })
+            .collect())
     }
 
     /// The public directory. Only accounts that asked to be listed appear in it.
@@ -620,11 +678,21 @@ impl SocialMutation {
         Ok(profile_payload(&profile, None, false))
     }
 
-    /// Sets or clears the caller's public identity key used for E2EE track drops.
+    /// Publishes or withdraws one device's identity key.
+    ///
+    /// `device_id` names which of the caller's devices this key belongs to, and only that entry is
+    /// touched. Omitting it writes the `legacy` entry — which is what a client that predates the
+    /// registry is doing whether it knows it or not, and it is the behaviour those clients already
+    /// had: one key for the account.
+    ///
+    /// `users.public_key` is still written, because older clients read it and nothing else. It is
+    /// last-writer-wins, so it will hold whichever device published most recently; that is
+    /// tolerable now only because nothing that seals a note reads it any more.
     async fn set_public_key(
         &self,
         ctx: &Context<'_>,
         public_key: Option<String>,
+        device_id: Option<String>,
     ) -> async_graphql::Result<ProfilePayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -634,6 +702,20 @@ impl SocialMutation {
                 return Err("Public key is too long (max 512 bytes)".into());
             }
         }
+
+        let device = match device_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => bounded(id, 128, "deviceId")?,
+            None => LEGACY_DEVICE_ID.to_string(),
+        };
+        match key {
+            Some(k) => db.register_device_key(authed.username(), &device, k)?,
+            // Withdrawing removes this device's entry only. The other devices on the account keep
+            // receiving sealed messages, which is the entire point of the registry.
+            None => {
+                db.forget_device_key(authed.username(), &device)?;
+            }
+        }
+
         db.set_public_key(authed.username(), key)?;
         let profile = db
             .profile(authed.username())?
@@ -1188,7 +1270,9 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
             let mut peer_lan_token = None;
             if ws_hub.shares_network_with_user(user, &now.device_id, &listener) {
                 if let Some(lan) = ws_hub.get_lan_address(user, &now.device_id) {
-                    peer_lan_token = ws_hub.grant_p2p_token(user, &now.device_id, &listener);
+                    let listener_keys = published_keys(db, &listener);
+                    peer_lan_token =
+                        ws_hub.grant_p2p_token(user, &now.device_id, &listener, &listener_keys);
                     if peer_lan_token.is_some() {
                         peer_lan_address = Some(lan);
                     }
