@@ -895,6 +895,45 @@ const MIGRATIONS: &[&str] = &[
     // authenticated envelope — the plaintext columns carry a placeholder — and another of the
     // account's devices unseals it. NULL for every ordinary handoff, which is nearly all of them.
     "ALTER TABLE handoff_state ADD COLUMN encrypted_payload TEXT;",
+    // 36 — identity keys belong to a device, not to an account.
+    //
+    // `users.public_key` is a single column, so signing in on a second phone published that
+    // phone's key over the first one's. From that moment every drop sealed to the account was
+    // readable by the new device alone: the phone that was already there could no longer open its
+    // own incoming messages, and nothing sealed to it could ever be opened on the new one. The
+    // damage lands at the second sign-in and cannot be undone afterwards, because the ciphertexts
+    // are already sealed to a key the other device has never held.
+    //
+    // Keyed `(user_id, device_id)` for the same reason `registered_nodes` is (migration 10):
+    // device ids are chosen by the client, so two accounts can collide on one and the device id
+    // alone must not be the key.
+    //
+    // `users.public_key` stays, and stays written, as the compatibility mirror for clients that
+    // have not updated. Existing keys are carried into the registry under the device id `legacy`,
+    // so an account that has only ever had one device keeps working without signing in again.
+    //
+    // `drop_note_ciphertexts` holds one sealed copy of a note per device key it was sealed to —
+    // including the sender's own, which is what makes a note readable by the person who sent it.
+    // `track_drops.note_ciphertext` likewise stays, holding the recipient's copy.
+    "CREATE TABLE IF NOT EXISTS user_device_keys (
+         user_id       TEXT NOT NULL,
+         device_id     TEXT NOT NULL,
+         public_key    TEXT NOT NULL,
+         registered_at TEXT NOT NULL,
+         PRIMARY KEY (user_id, device_id)
+     );
+     INSERT OR IGNORE INTO user_device_keys (user_id, device_id, public_key, registered_at)
+         SELECT username, 'legacy', public_key, COALESCE(created_at, '')
+           FROM users
+          WHERE public_key IS NOT NULL AND TRIM(public_key) != '';
+     CREATE TABLE IF NOT EXISTS drop_note_ciphertexts (
+         drop_id    TEXT NOT NULL,
+         device_id  TEXT NOT NULL,
+         ciphertext TEXT NOT NULL,
+         PRIMARY KEY (drop_id, device_id)
+     );
+     CREATE INDEX IF NOT EXISTS idx_drop_note_ciphertexts_drop
+         ON drop_note_ciphertexts(drop_id);",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -2962,6 +3001,156 @@ mod handoff_tests {
         );
         assert!(db.set_public_key("alpha", None).unwrap());
         assert_eq!(db.profile("alpha").unwrap().unwrap().public_key, None);
+    }
+
+    /// The registry's whole reason for existing: a second device must not displace the first.
+    #[test]
+    fn a_second_device_key_does_not_replace_the_first() {
+        let db = db();
+        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+
+        db.register_device_key("alpha", "phone", "key-phone").unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+
+        let keys = db.device_keys_for("alpha").unwrap();
+        assert_eq!(keys.len(), 2, "signing in on a second device must not evict the first");
+        assert!(keys.iter().any(|k| k.device_id == "phone" && k.public_key == "key-phone"));
+        assert!(keys.iter().any(|k| k.device_id == "laptop" && k.public_key == "key-laptop"));
+    }
+
+    /// A device replaces its own entry — a reinstall regenerates a keypair — and only its own.
+    #[test]
+    fn re_registering_replaces_only_that_devices_key() {
+        let db = db();
+        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+
+        db.register_device_key("alpha", "phone", "key-phone").unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+        db.register_device_key("alpha", "phone", "key-phone-v2").unwrap();
+
+        let keys = db.device_keys_for("alpha").unwrap();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(
+            keys.iter().find(|k| k.device_id == "phone").unwrap().public_key,
+            "key-phone-v2"
+        );
+        assert_eq!(
+            keys.iter().find(|k| k.device_id == "laptop").unwrap().public_key,
+            "key-laptop",
+            "one device re-keying must not touch another's entry"
+        );
+    }
+
+    /// Signing one device out stops it being sealed to, and leaves the rest of the account alone.
+    #[test]
+    fn forgetting_one_device_leaves_the_others() {
+        let db = db();
+        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+
+        db.register_device_key("alpha", "phone", "key-phone").unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+        assert!(db.forget_device_key("alpha", "phone").unwrap());
+
+        let keys = db.device_keys_for("alpha").unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].device_id, "laptop");
+        assert!(!db.forget_device_key("alpha", "phone").unwrap(), "forgetting twice is a no-op");
+    }
+
+    /// The `legacy` row migration 36 carries over is superseded once a real device claims the key,
+    /// so a note is not sealed twice for one phone.
+    #[test]
+    fn claiming_a_legacy_key_retires_the_legacy_row() {
+        let db = db();
+        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+
+        db.register_device_key("alpha", crate::db_social::LEGACY_DEVICE_ID, "key-one").unwrap();
+        db.register_device_key("alpha", "phone", "key-one").unwrap();
+
+        let keys = db.device_keys_for("alpha").unwrap();
+        assert_eq!(keys.len(), 1, "the same key must not be listed under two device ids");
+        assert_eq!(keys[0].device_id, "phone");
+    }
+
+    /// #49: a note sealed only to the recipient is one the sender cannot read. Every copy is
+    /// stored, and the sender's own is among them.
+    #[test]
+    fn a_drop_keeps_every_sealed_copy_including_the_senders() {
+        let db = db();
+        let new_drop = crate::db_drops::NewDrop {
+            track_title: "Secret Track".to_string(),
+            artist_name: "Secret Artist".to_string(),
+            note_ciphertext: Some("sealed-to-recipient".to_string()),
+            note_ciphertexts: vec![
+                crate::db_drops::DeviceCiphertext {
+                    device_id: "beta-phone".to_string(),
+                    ciphertext: "sealed-to-recipient".to_string(),
+                },
+                crate::db_drops::DeviceCiphertext {
+                    device_id: "alpha-phone".to_string(),
+                    ciphertext: "sealed-to-sender".to_string(),
+                },
+            ],
+            is_encrypted: true,
+            ..Default::default()
+        };
+        let drop_id = db.create_drop("alpha", "beta", &new_drop).unwrap();
+
+        // The recipient's inbox carries both copies...
+        let inbox = db.inbox("beta", 10, 0).unwrap();
+        let received = inbox.iter().find(|d| d.id == drop_id).unwrap();
+        assert_eq!(received.note_ciphertexts.len(), 2);
+
+        // ...and so does the sender's own record of it, which is the bug.
+        let sent = db.sent_drops("alpha", 10, 0).unwrap();
+        let mine = sent.iter().find(|d| d.id == drop_id).unwrap();
+        assert_eq!(
+            mine.note_ciphertexts
+                .iter()
+                .find(|c| c.device_id == "alpha-phone")
+                .map(|c| c.ciphertext.as_str()),
+            Some("sealed-to-sender"),
+            "a sender must be able to read the note they sent"
+        );
+
+        // The single-copy column still holds the recipient's, for clients that read only that.
+        assert_eq!(mine.note_ciphertext.as_deref(), Some("sealed-to-recipient"));
+    }
+
+    /// A conversation is the surface where both halves are read at once, so both must carry their
+    /// copies — this is the view that rendered `[Encrypted Note]` for everything you had sent.
+    #[test]
+    fn a_conversation_carries_sealed_copies_in_both_directions() {
+        let db = db();
+        let sealed = |device: &str, text: &str| crate::db_drops::DeviceCiphertext {
+            device_id: device.to_string(),
+            ciphertext: text.to_string(),
+        };
+        let outgoing = crate::db_drops::NewDrop {
+            track_title: "Mine".to_string(),
+            artist_name: "A".to_string(),
+            note_ciphertexts: vec![sealed("alpha-phone", "mine"), sealed("beta-phone", "theirs")],
+            is_encrypted: true,
+            ..Default::default()
+        };
+        let incoming = crate::db_drops::NewDrop {
+            track_title: "Theirs".to_string(),
+            artist_name: "B".to_string(),
+            note_ciphertexts: vec![sealed("beta-phone", "theirs2"), sealed("alpha-phone", "mine2")],
+            is_encrypted: true,
+            ..Default::default()
+        };
+        db.create_drop("alpha", "beta", &outgoing).unwrap();
+        db.create_drop("beta", "alpha", &incoming).unwrap();
+
+        let thread = db.conversation("alpha", "beta", 50).unwrap();
+        assert_eq!(thread.len(), 2);
+        for message in &thread {
+            assert!(
+                message.note_ciphertexts.iter().any(|c| c.device_id == "alpha-phone"),
+                "alpha must hold a copy of every message in their own thread"
+            );
+        }
     }
 
     #[test]

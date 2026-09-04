@@ -119,9 +119,11 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
                 let (peer_lan_address, peer_lan_token) = match holder_device.as_deref() {
                     Some(device) if !holder.eq_ignore_ascii_case(member) => {
                         if hub.shares_network_with_user(&holder, device, member) {
+                            let member_keys =
+                                crate::schema_social::published_keys(db, member);
                             match (
                                 hub.get_lan_address(&holder, device),
-                                hub.grant_p2p_token(&holder, device, member),
+                                hub.grant_p2p_token(&holder, device, member, &member_keys),
                             ) {
                                 (Some(address), Some(token)) => (Some(address), Some(token)),
                                 _ => (None, None),
