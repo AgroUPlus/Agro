@@ -4,8 +4,13 @@ import { formatDuration } from '../api.js';
 
 export default function NowBar({ lastHandoff, nodes = [] }) {
   const isPlaying = !!lastHandoff?.isPlaying;
-  const title = lastHandoff?.title || 'No active playback';
-  const artist = lastHandoff?.artist || '';
+  // A sealed handoff carries only an envelope this dashboard cannot open — the plaintext fields
+  // are a placeholder, so they are not shown.
+  const isEncrypted = !!lastHandoff?.encryptedPayload;
+  const title = isEncrypted
+    ? 'Private Session (E2EE)'
+    : (lastHandoff?.title || 'No active playback');
+  const artist = isEncrypted ? '' : (lastHandoff?.artist || '');
   const album = lastHandoff?.album || '';
   const artworkUrl = lastHandoff?.artworkUrl || '';
   
@@ -115,6 +120,9 @@ export default function NowBar({ lastHandoff, nodes = [] }) {
 
       {/* Right: Device & status badge */}
       <div className="now-bar-meta-right">
+        {isEncrypted && (
+          <span className="quality-pill" style={{ background: '#3b82f6', color: '#fff' }}>E2EE</span>
+        )}
         {isPlaying && (
           <span className="quality-pill">LOSSLESS</span>
         )}

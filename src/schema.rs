@@ -277,6 +277,10 @@ pub struct HandoffState {
     pub queue: Vec<HandoffTrack>,
     /// Where `queue` was playing. -1 when the sender reported no queue at all.
     pub queue_index: i32,
+    /// Present only for a sealed session: an authenticated envelope the server forwards without
+    /// opening. A client with the account's vault key unseals the real metadata; everything else
+    /// shows the session as private.
+    pub encrypted_payload: Option<String>,
 }
 
 /// One entry of a handed-over queue. `track_uri` is the sending client's own id for it — a
@@ -455,6 +459,9 @@ pub struct HandoffInput {
     /// omitting it leaves whatever hash the track change already established alone rather than
     /// erasing it on every heartbeat.
     pub content_hash: Option<String>,
+    /// End-to-end encrypted envelope containing sealed metadata (track_uri, title, artist, album).
+    /// When present, Agro acts purely as a blind forwarder over WebSocket without logging or learning the music.
+    pub encrypted_payload: Option<String>,
 }
 
 /// See `update_handoff`.
@@ -740,6 +747,7 @@ impl QueryRoot {
                 .and_then(|json| serde_json::from_str::<Vec<HandoffTrack>>(&json).ok())
                 .unwrap_or_default(),
             queue_index: r.queue_index.unwrap_or(-1) as i32,
+            encrypted_payload: r.encrypted_payload,
         }))
     }
 
@@ -2117,6 +2125,7 @@ impl MutationRoot {
             queue_json.as_deref(),
             input.queue_index.map(|i| i as i64),
             input.content_hash.as_deref(),
+            input.encrypted_payload.as_deref(),
         )?;
 
         let track_summary = format!("{} • {}", input.track_title, input.artist_name);
@@ -2149,6 +2158,7 @@ impl MutationRoot {
                     "isPlaying": input.is_playing,
                     "deviceId": input.device_id,
                     "petname": petname,
+                    "encryptedPayload": input.encrypted_payload,
                 }),
             );
             crate::schema_social::fan_out_presence(db, ws_hub, &input.user_id);

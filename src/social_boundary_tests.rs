@@ -190,6 +190,7 @@ impl Harness {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
     }
@@ -1003,7 +1004,7 @@ async fn a_paused_or_stale_friend_is_not_listening_now() {
     // The same row, but paused: they are not listening to anything.
     h.db.update_handoff(
         "alpha", "track://1", "Currently On", "Some Artist", None, None, 0, 0, false,
-        "device-1", None, None, None,
+        "device-1", None, None, None, None,
     )
     .unwrap();
     let feed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;

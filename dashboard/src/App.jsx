@@ -159,7 +159,7 @@ export default function App() {
       const res = await gql(
         `query AgroState($who: String!) {
           activeNodes(userId: $who) { deviceId clientType petname isOnline lanAddress currentTrack }
-          playbackHandoff(userId: $who) { trackTitle artistName albumName artworkUrl positionMs durationMs isPlaying deviceId }
+          playbackHandoff(userId: $who) { trackTitle artistName albumName artworkUrl positionMs durationMs isPlaying deviceId encryptedPayload }
         }`,
         { who }
       );
@@ -177,7 +177,8 @@ export default function App() {
           positionMs: data.playbackHandoff.positionMs || 0,
           durationMs: data.playbackHandoff.durationMs || 0,
           isPlaying: !!data.playbackHandoff.isPlaying,
-          deviceId: data.playbackHandoff.deviceId || 'fleet'
+          deviceId: data.playbackHandoff.deviceId || 'fleet',
+          encryptedPayload: data.playbackHandoff.encryptedPayload || null
         });
       }
       setLocked(false);
