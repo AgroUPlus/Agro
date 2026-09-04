@@ -512,16 +512,41 @@ impl SocialQuery {
     }
 
     /// Accepted friends, each with what they are playing when they allow that to be seen.
-    async fn friends(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<FriendEdgePayload>> {
+    /// `device_id` carries the same meaning it does on [`Self::friends_now_playing`]: the sealed
+    /// copy of a session is addressed to one device's key, so it can only be picked once the asking
+    /// device is named.
+    ///
+    /// It matters here and not only there because this query *seeds the presence feed* — a client
+    /// refreshing the graph gets each friend's session in the same answer. Without a device id the
+    /// sessions in that answer are placeholders, and a sealed friend would show as "Private
+    /// Session" from every foreground refresh until a socket frame happened to replace it.
+    async fn friends(
+        &self,
+        ctx: &Context<'_>,
+        device_id: Option<String>,
+    ) -> async_graphql::Result<Vec<FriendEdgePayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        let viewer_device = match device_id.as_deref() {
+            Some(raw) => Some(bounded(raw, 128, "deviceId")?),
+            None => None,
+        };
 
         let mut edges = Vec::new();
         for profile in db.friends(authed.username())? {
             // Not an error when it is closed — a friend who has not opted in is simply a friend
             // with nothing showing, which is different from a friend who is offline.
             let now_playing = if profile.shows_now_playing() {
-                live_now_playing(db, &profile.username)?
+                live_now_playing(db, &profile.username)?.map(|mut now| {
+                    attach_sealed_presence(
+                        db,
+                        &mut now,
+                        &profile.username,
+                        authed.username(),
+                        viewer_device.as_deref(),
+                    );
+                    now
+                })
             } else {
                 None
             };
@@ -1383,6 +1408,22 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
                     }
                 }
             }
+            // The same sealed copies the friends feed gets. A listener is following the session,
+            // not merely watching it, so a frame carrying only the placeholder leaves them unable
+            // to name the track *or* resolve the file — the plaintext columns hold neither under a
+            // sealed session. This loop is already per-listener, so the copy is free to address.
+            let sealed = db
+                .presence_ciphertexts_to(user, &listener)
+                .unwrap_or_default();
+            let copies: Vec<serde_json::Value> = sealed
+                .into_iter()
+                .map(|copy| {
+                    serde_json::json!({
+                        "deviceId": copy.recipient_device_id,
+                        "ciphertext": copy.ciphertext,
+                    })
+                })
+                .collect();
             ws_hub.notify_user(
                 &listener,
                 "LISTEN_ALONG",
@@ -1400,6 +1441,7 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
                     "contentHash": now.content_hash,
                     "peerLanAddress": peer_lan_address,
                     "peerLanToken": peer_lan_token,
+                    "encryptedPresence": copies,
                 }),
             );
         }
