@@ -171,7 +171,11 @@ impl WsHub {
     /// `None` means the buffer cannot answer — the client has been gone longer than [`REPLAY_TTL`]
     /// or a burst pushed its position out — and the caller must tell it to resynchronise rather
     /// than hand it a prefix with a hole at the front, which would be worse than admitting the gap.
-    fn replay_after(
+    ///
+    /// `pub(crate)` for the boundary suites as well as the resume path: what a socket is *sent* is
+    /// half of what one account can learn about another, and a frame carrying somebody else's
+    /// sealed copy would not be visible in any query-level assertion.
+    pub(crate) fn replay_after(
         &self,
         after_seq: u64,
         username: Option<&str>,

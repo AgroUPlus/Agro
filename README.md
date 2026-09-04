@@ -9,7 +9,7 @@ are playing" feed, and listen-along. All of it is off until each account opts in
 *Friends, and what a friendship reveals*.
 
 - GraphQL API — `POST /graphql`
-- Live push — `GET /ws/sync` (WebSocket; `HANDOFF`, `NODE_UPDATE`, `SETTINGS_SYNC`, `LIBRARY_UPDATED`, `SYNC_OFFER`, `FRIEND_PRESENCE`, `FRIEND_REQUEST`, `LISTEN_ALONG`)
+- Live push — `GET /ws/sync` (WebSocket; `HANDOFF`, `NODE_UPDATE`, `SETTINGS_SYNC`, `LIBRARY_UPDATED`, `SYNC_OFFER`, `FRIEND_PRESENCE`, `FRIEND_REQUEST`, `LISTEN_ALONG`). `HANDOFF` and `FRIEND_PRESENCE` carry sealed metadata when the sender holds a vault key — see [SECURITY.md](SECURITY.md); `FRIEND_PRESENCE` is sent per recipient rather than broadcast, because a sealed copy is addressed to one device's key.
 - Dashboard — served at `/`, compiled into the binary
 - Storage — SQLite, single file, no external database
 

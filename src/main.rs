@@ -13,6 +13,7 @@ mod db_jam;
 mod db_playlists;
 mod db_acoustic;
 mod db_popularity;
+mod db_presence;
 mod db_social;
 mod guest_boundary_tests;
 mod embedded_dashboard;

@@ -259,11 +259,20 @@ impl Db {
     }
 
     /// Removes one device's key, so a phone that is signed out stops being sealed to.
+    ///
+    /// Anything already sealed to it goes with it. A ciphertext addressed to a key that has been
+    /// withdrawn can never be opened by anyone, so what is left behind is not a message the device
+    /// might still come back for — it is a secret being stored on nobody's behalf.
     pub fn forget_device_key(&self, username: &str, device_id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let removed = conn.execute(
             "DELETE FROM user_device_keys WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
             params![username.trim(), device_id.trim()],
+        )?;
+        Db::forget_presence_for_device_in(&conn, username, device_id.trim())?;
+        conn.execute(
+            "DELETE FROM drop_note_ciphertexts WHERE device_id = ?1",
+            params![device_id.trim()],
         )?;
         Ok(removed > 0)
     }
@@ -372,6 +381,13 @@ impl Db {
                  OR (user_id = ?2 COLLATE NOCASE AND friend_id = ?1 COLLATE NOCASE)",
             params![a.trim(), b.trim()],
         )?;
+        // Sealed presence outlives nothing. The feed already re-checks friendship before it sends,
+        // so this is not what stops delivery — it is what stops the server keeping a copy of what
+        // one of them was listening to on behalf of someone no longer entitled to it.
+        //
+        // Unlike a drop, which belongs to the person who received it and survives the friendship,
+        // presence is a live status: there is no version of it that is still wanted afterwards.
+        Db::forget_presence_between_in(&conn, a, b)?;
         Ok(removed > 0)
     }
 

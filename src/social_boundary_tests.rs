@@ -175,6 +175,21 @@ impl Harness {
 
     /// Gives an account something to be caught playing.
     fn set_playing(&self, who: &str, title: &str) {
+        self.set_playing_sealed(who, title, None);
+    }
+
+    /// The same, for a session sealed to a set of friend devices.
+    ///
+    /// `title` is what the plaintext columns carry. A client sealing a session really sends a
+    /// placeholder there and the truth in the copies; tests pass a recognisable string instead, so
+    /// that a leak of the plaintext column is visible in the assertion rather than indistinguishable
+    /// from a correct placeholder.
+    fn set_playing_sealed(
+        &self,
+        who: &str,
+        title: &str,
+        sealed: Option<&[crate::db_presence::PresenceCiphertext]>,
+    ) {
         self.db
             .update_handoff(
                 who,
@@ -191,8 +206,18 @@ impl Harness {
                 None,
                 None,
                 None,
+                sealed,
             )
             .unwrap();
+    }
+
+    /// One sealed copy, addressed to a device.
+    fn copy_for(who: &str, device: &str, ciphertext: &str) -> crate::db_presence::PresenceCiphertext {
+        crate::db_presence::PresenceCiphertext {
+            recipient_user_id: who.to_string(),
+            recipient_device_id: device.to_string(),
+            ciphertext: ciphertext.to_string(),
+        }
     }
 }
 
@@ -1004,7 +1029,7 @@ async fn a_paused_or_stale_friend_is_not_listening_now() {
     // The same row, but paused: they are not listening to anything.
     h.db.update_handoff(
         "alpha", "track://1", "Currently On", "Some Artist", None, None, 0, 0, false,
-        "device-1", None, None, None, None,
+        "device-1", None, None, None, None, None,
     )
     .unwrap();
     let feed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
@@ -2148,4 +2173,382 @@ mod wire_contract {
             response.errors
         );
     }
+}
+
+// ── Sealed presence ─────────────────────────────────────────────────────────────────────────
+//
+// A session sealed to friends' device keys. The invariant under all of these is that a copy is
+// addressed: the server holds copies it cannot open and hands each one only to the device it was
+// sealed to. The gates that decide *whether* a friend sees a session at all are unchanged and are
+// tested above; these assert that sealing did not quietly widen or narrow them.
+
+#[tokio::test]
+async fn a_friend_is_handed_only_the_copy_sealed_to_their_own_device() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[
+            Harness::copy_for("beta", "beta-phone", "for-beta-phone"),
+            Harness::copy_for("beta", "beta-laptop", "for-beta-laptop"),
+            Harness::copy_for("stranger", "stranger-phone", "for-stranger"),
+        ]),
+    );
+
+    let response = h
+        .run_as(
+            &h.beta,
+            r#"{ friendsNowPlaying(deviceId: "beta-phone") { username encryptedPresence } }"#,
+        )
+        .await;
+    let body = response.data.to_string();
+    assert!(body.contains("for-beta-phone"), "the device's own copy: {body}");
+    assert!(!body.contains("for-beta-laptop"), "another device's copy leaked: {body}");
+    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+}
+
+#[tokio::test]
+async fn a_device_with_no_copy_sealed_to_it_is_told_nothing_rather_than_given_someone_elses() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    // A device signed in after the last track change: the registry knows it, nothing is sealed to
+    // it yet. The correct answer is the placeholder, not the copy meant for the other phone.
+    let response = h
+        .run_as(
+            &h.beta,
+            r#"{ friendsNowPlaying(deviceId: "beta-tablet") { encryptedPresence } }"#,
+        )
+        .await;
+    assert!(
+        response.data.to_string().contains("null"),
+        "expected no sealed copy: {:?}",
+        response.data
+    );
+}
+
+#[tokio::test]
+async fn asking_without_naming_a_device_yields_no_sealed_copy() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    // The dashboard holds no device key and asks without a device id. It must get the placeholder
+    // rather than a ciphertext it cannot open.
+    let response = h
+        .run_as(&h.beta, "{ friendsNowPlaying { encryptedPresence } }")
+        .await;
+    assert!(
+        !response.data.to_string().contains("for-beta-phone"),
+        "a keyless asker was handed a ciphertext: {:?}",
+        response.data
+    );
+}
+
+#[tokio::test]
+async fn a_stranger_sees_no_sealed_session_at_all() {
+    let h = harness();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("stranger", "stranger-phone", "for-stranger")]),
+    );
+
+    // Sealing to somebody does not make them a friend. The feed is still the friend list.
+    let response = h
+        .run_as(
+            &h.stranger,
+            r#"{ friendsNowPlaying(deviceId: "stranger-phone") { username } }"#,
+        )
+        .await;
+    assert_eq!(response.data.to_string(), r#"{friendsNowPlaying: []}"#);
+}
+
+#[tokio::test]
+async fn sealing_does_not_override_the_now_playing_flag() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.run_as(&h.alpha, "mutation { setVisibility(showNowPlaying: false) }")
+        .await;
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    // Encryption decides what the server can read. It has never decided who may look.
+    let response = h
+        .run_as(
+            &h.beta,
+            r#"{ friendsNowPlaying(deviceId: "beta-phone") { username } }"#,
+        )
+        .await;
+    assert_eq!(response.data.to_string(), r#"{friendsNowPlaying: []}"#);
+}
+
+#[tokio::test]
+async fn a_heartbeat_keeps_the_sealed_copies_and_an_unsealed_handoff_clears_them() {
+    let h = harness();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    // A heartbeat repeats metadata that has not changed and says nothing about the copies.
+    h.set_playing_sealed("alpha", "Placeholder", None);
+    assert_eq!(
+        h.db.presence_ciphertext_for("alpha", "device-1", "beta", "beta-phone")
+            .unwrap()
+            .as_deref(),
+        Some("for-beta-phone"),
+        "a heartbeat erased copies it never mentioned"
+    );
+
+    // An empty set is the opposite instruction: this session is over, or is no longer sealed.
+    h.set_playing_sealed("alpha", "Ordinary Track", Some(&[]));
+    assert_eq!(
+        h.db.presence_ciphertext_for("alpha", "device-1", "beta", "beta-phone")
+            .unwrap(),
+        None,
+        "an unsealed handoff left the previous envelope in place"
+    );
+}
+
+#[tokio::test]
+async fn unfriending_drops_the_copies_in_both_directions() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+    h.db.remove_friend("beta", "alpha").unwrap();
+
+    assert_eq!(
+        h.db.presence_ciphertext_for("alpha", "device-1", "beta", "beta-phone")
+            .unwrap(),
+        None,
+        "a withdrawn friendship left a sealed session behind"
+    );
+}
+
+#[tokio::test]
+async fn withdrawing_a_device_key_drops_what_was_sealed_to_it() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.register_device_key("beta", "beta-phone", "key-beta-phone")
+        .unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    h.db.forget_device_key("beta", "beta-phone").unwrap();
+
+    assert_eq!(
+        h.db.presence_ciphertext_for("alpha", "device-1", "beta", "beta-phone")
+            .unwrap(),
+        None,
+        "a copy sealed to a withdrawn key is unopenable and must not be kept"
+    );
+}
+
+#[tokio::test]
+async fn a_handoff_may_not_carry_unbounded_sealed_bytes() {
+    let h = harness();
+    let huge = "A".repeat(9000);
+    let response = h
+        .run_as(
+            &h.alpha,
+            &format!(
+                r#"mutation {{ updateHandoff(input: {{
+                     userId: "alpha", trackUri: "u", trackTitle: "t", artistName: "a",
+                     positionMs: 0, isPlaying: true, deviceId: "device-1",
+                     encryptedPayload: "{huge}"
+                   }}) }}"#
+            ),
+        )
+        .await;
+    assert!(
+        !response.errors.is_empty(),
+        "an oversized sealed payload was accepted"
+    );
+}
+
+#[tokio::test]
+async fn the_friend_list_carries_the_sealed_copy_for_the_asking_device() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[
+            Harness::copy_for("beta", "beta-phone", "for-beta-phone"),
+            Harness::copy_for("beta", "beta-laptop", "for-beta-laptop"),
+        ]),
+    );
+
+    // This query seeds the presence feed on a graph refresh. Without the copy it seeds a
+    // placeholder, and a sealed friend reads as private until a socket frame replaces it.
+    let response = h
+        .run_as(
+            &h.beta,
+            r#"{ friends(deviceId: "beta-phone") { nowPlaying { encryptedPresence } } }"#,
+        )
+        .await;
+    let body = response.data.to_string();
+    assert!(body.contains("for-beta-phone"), "the device's own copy: {body}");
+    assert!(!body.contains("for-beta-laptop"), "another device's copy leaked: {body}");
+}
+
+#[tokio::test]
+async fn the_friend_list_without_a_device_yields_no_sealed_copy() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    let response = h
+        .run_as(&h.beta, "{ friends { nowPlaying { encryptedPresence } } }")
+        .await;
+    assert!(
+        !response.data.to_string().contains("for-beta-phone"),
+        "a keyless asker was handed a ciphertext: {:?}",
+        response.data
+    );
+}
+
+#[tokio::test]
+async fn the_friend_list_still_refuses_a_friend_who_has_not_opted_in() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[Harness::copy_for("beta", "beta-phone", "for-beta-phone")]),
+    );
+
+    // Naming a device must not become a way around the visibility flag.
+    let response = h
+        .run_as(
+            &h.beta,
+            r#"{ friends(deviceId: "beta-phone") { nowPlaying { encryptedPresence } } }"#,
+        )
+        .await;
+    let body = response.data.to_string();
+    assert!(!body.contains("for-beta-phone"), "the flag was bypassed: {body}");
+}
+
+#[tokio::test]
+async fn a_listener_is_pushed_the_sealed_copy_addressed_to_them() {
+    let h = harness();
+    let hub = std::sync::Arc::new(WsHub::new());
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.db.set_listen_along("beta", "alpha").unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[
+            Harness::copy_for("beta", "beta-phone", "for-beta-phone"),
+            Harness::copy_for("stranger", "stranger-phone", "for-stranger"),
+        ]),
+    );
+
+    crate::schema_social::fan_out_presence(&h.db, &hub, "alpha");
+
+    // A listener follows the session rather than watching it: without the copy they can name
+    // neither the track nor the file, because the plaintext columns hold neither once sealed.
+    let frames = hub.replay_after(0, Some("beta"), None).expect("in buffer");
+    let listen_along = frames
+        .iter()
+        .find(|f| f.msg_type == "LISTEN_ALONG")
+        .expect("the listener was sent no LISTEN_ALONG frame");
+    let body = listen_along.payload.to_string();
+    assert!(body.contains("for-beta-phone"), "the listener's own copy: {body}");
+    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+}
+
+#[tokio::test]
+async fn a_presence_frame_carries_only_the_recipients_own_copy() {
+    let h = harness();
+    let hub = std::sync::Arc::new(WsHub::new());
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Placeholder",
+        Some(&[
+            Harness::copy_for("beta", "beta-phone", "for-beta-phone"),
+            Harness::copy_for("stranger", "stranger-phone", "for-stranger"),
+        ]),
+    );
+
+    crate::schema_social::fan_out_presence(&h.db, &hub, "alpha");
+
+    // Sent per friend rather than broadcast. A single fan-out would hand every friend the first
+    // one's ciphertext — bytes none of the rest can open.
+    let frames = hub.replay_after(0, Some("beta"), None).expect("in buffer");
+    let presence = frames
+        .iter()
+        .find(|f| f.msg_type == "FRIEND_PRESENCE")
+        .expect("no FRIEND_PRESENCE frame");
+    let body = presence.payload.to_string();
+    assert!(body.contains("for-beta-phone"), "the friend's own copy: {body}");
+    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+}
+
+/// What a stolen database would show of a sealed session.
+///
+/// The claim the whole feature makes, asserted against the rows rather than the API: the plaintext
+/// columns hold a placeholder, the envelopes are opaque, and no copy contains the track.
+#[tokio::test]
+async fn a_stolen_database_shows_no_trace_of_a_sealed_session() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Private Session",
+        Some(&[Harness::copy_for("beta", "beta-phone", "opaque-bytes-for-beta")]),
+    );
+
+    let handoff = h.db.get_handoff("alpha").unwrap().expect("a session");
+    assert_eq!(handoff.track_title, "Private Session");
+    assert!(
+        !handoff.track_title.contains("Kid A") && !handoff.artist_name.contains("Radiohead"),
+        "the real track reached a plaintext column"
+    );
+
+    let copies = h.db.presence_ciphertexts_to("alpha", "beta").unwrap();
+    assert_eq!(copies.len(), 1, "one copy per friend device");
+    assert_eq!(copies[0].recipient_device_id, "beta-phone");
+    assert_eq!(copies[0].ciphertext, "opaque-bytes-for-beta");
+
+    // And nothing was sealed to anyone who was not asked for.
+    assert!(
+        h.db.presence_ciphertexts_to("alpha", "stranger").unwrap().is_empty(),
+        "a copy exists for an account that is not a friend"
+    );
 }

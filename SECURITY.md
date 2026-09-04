@@ -84,6 +84,32 @@ Accounts that sign in through SSO have no passphrase, so they seal the same key 
 **vault PIN** the user sets once. The server never learns that either. `db_identity.rs`'s
 `the_server_stores_nothing_that_unwraps_the_vault` is the test that pins this.
 
+## What is playing is sealed too
+
+The vault key derives per-purpose subkeys (HKDF-SHA256, contexts `agro/v1/settings`,
+`agro/v1/presence`, `agro/v1/p2p-relay`), and a client holding one seals its now-playing metadata
+before sending it. `handoff_state.track_title` and `artist_name` then carry a placeholder and the
+real values live in `encrypted_payload`, which the server stores and relays without being able to
+open.
+
+That envelope is sealed to the account's *own* vault key, so only its other devices can read it —
+which is what a handoff is for. Friends are served separately: the same metadata is sealed once per
+friend device public key from `user_device_keys`, the way a drop note is, and those copies live in
+`handoff_presence_ciphertexts`. Each viewer is handed only the copy addressed to the device it is
+asking from. The server holds N ciphertexts and no key to any of them.
+
+**This changes what the server can read, never who is allowed to look.** `show_now_playing` and
+incognito are enforced exactly as before, on rows the server cannot decrypt; a friend who has not
+been opted into sees nothing whether or not a copy was sealed for them. The boundary suites in
+`social_boundary_tests.rs` assert both halves.
+
+Copies are dropped when the session goes stale, when a device withdraws its key, when a friendship
+ends, and when an account is deleted — a ciphertext sealed to a key nobody holds is unreadable by
+everyone, so keeping it stores a secret on nobody's behalf.
+
+What is still in clear, deliberately: cross-account popularity (`db_popularity.rs`) aggregates
+across accounts and no per-recipient sealing permits that. It is opt-in.
+
 ## Federated identity
 
 An unauthenticated SSO callback can sign into an **already-linked** account or create a **brand-new**
