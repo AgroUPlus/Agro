@@ -889,6 +889,12 @@ const MIGRATIONS: &[&str] = &[
          observations  INTEGER NOT NULL DEFAULT 1,
          PRIMARY KEY (norm_artist, norm_title, norm_variants, version)
      );",
+    // A handoff can be end-to-end encrypted.
+    //
+    // When a client holds a vault key, the real track metadata travels only inside this
+    // authenticated envelope — the plaintext columns carry a placeholder — and another of the
+    // account's devices unseals it. NULL for every ordinary handoff, which is nearly all of them.
+    "ALTER TABLE handoff_state ADD COLUMN encrypted_payload TEXT;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -1392,12 +1398,13 @@ impl Db {
         queue_json: Option<&str>,
         queue_index: Option<i64>,
         content_hash: Option<&str>,
+        encrypted_payload: Option<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms, content_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms, content_hash, encrypted_payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(user_id, device_id) DO UPDATE SET
              track_uri = excluded.track_uri,
              track_title = excluded.track_title,
@@ -1418,8 +1425,12 @@ impl Db {
              queue_index = COALESCE(excluded.queue_index, handoff_state.queue_index),
              -- Same rule as the queue: a heartbeat that does not name a hash must not erase the
              -- one the track change already established.
-             content_hash = COALESCE(excluded.content_hash, handoff_state.content_hash)",
-            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms, content_hash],
+             content_hash = COALESCE(excluded.content_hash, handoff_state.content_hash),
+             -- Not COALESCE: this one *must* clear. A sealed track followed by an ordinary one
+             -- arrives with no payload, and leaving the old envelope in place would mark a public
+             -- session private. Every handoff names its own privacy.
+             encrypted_payload = excluded.encrypted_payload",
+            params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms, content_hash, encrypted_payload],
         )?;
         Ok(())
     }
@@ -1457,7 +1468,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT track_uri, track_title, artist_name, album_name, artwork_url, position_ms,
                     is_playing, device_id, updated_at, queue_json, queue_index, duration_ms,
-                    content_hash
+                    content_hash, encrypted_payload
                FROM handoff_state
               WHERE user_id = ?1 AND (?2 IS NULL OR device_id != ?2)
               ORDER BY updated_at DESC
@@ -1479,6 +1490,7 @@ impl Db {
                 queue_index: row.get(10)?,
                 duration_ms: row.get(11)?,
                 content_hash: row.get(12)?,
+                encrypted_payload: row.get(13)?,
             }))
         } else {
             Ok(None)
@@ -2316,6 +2328,9 @@ pub struct HandoffRecord {
     /// one track. Kept opaque here: the clients agree on the shape, the server only stores it.
     pub queue_json: Option<String>,
     pub queue_index: Option<i64>,
+    /// An authenticated envelope holding the real metadata when the sender sealed it. `None` for
+    /// an ordinary handoff. The server stores and forwards it without being able to open it.
+    pub encrypted_payload: Option<String>,
 }
 
 pub struct AppPasswordRecord {
@@ -2739,6 +2754,7 @@ mod retention_tests {
             Some("[\"one\"]"),
             Some(0),
             None,
+            None,
         )
         .unwrap();
 
@@ -2856,6 +2872,7 @@ mod handoff_tests {
             duration_ms,
             playing,
             device,
+            None,
             None,
             None,
             None,
