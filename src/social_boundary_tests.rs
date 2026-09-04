@@ -2518,3 +2518,37 @@ async fn a_presence_frame_carries_only_the_recipients_own_copy() {
     assert!(body.contains("for-beta-phone"), "the friend's own copy: {body}");
     assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
 }
+
+/// What a stolen database would show of a sealed session.
+///
+/// The claim the whole feature makes, asserted against the rows rather than the API: the plaintext
+/// columns hold a placeholder, the envelopes are opaque, and no copy contains the track.
+#[tokio::test]
+async fn a_stolen_database_shows_no_trace_of_a_sealed_session() {
+    let h = harness();
+    h.befriend("alpha", "beta");
+    h.db.set_visibility("alpha", true, false).unwrap();
+    h.set_playing_sealed(
+        "alpha",
+        "Private Session",
+        Some(&[Harness::copy_for("beta", "beta-phone", "opaque-bytes-for-beta")]),
+    );
+
+    let handoff = h.db.get_handoff("alpha").unwrap().expect("a session");
+    assert_eq!(handoff.track_title, "Private Session");
+    assert!(
+        !handoff.track_title.contains("Kid A") && !handoff.artist_name.contains("Radiohead"),
+        "the real track reached a plaintext column"
+    );
+
+    let copies = h.db.presence_ciphertexts_to("alpha", "beta").unwrap();
+    assert_eq!(copies.len(), 1, "one copy per friend device");
+    assert_eq!(copies[0].recipient_device_id, "beta-phone");
+    assert_eq!(copies[0].ciphertext, "opaque-bytes-for-beta");
+
+    // And nothing was sealed to anyone who was not asked for.
+    assert!(
+        h.db.presence_ciphertexts_to("alpha", "stranger").unwrap().is_empty(),
+        "a copy exists for an account that is not a friend"
+    );
+}
