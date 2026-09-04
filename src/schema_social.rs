@@ -148,6 +148,18 @@ pub struct FriendNowPlaying {
     /// [`crate::ws::WsHub::same_network`] for why the address is a hint and the token is the gate.
     pub peer_lan_address: Option<String>,
     pub peer_lan_token: Option<String>,
+    /// This session's real metadata, sealed to the asking device's key.
+    ///
+    /// Pairwise, like the two fields above, and for a stronger reason: a copy is sealed to one
+    /// device's public key, so handing it to anyone else is handing over bytes they cannot open.
+    /// `None` whenever the question was asked without naming a device, when the host sealed
+    /// nothing, or when the host has not sealed anything to *this* device yet — a friend who has
+    /// published no key, or a device added since the last track change.
+    ///
+    /// When this is set, the plaintext `track_title` and `artist_name` above are a placeholder and
+    /// the viewer is expected to open this instead. The server cannot tell the difference; it has
+    /// never held the key.
+    pub encrypted_presence: Option<String>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -285,9 +297,11 @@ fn now_playing_of(db: &Db, username: &str) -> async_graphql::Result<Option<Frien
         device_id: handoff.device_id,
         content_hash: handoff.content_hash,
         // No viewer, no pairwise answer. Whether a direct transfer is possible is a fact about two
-        // devices, so a projection that does not know who is asking cannot fill these in.
+        // devices, so a projection that does not know who is asking cannot fill these in. The
+        // sealed copy is the same kind of fact and is filled in by the same caller.
         peer_lan_address: None,
         peer_lan_token: None,
+        encrypted_presence: None,
     }))
 }
 
@@ -308,15 +322,42 @@ pub(crate) fn published_keys(db: &Db, username: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Hands `now` the sealed copy this viewer's device can open, if there is one.
+///
+/// Looked up by the exact `(host device, viewer, viewer device)` the row was sealed for, so there
+/// is no argument that returns somebody else's copy. A caller that omits the device — an older
+/// client, or the dashboard, which holds no device key at all — gets nothing and falls back to the
+/// placeholder, which is the correct outcome rather than a degraded one.
+///
+/// Failure is swallowed for the same reason `fan_out_presence` swallows its own: this decorates a
+/// presence line that is already valid without it, and a lookup error must not turn a working feed
+/// into an error page.
+fn attach_sealed_presence(
+    db: &Db,
+    now: &mut FriendNowPlaying,
+    host: &str,
+    viewer: &str,
+    viewer_device: Option<&str>,
+) {
+    let Some(device) = viewer_device.map(str::trim).filter(|d| !d.is_empty()) else {
+        return;
+    };
+    now.encrypted_presence = db
+        .presence_ciphertext_for(host, &now.device_id, viewer, device)
+        .unwrap_or(None);
+}
+
 fn now_playing_for_viewer(
     db: &Db,
     ws_hub: &crate::ws::WsHub,
     host: &str,
     viewer: &str,
+    viewer_device: Option<&str>,
 ) -> async_graphql::Result<Option<FriendNowPlaying>> {
     let Some(mut now) = now_playing_of(db, host)? else {
         return Ok(None);
     };
+    attach_sealed_presence(db, &mut now, host, viewer, viewer_device);
     if ws_hub.shares_network_with_user(host, &now.device_id, viewer) {
         if let Some(lan) = ws_hub.get_lan_address(host, &now.device_id) {
             let viewer_keys = published_keys(db, viewer);
@@ -511,19 +552,40 @@ impl SocialQuery {
     }
 
     /// Just the presence feed: friends who are playing something and allow it to be seen.
+    ///
+    /// `device_id` names the device asking, so a friend running a sealed session can be handed the
+    /// copy sealed to that device's key. It is optional because the device token does not carry
+    /// one — the id is chosen by the client and published to the key registry — and because the
+    /// dashboard has no device key to open a copy with. Omitting it costs nothing but the sealed
+    /// metadata, which an asker with no key could not have read anyway.
     async fn friends_now_playing(
         &self,
         ctx: &Context<'_>,
+        device_id: Option<String>,
     ) -> async_graphql::Result<Vec<FriendNowPlaying>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        let viewer_device = match device_id.as_deref() {
+            Some(raw) => Some(bounded(raw, 128, "deviceId")?),
+            None => None,
+        };
 
         let mut playing = Vec::new();
         for profile in db.friends(authed.username())? {
+            // Unchanged, and still the only gate that matters: sealing decides what the *server*
+            // can read, never who is allowed to look. A friend who has not opted in is absent from
+            // this list whether or not a copy was sealed for them.
             if !profile.shows_now_playing() {
                 continue;
             }
-            if let Some(now) = live_now_playing(db, &profile.username)? {
+            if let Some(mut now) = live_now_playing(db, &profile.username)? {
+                attach_sealed_presence(
+                    db,
+                    &mut now,
+                    &profile.username,
+                    authed.username(),
+                    viewer_device.as_deref(),
+                );
                 playing.push(now);
             }
         }
@@ -549,12 +611,20 @@ impl SocialQuery {
     }
 
     /// Who the caller is currently tuned in to, if anyone.
+    ///
+    /// `device_id` serves the same purpose as it does on `friends_now_playing`: following a sealed
+    /// session means being handed the copy sealed to this device, or the placeholder.
     async fn listen_along(
         &self,
         ctx: &Context<'_>,
+        device_id: Option<String>,
     ) -> async_graphql::Result<Option<ListenAlongPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        let viewer_device = match device_id.as_deref() {
+            Some(raw) => Some(bounded(raw, 128, "deviceId")?),
+            None => None,
+        };
 
         let Some(session) = db.listen_along_of(authed.username())? else {
             return Ok(None);
@@ -568,7 +638,13 @@ impl SocialQuery {
         let ws_hub = ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?;
         Ok(Some(ListenAlongPayload {
             listeners: db.listeners_of(&session.host)?,
-            now_playing: now_playing_for_viewer(db, ws_hub, &session.host, authed.username())?,
+            now_playing: now_playing_for_viewer(
+                db,
+                ws_hub,
+                &session.host,
+                authed.username(),
+                viewer_device.as_deref(),
+            )?,
             host: session.host,
         }))
     }
@@ -1120,10 +1196,15 @@ impl SocialMutation {
         &self,
         ctx: &Context<'_>,
         host: String,
+        device_id: Option<String>,
     ) -> async_graphql::Result<ListenAlongPayload> {
         let authed = caller(ctx)?;
         let subject = require_visible(ctx, &host, Surface::NowPlaying)?;
         let db = ctx.data::<Db>()?;
+        let viewer_device = match device_id.as_deref() {
+            Some(raw) => Some(bounded(raw, 128, "deviceId")?),
+            None => None,
+        };
 
         if subject.username.eq_ignore_ascii_case(authed.username()) {
             return Err("You are already listening to yourself".into());
@@ -1138,6 +1219,7 @@ impl SocialMutation {
                 ws_hub,
                 &subject.username,
                 authed.username(),
+                viewer_device.as_deref(),
             )?,
             host: subject.username.clone(),
         };
@@ -1237,10 +1319,28 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
     // list here — nothing about them is sent at all.
     if db.profile(user).ok().flatten().is_some_and(|p| p.shows_now_playing()) {
         if let Ok(friends) = db.friends(user) {
-            let audience: Vec<String> = friends.into_iter().map(|f| f.username).collect();
-            if !audience.is_empty() {
-                ws_hub.notify_users(
-                    &audience,
+            // One frame per friend rather than one broadcast, for the same reason the listener
+            // loop below sends one at a time: a sealed copy is addressed to a single device's key.
+            // Broadcasting one payload would hand every friend the first one's ciphertext — bytes
+            // none of the rest can open — and quietly replace a working feed with a locked one.
+            //
+            // An unsealed session has nothing pairwise in it and does not need this. It costs a
+            // frame each either way, and one code path is worth more than the saving.
+            for friend in friends {
+                let sealed = db
+                    .presence_ciphertexts_to(user, &friend.username)
+                    .unwrap_or_default();
+                let copies: Vec<serde_json::Value> = sealed
+                    .into_iter()
+                    .map(|copy| {
+                        serde_json::json!({
+                            "deviceId": copy.recipient_device_id,
+                            "ciphertext": copy.ciphertext,
+                        })
+                    })
+                    .collect();
+                ws_hub.notify_user(
+                    &friend.username,
                     "FRIEND_PRESENCE",
                     serde_json::json!({
                         "username": now.username,
@@ -1250,6 +1350,11 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
                         "artworkUrl": now.artwork_url,
                         "isPlaying": now.is_playing,
                         "updatedAt": now.updated_at,
+                        // Every copy this friend can hold, not one: a friend may be signed in on
+                        // several devices and the socket frame does not know which is listening.
+                        // Each device opens the one sealed to it and ignores the rest, exactly as
+                        // the drops inbox already does.
+                        "encryptedPresence": copies,
                     }),
                 );
             }

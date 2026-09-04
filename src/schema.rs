@@ -462,10 +462,44 @@ pub struct HandoffInput {
     /// End-to-end encrypted envelope containing sealed metadata (track_uri, title, artist, album).
     /// When present, Agro acts purely as a blind forwarder over WebSocket without logging or learning the music.
     pub encrypted_payload: Option<String>,
+    /// The same session sealed once per friend device, so friends can still see it.
+    ///
+    /// `encrypted_payload` is sealed to this account's own vault key and no friend can open it, so
+    /// a sealed session showed up in the social feed as a placeholder. These are the copies that
+    /// fix that: one per device key published by a friend, each openable only by that device.
+    ///
+    /// Three states, and they are not interchangeable. Omitted means *leave the stored copies
+    /// alone* — a heartbeat repeats metadata that has not changed, and re-sealing it per device
+    /// ten times a minute is work with no result. Empty means *drop them*: the session ended, or
+    /// stopped being sealed. Non-empty replaces the set, which is what a track change sends.
+    pub presence_ciphertexts: Option<Vec<PresenceCiphertextInput>>,
+}
+
+/// One copy of a sealed session, and the friend device it was sealed to.
+#[derive(async_graphql::InputObject)]
+pub struct PresenceCiphertextInput {
+    pub recipient_user_id: String,
+    pub recipient_device_id: String,
+    pub ciphertext: String,
 }
 
 /// See `update_handoff`.
 const MAX_QUEUE_TRACKS: usize = 100;
+
+/// The most sealed copies one handoff may carry.
+///
+/// A copy per friend device, so this is a friend count times a device count. Rejected rather than
+/// capped, unlike the queue: a truncated queue is a shorter queue, but a truncated set of copies is
+/// a set of friends who silently stop seeing the session, and the sender has no way to notice.
+const MAX_PRESENCE_CIPHERTEXTS: usize = 256;
+
+/// The longest one sealed copy may be.
+///
+/// The envelope holds a title, an artist, an album and an artwork URL, sealed — comfortably inside
+/// this. It is a bound rather than a guess at a size: without one, a client could write copies of
+/// any length, once per friend device, on every track change, and the only limit anywhere is the
+/// 2 MB request body. `encrypted_payload` had exactly that gap and is bounded here too.
+const MAX_SEALED_PAYLOAD_LEN: usize = 8192;
 
 /// How long a node stays "online" after it last reported in. Clients heartbeat inside this window
 /// while they are playing; anything longer and they show as away.
@@ -2111,6 +2145,44 @@ impl MutationRoot {
             serde_json::to_string(&capped).unwrap_or_else(|_| "[]".to_string())
         });
 
+        // Sealed bytes are opaque to the server, which is the point of them and also the reason
+        // they need a size limit: nothing downstream can look at one and decide it is unreasonable.
+        if let Some(payload) = input.encrypted_payload.as_deref() {
+            bounded(payload, MAX_SEALED_PAYLOAD_LEN, "encryptedPayload")?;
+        }
+        let presence_ciphertexts = match input.presence_ciphertexts.as_ref() {
+            None => None,
+            Some(copies) => {
+                if copies.len() > MAX_PRESENCE_CIPHERTEXTS {
+                    return Err(format!(
+                        "A handoff may carry at most {MAX_PRESENCE_CIPHERTEXTS} sealed copies"
+                    )
+                    .into());
+                }
+                let mut sealed = Vec::with_capacity(copies.len());
+                for copy in copies {
+                    // The recipient is validated as a username rather than taken as given: it is a
+                    // key in a table keyed by it, and it is the field that decides who is later
+                    // handed this ciphertext.
+                    let recipient = normalise_username(&copy.recipient_user_id)?;
+                    let device = bounded(&copy.recipient_device_id, 128, "recipientDeviceId")?;
+                    if device.is_empty() {
+                        return Err("A sealed copy must name the device it was sealed to".into());
+                    }
+                    sealed.push(crate::db_presence::PresenceCiphertext {
+                        recipient_user_id: recipient,
+                        recipient_device_id: device,
+                        ciphertext: bounded(
+                            &copy.ciphertext,
+                            MAX_SEALED_PAYLOAD_LEN,
+                            "ciphertext",
+                        )?,
+                    });
+                }
+                Some(sealed)
+            }
+        };
+
         db.update_handoff(
             &input.user_id,
             &input.track_uri,
@@ -2126,6 +2198,7 @@ impl MutationRoot {
             input.queue_index.map(|i| i as i64),
             input.content_hash.as_deref(),
             input.encrypted_payload.as_deref(),
+            presence_ciphertexts.as_deref(),
         )?;
 
         let track_summary = format!("{} • {}", input.track_title, input.artist_name);

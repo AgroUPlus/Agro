@@ -889,12 +889,6 @@ const MIGRATIONS: &[&str] = &[
          observations  INTEGER NOT NULL DEFAULT 1,
          PRIMARY KEY (norm_artist, norm_title, norm_variants, version)
      );",
-    // A handoff can be end-to-end encrypted.
-    //
-    // When a client holds a vault key, the real track metadata travels only inside this
-    // authenticated envelope — the plaintext columns carry a placeholder — and another of the
-    // account's devices unseals it. NULL for every ordinary handoff, which is nearly all of them.
-    "ALTER TABLE handoff_state ADD COLUMN encrypted_payload TEXT;",
     // 36 — identity keys belong to a device, not to an account.
     //
     // `users.public_key` is a single column, so signing in on a second phone published that
@@ -934,6 +928,43 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX IF NOT EXISTS idx_drop_note_ciphertexts_drop
          ON drop_note_ciphertexts(drop_id);",
+    // 69 — a handoff can be end-to-end encrypted.
+    //
+    // When a client holds a vault key, the real track metadata travels only inside this
+    // authenticated envelope — the plaintext columns carry a placeholder — and another of the
+    // account's devices unseals it. NULL for every ordinary handoff, which is nearly all of them.
+    //
+    // Appended rather than slotted in beside the other handoff migrations, and this is the whole
+    // point of the entry: `migrate` stamps `PRAGMA user_version` from the *index* of this array,
+    // so inserting anywhere but the end renumbers every migration after it. A database already
+    // past that point skips the new entry forever and re-runs its neighbour instead. This list is
+    // append-only.
+    "ALTER TABLE handoff_state ADD COLUMN encrypted_payload TEXT;",
+    // 70 — the same session, sealed once per friend device rather than once per account.
+    //
+    // `encrypted_payload` above is sealed symmetrically, under a subkey derived from the account's
+    // own vault key, so only the account's other devices can open it. That made every sealed
+    // session read as "Private Session" to friends: the social feed reads the plaintext columns,
+    // and those now hold a placeholder. Encrypting the session and being seen by friends were
+    // mutually exclusive.
+    //
+    // A row here is one copy of that same metadata, sealed to one friend device's public key, the
+    // way `drop_note_ciphertexts` seals a note. The server stores and hands out copies it cannot
+    // open, and each viewer is given only the one addressed to the device it is asking from.
+    //
+    // Keyed by sender device as well as sender: two of the account's devices can be publishing at
+    // once, and a copy belongs to the session that produced it.
+    "CREATE TABLE IF NOT EXISTS handoff_presence_ciphertexts (
+         user_id             TEXT NOT NULL,
+         device_id           TEXT NOT NULL,
+         recipient_user_id   TEXT NOT NULL,
+         recipient_device_id TEXT NOT NULL,
+         ciphertext          TEXT NOT NULL,
+         created_at          TEXT NOT NULL,
+         PRIMARY KEY (user_id, device_id, recipient_user_id, recipient_device_id)
+     );
+     CREATE INDEX IF NOT EXISTS idx_handoff_presence_recipient
+         ON handoff_presence_ciphertexts(recipient_user_id, recipient_device_id);",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -947,6 +978,15 @@ const HANDOFF_QUEUE_TTL_DAYS: i64 = 2;
 /// How long before the handoff row itself goes. A device silent this long has been replaced or
 /// wiped, and its row is a record of what someone was listening to and nothing else.
 const HANDOFF_ROW_TTL_DAYS: i64 = 30;
+
+/// How long a sealed presence copy is kept.
+///
+/// Deliberately an hour rather than a day: the only reader is the now-playing feed, which already
+/// refuses a session older than `NOW_PLAYING_STALE_AFTER_SECS` (five minutes). The margin over that
+/// is for clock skew between the server writing `created_at` and the sweep reading it, not for any
+/// reader — nothing can open one of these after five minutes, so the rest of the hour is only how
+/// long the unreadable bytes are tolerated before being removed.
+const PRESENCE_CIPHERTEXT_TTL_SECS: i64 = 60 * 60;
 
 /// How long before an inactive registered node is purged from the database.
 const INACTIVE_NODE_TTL_DAYS: i64 = 90;
@@ -1228,9 +1268,33 @@ impl Db {
             "DELETE FROM friendships WHERE user_id = ?1 OR friend_id = ?1",
             params![username],
         )?;
+        // Sealed copies are keyed by drop, not by account, so they have to go *before* the drops
+        // they hang off — once the `track_drops` row is gone there is nothing left to find them by.
+        //
+        // They were being left behind entirely: no foreign key declares a cascade for this table,
+        // and nothing else deletes from it. A deleted account's ciphertexts accumulated forever,
+        // which is both the plainest possible contradiction of "deleted" above and a store of
+        // secrets kept on behalf of nobody.
+        conn.execute(
+            "DELETE FROM drop_note_ciphertexts
+              WHERE drop_id IN (SELECT id FROM track_drops WHERE from_user = ?1 OR to_user = ?1)",
+            params![username],
+        )?;
         // A drop is addressed: sent and received both have to go.
         conn.execute(
             "DELETE FROM track_drops WHERE from_user = ?1 OR to_user = ?1",
+            params![username],
+        )?;
+        // The published keys themselves. Left behind, a recreated account would inherit the public
+        // keys of the devices the old one had registered, and senders fetching the registry would
+        // seal to keys nobody holds.
+        conn.execute(
+            "DELETE FROM user_device_keys WHERE user_id = ?1 COLLATE NOCASE",
+            params![username],
+        )?;
+        // Presence copies are addressed the same way a drop is: published and received both go.
+        conn.execute(
+            "DELETE FROM handoff_presence_ciphertexts WHERE user_id = ?1 OR recipient_user_id = ?1",
             params![username],
         )?;
         conn.execute(
@@ -1438,6 +1502,7 @@ impl Db {
         queue_index: Option<i64>,
         content_hash: Option<&str>,
         encrypted_payload: Option<&str>,
+        presence_ciphertexts: Option<&[crate::db_presence::PresenceCiphertext]>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
@@ -1471,6 +1536,22 @@ impl Db {
              encrypted_payload = excluded.encrypted_payload",
             params![user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, now, queue_json, queue_index, duration_ms, content_hash, encrypted_payload],
         )?;
+        // Written under the same lock as the row, for the reason `create_drop` gives: a session
+        // whose sealed copies did not land is one no friend can open.
+        //
+        // `None` and `Some(&[])` mean different things here, and the difference is the whole
+        // reason this is not an `&[..]`. A heartbeat repeats every ten seconds and the metadata it
+        // repeats has not changed, so re-sealing it once per friend device each time is work
+        // nobody asked for: a heartbeat passes `None` and the stored copies stand. `Some(&[])` is
+        // the opposite instruction — this session is over, or is no longer sealed — and clears
+        // them. Only a track change pays for a new set.
+        //
+        // `encrypted_payload` above is deliberately not treated this way. It is a single envelope,
+        // cheap enough to re-send on every heartbeat, so it can afford to say what it means every
+        // time and clear when absent.
+        if let Some(copies) = presence_ciphertexts {
+            Self::replace_presence_ciphertexts_in(&conn, user_id, device_id, copies)?;
+        }
         Ok(())
     }
 
@@ -1786,6 +1867,32 @@ impl Db {
             "handoff rows",
             "DELETE FROM handoff_state WHERE updated_at < ?1",
             params![dead],
+        );
+
+        // Sealed presence has a far shorter life than the row that carries it. A handoff row is
+        // durable on purpose — it is what lets a session be resumed on another device hours later
+        // — but a *copy sealed to a friend* is only ever read by the now-playing feed, and that
+        // feed refuses anything older than `NOW_PLAYING_STALE_AFTER_SECS` regardless. Past that
+        // point the ciphertext cannot be delivered to anyone and is only being stored.
+        //
+        // The freshness check in `live_now_playing` is what actually withholds a stale session, not
+        // this sweep. This runs every fifteen minutes and is retention, not access control: no
+        // window it leaves open is a window anything can be read through.
+        let cold = (now - chrono::Duration::seconds(PRESENCE_CIPHERTEXT_TTL_SECS)).to_rfc3339();
+        run(
+            "presence ciphertexts",
+            "DELETE FROM handoff_presence_ciphertexts WHERE created_at < ?1",
+            params![cold],
+        );
+        // Copies whose session has been swept out from under them, whatever their own age.
+        run(
+            "orphaned presence ciphertexts",
+            "DELETE FROM handoff_presence_ciphertexts
+              WHERE NOT EXISTS (
+                    SELECT 1 FROM handoff_state h
+                     WHERE h.user_id = handoff_presence_ciphertexts.user_id
+                       AND h.device_id = handoff_presence_ciphertexts.device_id)",
+            params![],
         );
 
         // Opt-in, and off by default. A listening history is the point of the product for some
@@ -2794,6 +2901,7 @@ mod retention_tests {
             Some(0),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -2911,6 +3019,7 @@ mod handoff_tests {
             duration_ms,
             playing,
             device,
+            None,
             None,
             None,
             None,
@@ -3216,5 +3325,196 @@ mod handoff_tests {
         let purged_all = db.purge_scrobbles("alpha", None, None).unwrap();
         assert_eq!(purged_all, 2);
         assert_eq!(db.scrobble_rows("alpha", None, None).unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod migration_order_tests {
+    use super::*;
+
+    /// The schema a database ends up with, as text, so two of them can be compared.
+    ///
+    /// `user_version` is included because it is what decides whether anything runs at all: two
+    /// databases with identical tables but different stamps will diverge on the next upgrade.
+    fn shape(db: &Db) -> String {
+        let conn = db.conn.lock().unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let mut stmt = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")
+            .unwrap();
+        let mut lines: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        // `ALTER TABLE ... ADD COLUMN` rewrites the stored CREATE statement in place, so column
+        // additions show up here without needing to be listed separately.
+        lines.sort();
+        format!("v{version}\n{}", lines.join("\n"))
+    }
+
+    /// A database that stopped after `applied` migrations, the way a deployment mid-upgrade has.
+    fn stopped_after(applied: usize) -> Db {
+        let conn = Connection::open_in_memory().unwrap();
+        let db = Db {
+            conn: Arc::new(Mutex::new(conn)),
+        };
+        db.init_schema().unwrap();
+        {
+            let mut conn = db.conn.lock().unwrap();
+            for (index, migration) in MIGRATIONS.iter().enumerate().take(applied) {
+                let tx = conn.transaction().unwrap();
+                tx.execute_batch(migration).unwrap();
+                tx.execute_batch(&format!("PRAGMA user_version = {}", index + 1))
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+        }
+        db
+    }
+
+    /// The digest of every migration that has shipped, in order.
+    ///
+    /// Recorded rather than derived: a test that recomputes both sides from the same list can only
+    /// ever agree with itself, and would not notice the list being reordered under it. These are
+    /// the numbers a released Agro has already stamped into real databases.
+    ///
+    /// **Appending an entry means appending a line here. Nothing else is a legal edit.** If a
+    /// digest below no longer matches, an entry was inserted, removed or rewritten in place, and
+    /// every database past that index will skip the new entry forever — see the test.
+    const SHIPPED: &[&str] = &[
+        "3d5d6f5b2a582c1a",
+        "3ae30aab8621167b",
+        "2f0f62bb0ece4b14",
+        "e4dc022c6497c3da",
+        "bddcb87c38c0ae7f",
+        "aee4ac3b5e2ed1e5",
+        "6b8e9d354bf789cc",
+        "805443a740e42efb",
+        "fb72d6d909a9de17",
+        "8fa8e99245e1b00f",
+        "a6115db89f5b5d1e",
+        "2c5dd4778258b85a",
+        "9403140a0251c1b7",
+        "e10d684b7b98f29e",
+        "d5e792a12d7869ad",
+        "93bf2072cf37588d",
+        "01cff0d4e4f9b49c",
+        "ff26008ad5d56145",
+        "d9c76e00d66377f4",
+        "2d10ecdaffce859e",
+        "bceaa97fe736cc7e",
+        "7c76f2359c4b642a",
+        "5e0f4c0d555d9fb9",
+        "6e2ef4efc19294e1",
+        "ddac48675a1edc87",
+        "c3469b9564c8c0ea",
+        "039187171941ac12",
+        "e833dad23a9cb7f1",
+        "df465a790c78bdcd",
+        "32c2c5b3af907296",
+        "b8b8e6e093d65c38",
+        "f2f78d5fd389c3db",
+        "9e3052c5944a23dc",
+        "f98cdcd601306df4",
+        "8e45b726c59580fb",
+        "212565ec442faf61",
+        "d3ee4106c8147dc0",
+        "a2cfb5f0854b9ecb",
+        "34675f8123a3bd73",
+        "77101b2e3546de9b",
+        "b6ee10866b26ddbc",
+        "137eac22d9cf2270",
+        "32e9dd64f1769710",
+    ];
+
+    fn digest(migration: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(migration.as_bytes());
+        format!("{:x}", hasher.finalize())[..16].to_string()
+    }
+
+    /// [`MIGRATIONS`] is append-only, and this is what enforces it.
+    ///
+    /// `migrate` stamps `PRAGMA user_version` from an entry's *index*, and skips everything at or
+    /// below the stamp it finds. So an entry inserted anywhere but the end renumbers every entry
+    /// after it, onto numbers that have already been stamped in the field: those databases skip the
+    /// new entry permanently and re-run its neighbour instead. The column never appears, and every
+    /// query naming it fails at runtime.
+    ///
+    /// No other test in this repo can see it. They all build a database from scratch, and a fresh
+    /// database applies the whole list in order whatever order that is. The bug exists only on a
+    /// database that has been running — which is to say, only in production.
+    #[test]
+    fn migrations_are_append_only() {
+        for (index, shipped) in SHIPPED.iter().enumerate() {
+            let current = MIGRATIONS.get(index).unwrap_or_else(|| {
+                panic!(
+                    "migration {index} has been removed. Databases stamped past it will never \
+                     run what replaced it."
+                )
+            });
+            assert_eq!(
+                &digest(current),
+                shipped,
+                "migration {index} is not the one that shipped as version {}. It was inserted, \
+                 reordered or edited in place; every database already past this version will skip \
+                 it and re-run its neighbour instead. Append instead, and add a line to SHIPPED.",
+                index + 1
+            );
+        }
+    }
+
+    /// Upgrading from any point in the list must arrive at the schema a fresh install has.
+    ///
+    /// Weaker than the digest pin above and complementary to it: this one catches a migration that
+    /// is in the right place but does not do what the initial schema does — a table created by
+    /// `init_schema` for new databases and never added by a migration for old ones.
+    #[test]
+    fn upgrading_from_any_earlier_version_reaches_the_same_schema() {
+        let fresh = shape(&Db::new_in_memory().unwrap());
+
+        for applied in 0..=MIGRATIONS.len() {
+            let db = stopped_after(applied);
+            db.migrate().unwrap();
+            assert_eq!(
+                shape(&db),
+                fresh,
+                "a database that had applied {applied} migrations did not reach the current schema"
+            );
+        }
+    }
+
+    /// The column the sealed handoff depends on, checked by name on an upgraded database.
+    ///
+    /// Named separately from the comparison above so a failure says what broke rather than
+    /// printing two schemas and leaving the reader to diff them.
+    #[test]
+    fn a_running_database_gains_the_sealed_handoff_columns() {
+        let db = stopped_after(MIGRATIONS.len() - 1);
+        db.migrate().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = 'handoff_state'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            sql.contains("encrypted_payload"),
+            "an upgraded database has no encrypted_payload column: {sql}"
+        );
+        let sealed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'handoff_presence_ciphertexts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(sealed, 1, "an upgraded database has no presence copy table");
     }
 }
