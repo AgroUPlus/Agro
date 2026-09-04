@@ -928,19 +928,26 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX IF NOT EXISTS idx_drop_note_ciphertexts_drop
          ON drop_note_ciphertexts(drop_id);",
-    // 69 — a handoff can be end-to-end encrypted.
+    // 42 — a handoff can be end-to-end encrypted.
     //
     // When a client holds a vault key, the real track metadata travels only inside this
     // authenticated envelope — the plaintext columns carry a placeholder — and another of the
     // account's devices unseals it. NULL for every ordinary handoff, which is nearly all of them.
     //
-    // Appended rather than slotted in beside the other handoff migrations, and this is the whole
-    // point of the entry: `migrate` stamps `PRAGMA user_version` from the *index* of this array,
-    // so inserting anywhere but the end renumbers every migration after it. A database already
-    // past that point skips the new entry forever and re-runs its neighbour instead. This list is
-    // append-only.
+    // Appended rather than slotted in beside the other handoff migrations, and that placement is
+    // the point. `migrate` stamps `PRAGMA user_version` from this array's *index* and skips
+    // everything at or below the stamp it finds, so an entry's version **is** its position.
+    // Inserting one anywhere but the end renumbers every entry after it, onto numbers that have
+    // already been stamped in the field — and every database past that point then skips the new
+    // entry forever and re-runs its neighbour instead.
+    //
+    // Placed beside the handoff migrations, this column was never added to any database that had
+    // already run the device-key registry: the column would simply not exist, and every query
+    // naming it would fail at runtime. No test could see it, because a fresh database applies the
+    // whole list in order whatever order it is in. This list is append-only, and
+    // `migrations_are_append_only` is what holds it to that.
     "ALTER TABLE handoff_state ADD COLUMN encrypted_payload TEXT;",
-    // 70 — the same session, sealed once per friend device rather than once per account.
+    // 43 — the same session, sealed once per friend device rather than once per account.
     //
     // `encrypted_payload` above is sealed symmetrically, under a subkey derived from the account's
     // own vault key, so only the account's other devices can open it. That made every sealed
