@@ -15,6 +15,7 @@ mod db_acoustic;
 mod db_popularity;
 mod db_presence;
 mod db_social;
+mod catalog_boundary_tests;
 mod guest_boundary_tests;
 mod embedded_dashboard;
 mod importer;
