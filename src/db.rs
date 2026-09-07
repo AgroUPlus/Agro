@@ -972,6 +972,33 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX IF NOT EXISTS idx_handoff_presence_recipient
          ON handoff_presence_ciphertexts(recipient_user_id, recipient_device_id);",
+    // 44 — the catalogue identifies a recording by its embedding, not by sub-hashes.
+    //
+    // `catalog_sub_hashes` indexed sixteen-bit halves of 32-bit landmark sub-hashes. The client
+    // stopped producing those entirely — the table that held them was dropped on the device — so
+    // the index had nothing left to point at, and there is no way to bucket a 128-dimension float
+    // vector into sixteen-bit halves anyway.
+    //
+    // `mean` is stored beside the sequence because it is what candidates are filtered on. A full
+    // comparison is quadratic in segment count, so most candidates have to be rejected without
+    // reading their sequence at all, and the sequences are megabytes.
+    //
+    // `model` and `version` are part of the key in practice: a vector from a different embedder is
+    // a different alphabet, and comparing across them would produce confident nonsense.
+    "CREATE TABLE IF NOT EXISTS catalog_embeddings (
+         recording_id TEXT PRIMARY KEY,
+         embedding    BLOB NOT NULL,
+         mean         BLOB NOT NULL,
+         dim          INTEGER NOT NULL,
+         segments     INTEGER NOT NULL,
+         model        TEXT NOT NULL,
+         version      INTEGER NOT NULL,
+         updated_at   INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_catalog_embeddings_model
+         ON catalog_embeddings(model, version);
+     DROP TABLE IF EXISTS catalog_sub_hashes;
+     ALTER TABLE catalog_recordings DROP COLUMN sub_hashes;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -3435,6 +3462,7 @@ mod migration_order_tests {
         "b6ee10866b26ddbc",
         "137eac22d9cf2270",
         "32e9dd64f1769710",
+        "873725f41d4130d2",
     ];
 
     fn digest(migration: &str) -> String {
