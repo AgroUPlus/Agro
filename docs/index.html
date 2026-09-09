@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agro: Open-source E2EE music ecosystem for Wander and Wanda</title>
+    <title>Agro: Open-source music ecosystem for Wander and Wanda</title>
     <meta name="description" content="Agro is an open-source, End-to-End Encrypted (E2EE) self-hosted music ecosystem powering playback handoff, private social listening, and library sync for Wander and Wanda." />
     <meta property="og:title" content="Agro: Your music, your server. Everywhere." />
     <meta property="og:description" content="Open-source E2EE music ecosystem for Wander and Wanda. GraphQL API, WebSocket live push, zero-knowledge vault, social layer. AGPL-3.0." />
@@ -197,26 +197,101 @@
         padding: 3px 8px; border-radius: 5px; letter-spacing: .04em; }
       .diag-pill.violet { color: #a99fff; background: rgba(124,107,255,.1); border-color: rgba(124,107,255,.25); }
 
-      /* Features */
+      /* Features - Visual, Structured with Bullets */
       #features { border-top: 1px solid var(--border-subtle); }
       .features-header { text-align: center; margin-bottom: 56px; }
       .features-header .section-label { justify-content: center; }
       .features-header .section-sub { margin: 0 auto; }
-      .features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-      .feature-card { background: rgba(19,19,21,.85); border: 1px solid var(--border-subtle);
-        border-radius: var(--radius-lg); padding: 26px; position: relative; overflow: hidden;
-        transition: border-color .2s ease, box-shadow .2s ease; }
-      .feature-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(124,107,255,.25), transparent); opacity: 0; transition: opacity .2s; }
-      .feature-card:hover { border-color: rgba(124,107,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+      .features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; }
+
+      .feature-card {
+        background: rgba(19, 19, 21, 0.75);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: 26px;
+        display: flex;
+        flex-direction: column;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        position: relative;
+        overflow: hidden;
+        transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
+      }
+      .feature-card:hover {
+        border-color: rgba(124, 107, 255, 0.28);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        background: rgba(22, 22, 26, 0.85);
+      }
+      .feature-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(124, 107, 255, 0.35), transparent);
+        opacity: 0;
+        transition: opacity .2s;
+      }
       .feature-card:hover::before { opacity: 1; }
-      .feature-icon { font-size: 26px; margin-bottom: 14px; line-height: 1; }
-      .feature-title { font-size: 15.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
-      .feature-desc { font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
-      .feature-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 14px; }
-      .feature-tag { font-size: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 500;
-        padding: 2px 7px; border-radius: 4px; color: var(--text-muted); background: var(--bg-surface-elevated);
-        border: 1px solid var(--border-subtle); letter-spacing: .04em; }
+
+      .feature-icon-box {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(124, 107, 255, 0.12), rgba(0, 163, 163, 0.06));
+        border: 1px solid rgba(124, 107, 255, 0.22);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        margin-bottom: 16px;
+      }
+      .feature-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
+      .feature-lead { font-size: 13.5px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; }
+
+      .feature-bullets {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 18px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(38, 38, 42, 0.6);
+      }
+      .feature-bullet {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 13px;
+        color: #d1d1d6;
+        line-height: 1.45;
+      }
+      .feature-bullet-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--status-active);
+        margin-top: 6px;
+        flex-shrink: 0;
+        box-shadow: 0 0 5px rgba(16, 185, 129, 0.7);
+      }
+      .feature-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: auto;
+        padding-top: 8px;
+      }
+      .feature-tag {
+        font-size: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 500;
+        padding: 2px 7px;
+        border-radius: 4px;
+        color: var(--text-muted);
+        background: var(--bg-surface-elevated);
+        border: 1px solid var(--border-subtle);
+        letter-spacing: .04em;
+      }
 
       /* Security */
       #security { border-top: 1px solid var(--border-subtle); }
@@ -460,7 +535,7 @@
       <section id="hero">
         <div class="container">
           <h1 class="hero-title grad-text">Your music,<br>your server.<br>Everywhere.</h1>
-          <p class="hero-sub">A safe, End-to-End Encrypted (E2EE) music ecosystem for self-hosters. Seamless playback sync, a zero-knowledge vault, and private social features between <strong style="color:var(--text-primary)">Wander</strong> (Linux) and <strong style="color:var(--text-primary)">Wanda</strong> (Android).</p>
+          <p class="hero-sub">A safe, open-source music ecosystem for self-hosters. Seamless playback sync, a zero-knowledge vault, and private social features between <strong style="color:var(--text-primary)">Wander</strong> (Linux) and <strong style="color:var(--text-primary)">Wanda</strong> (Android).</p>
           <div class="hero-actions">
             <button class="btn btn-primary" onclick="openModal()" aria-haspopup="dialog">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -480,10 +555,10 @@
           <div class="what-grid">
             <div class="what-text reveal">
               <div class="section-label">What it is</div>
-              <h2 class="section-title">A unified, End-to-End<br>Encrypted music ecosystem.</h2>
-              <p>Agro connects your personal music life across all your devices without relying on third-party servers or proprietary clouds. Built around a zero-trust <strong>End-to-End Encryption (E2EE)</strong> architecture, it unifies:</p>
-              <p><strong>E2EE playback handoff:</strong> Active queues, playback positions, and tracks are sealed on your device with keys the server never holds.</p>
-              <p><strong>E2EE social &amp; listen-along:</strong> Now-playing presence is encrypted per-friend using their individual device public keys. The server merely relays ciphertexts it cannot inspect.</p>
+              <h2 class="section-title">A unified self-hosted<br>music ecosystem.</h2>
+              <p>Agro connects your personal music life across all your devices without relying on third-party servers or proprietary clouds. Built with a focus on privacy and end-to-end encryption, it unifies:</p>
+              <p><strong>Playback handoff:</strong> Transfer active queues, playback positions, and tracks between desktop and mobile with zero effort.</p>
+              <p><strong>Social and listen-along:</strong> Now-playing presence is encrypted per-friend using their individual device public keys. The server merely relays ciphertexts it cannot inspect.</p>
               <p><strong>Peer-to-peer library relay:</strong> Direct device-to-device file streaming and media server spooling with cryptographic verification.</p>
               <p><strong>Zero-knowledge architecture:</strong> Powered by SQLite, an embedded modern web dashboard, and client-sealed vault credentials.</p>
             </div>
@@ -519,9 +594,9 @@
                 </div>
               </div>
               <div class="diag-pills">
-                <div class="diag-pill">E2EE HANDOFF</div>
+                <div class="diag-pill">HANDOFF</div>
                 <div class="diag-pill">NODE_UPDATE</div>
-                <div class="diag-pill">E2EE PRESENCE</div>
+                <div class="diag-pill">FRIEND_PRESENCE</div>
                 <div class="diag-pill violet">LISTEN_ALONG</div>
                 <div class="diag-pill violet">LIBRARY_UPDATED</div>
                 <div class="diag-pill">SYNC_OFFER</div>
@@ -537,44 +612,108 @@
           <div class="features-header">
             <div class="section-label">Features</div>
             <h2 class="section-title">Complete control over your music experience</h2>
-            <p class="section-sub">Built with End-to-End Encryption, backed by a modern GraphQL API and real-time WebSockets.</p>
+            <p class="section-sub">Built for independent listening, backed by a modern GraphQL API and real-time WebSockets.</p>
           </div>
           <div class="features-grid">
+            <!-- 1. Handoff -->
             <div class="feature-card reveal">
-              <div class="feature-icon">&#128260;</div>
-              <div class="feature-title">E2EE Playback Handoff</div>
-              <p class="feature-desc">Continuous playback across all your devices. Seamlessly transfer between phone and desktop with end-to-end encrypted session state.</p>
-              <div class="feature-tags"><span class="feature-tag">E2EE</span><span class="feature-tag">HANDOFF</span><span class="feature-tag">Zero-knowledge</span></div>
+              <div class="feature-icon-box">&#128260;</div>
+              <div class="feature-title">Playback Handoff</div>
+              <div class="feature-lead">Continuous playback across your desktop and mobile devices without missing a beat.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Synchronized track queue, progress, and seek position</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Zero-lag resume when switching from desktop to phone</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Client-sealed session state with end-to-end encryption</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">HANDOFF</span>
+                <span class="feature-tag">Continuous sync</span>
+              </div>
             </div>
-            <div class="feature-card reveal" style="transition-delay:.07s">
-              <div class="feature-icon">&#128101;</div>
-              <div class="feature-title">E2EE Social &amp; Listen-Along</div>
-              <p class="feature-desc">Follow what your friends are enjoying and listen in sync. Updates are sealed directly to each friend's public key with strict opt-in boundaries.</p>
-              <div class="feature-tags"><span class="feature-tag">E2EE presence</span><span class="feature-tag">Friend keys</span><span class="feature-tag">Opt-in</span></div>
+
+            <!-- 2. Social -->
+            <div class="feature-card reveal" style="transition-delay:.06s">
+              <div class="feature-icon-box">&#128101;</div>
+              <div class="feature-title">Social &amp; Listen-Along</div>
+              <div class="feature-lead">Connect with friends and listen together in real time with absolute privacy.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Live friend activity feed and now-playing presence</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Synchronous listen-along audio sessions</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Strict opt-in privacy boundaries defaulting entirely off</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">FRIEND_PRESENCE</span>
+                <span class="feature-tag">Listen-along</span>
+                <span class="feature-tag">Opt-in</span>
+              </div>
             </div>
-            <div class="feature-card reveal" style="transition-delay:.14s">
-              <div class="feature-icon">&#128218;</div>
-              <div class="feature-title">Library Relay</div>
-              <p class="feature-desc">Direct peer-to-peer file transfers and background spooling. Works seamlessly with local directories and media scanners.</p>
-              <div class="feature-tags"><span class="feature-tag">Relay</span><span class="feature-tag">Spool</span><span class="feature-tag">Archive hook</span></div>
+
+            <!-- 3. Library Relay -->
+            <div class="feature-card reveal" style="transition-delay:.12s">
+              <div class="feature-icon-box">&#128218;</div>
+              <div class="feature-title">Library Relay &amp; Spool</div>
+              <div class="feature-lead">Direct peer-to-peer file transfers and background staging for media libraries.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Resumable peer-to-peer track transfers between nodes</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Configurable spool storage budget and automated eviction</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Archive hooks for Navidrome, Nextcloud, or custom scanners</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">P2P relay</span>
+                <span class="feature-tag">Spool budget</span>
+                <span class="feature-tag">Archive hook</span>
+              </div>
             </div>
-            <div class="feature-card reveal" style="transition-delay:.21s">
-              <div class="feature-icon">&#127758;</div>
-              <div class="feature-title">Real-Time API</div>
-              <p class="feature-desc">Full-featured GraphQL endpoint and multiplexed WebSockets for live status updates with zero client polling.</p>
-              <div class="feature-tags"><span class="feature-tag">GraphQL</span><span class="feature-tag">WebSockets</span><span class="feature-tag">Push</span></div>
+
+            <!-- 4. Real-Time API -->
+            <div class="feature-card reveal" style="transition-delay:.18s">
+              <div class="feature-icon-box">&#127758;</div>
+              <div class="feature-title">Real-Time API &amp; Push</div>
+              <div class="feature-lead">Full-featured GraphQL schema and multiplexed WebSockets for live status updates.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Complete GraphQL API served at <code>POST /graphql</code></span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Live event streaming over <code>GET /ws/sync</code></span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Instant reactive push architecture with zero polling</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">GraphQL</span>
+                <span class="feature-tag">WebSocket</span>
+                <span class="feature-tag">Zero polling</span>
+              </div>
             </div>
-            <div class="feature-card reveal" style="transition-delay:.28s">
-              <div class="feature-icon">&#128279;</div>
+
+            <!-- 5. Universal Share Links -->
+            <div class="feature-card reveal" style="transition-delay:.24s">
+              <div class="feature-icon-box">&#128279;</div>
               <div class="feature-title">Universal Share Links</div>
-              <p class="feature-desc">Share music through clean links on your custom domain, automatically redirecting across platforms without tracking.</p>
-              <div class="feature-tags"><span class="feature-tag">Custom domain</span><span class="feature-tag">Allowlist</span><span class="feature-tag">Redirects</span></div>
+              <div class="feature-lead">Share music with clean, canonical links hosted on your own branded domain.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Forward links across YouTube, Navidrome, and web players</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Automatic background configuration sync to paired devices</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Strict host allowlist eliminates open-redirect vulnerabilities</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">Custom domain</span>
+                <span class="feature-tag">Allowlist</span>
+                <span class="feature-tag">Zero tracking</span>
+              </div>
             </div>
-            <div class="feature-card reveal" style="transition-delay:.35s">
-              <div class="feature-icon">&#128241;</div>
+
+            <!-- 6. Device Management -->
+            <div class="feature-card reveal" style="transition-delay:.30s">
+              <div class="feature-icon-box">&#128241;</div>
               <div class="feature-title">Device Management</div>
-              <p class="feature-desc">Instant QR code pairing, cryptographic per-device keys, and independent token revocation whenever needed.</p>
-              <div class="feature-tags"><span class="feature-tag">QR pairing</span><span class="feature-tag">Scoped tokens</span><span class="feature-tag">TOTP 2FA</span></div>
+              <div class="feature-lead">Effortless device enrollment with cryptographic per-device key scoping.</div>
+              <ul class="feature-bullets">
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>One-scan QR code pairing in the integrated dashboard</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Scoped 256-bit CSPRNG tokens isolated per device</span></li>
+                <li class="feature-bullet"><span class="feature-bullet-dot"></span><span>Individual device revocation without changing passphrases</span></li>
+              </ul>
+              <div class="feature-tags">
+                <span class="feature-tag">QR pairing</span>
+                <span class="feature-tag">Scoped tokens</span>
+                <span class="feature-tag">TOTP 2FA</span>
+              </div>
             </div>
           </div>
         </div>
@@ -585,7 +724,7 @@
         <div class="container">
           <div class="security-header">
             <div class="section-label">Security</div>
-            <h2 class="section-title">End-to-End Encrypted. Private by design.</h2>
+            <h2 class="section-title">Private by default. Safe by design.</h2>
             <p class="section-sub">Agro is engineered so the server never holds your secrets or listening habits. Every layer enforces strict cryptographic boundaries.</p>
           </div>
           <div class="security-grid">
@@ -619,7 +758,7 @@
               <div class="section-label">Open Source</div>
               <h2 class="section-title">AGPL-3.0.<br>All of it.</h2>
               <p>Agro is given away. The source, the protocol, the dashboard: all of it, under AGPL-3.0.</p>
-              <p>Contributions are welcome and require agreement to the <strong>CLA</strong>: one file that preserves the ability to relicense or dual-license later. See <a href="https://github.com/AgroUPlus/Agro/blob/main/CLA.md" target="_blank" rel="noopener" style="color:#a99fff;text-underline-offset:3px;text-decoration:underline">CLA.md</a>.</p>
+              <p>Contributions are welcome and require agreement to the <strong>CLA</strong>: See <a href="https://github.com/AgroUPlus/Agro/blob/main/CLA.md" target="_blank" rel="noopener" style="color:#a99fff;text-underline-offset:3px;text-decoration:underline">CLA.md</a>.</p>
               <div class="oss-actions">
                 <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-ghost">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
@@ -683,7 +822,7 @@ PORT=<span style="color:#10b981">1674</span> AGRO_LIBRARY_ROOT=<span style="colo
               </div>
               <button class="btn btn-primary" onclick="connectToCloud()" style="align-self:flex-start">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-                Sign in to agro.kolbxyz.xyz
+                Sign in
               </button>
               <div class="gs-url"><a href="https://agro.kolbxyz.xyz" target="_blank" rel="noopener">agro.kolbxyz.xyz</a></div>
             </div>
