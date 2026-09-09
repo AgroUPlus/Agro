@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agro &mdash; Music sync daemon for Wander &amp; Wanda</title>
+    <meta name="description" content="Agro is an open-source background sync daemon that keeps playback moving between Wander (Linux TUI) and Wanda (Android). Self-host it, or use Agro Cloud." />
+    <meta property="og:title" content="Agro &mdash; Your music, your server. Everywhere." />
+    <meta property="og:description" content="Open-source sync daemon for Wander and Wanda. GraphQL API, WebSocket live push, zero-knowledge vault, social layer. AGPL-3.0." />
+    <meta property="og:type" content="website" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='108' y2='108' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0' stop-color='%237C6BFF'/%3E%3Cstop offset='.5' stop-color='%235A63E8'/%3E%3Cstop offset='1' stop-color='%2300A3A3'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='108' height='108' rx='24' fill='url(%23g)'/%3E%3Cpath fill='%23fff' stroke='%23fff' stroke-width='2' stroke-linejoin='round' stroke-linecap='round' d='M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z'/%3E%3Cpath fill='%235A63E8' d='M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z'/%3E%3Ccircle cx='54' cy='45' r='3.4' fill='%235A63E8'/%3E%3Ccircle cx='24' cy='59' r='2' fill='%235A63E8'/%3E%3C/svg%3E" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg-app: #0b0b0c; --bg-surface: #131315; --bg-surface-elevated: #1a1a1d;
+        --border-subtle: #26262a; --border-strong: #35353b;
+        --text-primary: #f4f4f5; --text-secondary: #a1a1aa; --text-muted: #6b6b74;
+        --status-active: #10b981; --status-active-bg: rgba(16,185,129,.10); --status-active-border: rgba(16,185,129,.25);
+        --grad-start: #7C6BFF; --grad-mid: #5A63E8; --grad-end: #00A3A3;
+        --radius-sm: 8px; --radius-md: 12px; --radius-lg: 18px; --navbar-h: 64px;
+      }
+      html { scroll-behavior: smooth; }
+      body { background: var(--bg-app); color: var(--text-primary); font-family: 'Plus Jakarta Sans','Inter',system-ui,sans-serif; font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+      a { color: inherit; text-decoration: none; }
+      button { font-family: inherit; cursor: pointer; border: none; background: none; }
+      code, pre { font-family: 'JetBrains Mono', monospace; }
+
+      /* PS4 diagonal mesh */
+      .ps4-bg { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+        background-image:
+          repeating-linear-gradient(-45deg, rgba(124,107,255,.026) 0px, rgba(124,107,255,.026) 1px, transparent 1px, transparent 52px),
+          repeating-linear-gradient(45deg, rgba(0,163,163,.018) 0px, rgba(0,163,163,.018) 1px, transparent 1px, transparent 52px); }
+
+      .page { position: relative; z-index: 1; }
+      .container { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+      section { padding: 96px 0; }
+
+      .grad-text { background: linear-gradient(135deg, var(--grad-start) 0%, var(--grad-mid) 40%, var(--grad-end) 100%);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+      .reveal { opacity: 0; transform: translateY(28px); transition: opacity .55s ease, transform .55s ease; }
+      .reveal.visible { opacity: 1; transform: none; }
+
+      /* Navbar */
+      .navbar { position: fixed; top: 0; left: 0; right: 0; height: var(--navbar-h); z-index: 100;
+        background: rgba(11,11,12,.82); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid rgba(38,38,42,.6); display: flex; align-items: center; }
+      .navbar .container { display: flex; align-items: center; }
+      .nav-brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700;
+        letter-spacing: .06em; text-transform: uppercase; color: var(--text-primary); flex-shrink: 0; }
+      .nav-brand svg { width: 28px; height: 28px; border-radius: 6px; }
+      .nav-links { display: flex; align-items: center; gap: 4px; margin-left: 36px; flex: 1; }
+      .nav-link { padding: 6px 12px; font-size: 13px; font-weight: 500; color: var(--text-secondary);
+        border-radius: var(--radius-sm); transition: color .15s, background .15s; }
+      .nav-link:hover { color: var(--text-primary); background: rgba(255,255,255,.05); }
+      .nav-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+      .nav-gh-link { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500;
+        color: var(--text-secondary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+        transition: color .15s, border-color .15s, background .15s; }
+      .nav-gh-link:hover { color: var(--text-primary); border-color: var(--border-strong); background: var(--bg-surface); }
+
+      .nav-hamburger { display: none; flex-direction: column; gap: 5px; padding: 8px; margin-left: auto;
+        border-radius: var(--radius-sm); transition: background .15s; }
+      .nav-hamburger:hover { background: var(--bg-surface); }
+      .nav-hamburger span { display: block; width: 20px; height: 2px; background: var(--text-secondary); border-radius: 2px; transition: transform .2s, opacity .2s; }
+      .nav-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+      .nav-hamburger.open span:nth-child(2) { opacity: 0; }
+      .nav-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+      .nav-mobile-menu { display: none; position: fixed; top: var(--navbar-h); left: 0; right: 0;
+        background: rgba(11,11,12,.96); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border-subtle);
+        padding: 16px 24px 24px; z-index: 99; flex-direction: column; gap: 8px; }
+      .nav-mobile-menu.open { display: flex; }
+      .nav-mobile-link { padding: 10px 12px; font-size: 15px; font-weight: 500; color: var(--text-secondary);
+        border-radius: var(--radius-sm); transition: color .15s, background .15s; }
+      .nav-mobile-link:hover { color: var(--text-primary); background: var(--bg-surface); }
+
+      /* Buttons */
+      .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; font-size: 14px;
+        font-weight: 600; border-radius: var(--radius-sm); transition: all .18s ease; white-space: nowrap; }
+      .btn-primary { background: linear-gradient(135deg, var(--grad-start), var(--grad-mid) 55%, var(--grad-end));
+        color: #fff; border: 1px solid transparent; }
+      .btn-primary:hover { filter: brightness(1.12); box-shadow: 0 4px 24px rgba(124,107,255,.35); transform: translateY(-1px); }
+      .btn-ghost { color: var(--text-secondary); border: 1px solid var(--border-subtle); background: transparent; }
+      .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-strong); background: var(--bg-surface); transform: translateY(-1px); }
+      .btn-sm { padding: 7px 14px; font-size: 13px; }
+
+      /* Hero */
+      #hero { padding: calc(var(--navbar-h) + 80px) 0 96px; text-align: center; }
+      .hero-badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 12px;
+        font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--status-active);
+        background: var(--status-active-bg); border: 1px solid var(--status-active-border);
+        border-radius: 100px; margin-bottom: 28px; }
+      .hero-badge-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--status-active); box-shadow: 0 0 6px rgba(16,185,129,.7); }
+      .hero-title { font-size: clamp(2.6rem,6vw,5rem); font-weight: 800; line-height: 1.08;
+        letter-spacing: -.02em; margin-bottom: 20px; max-width: 820px; margin-left: auto; margin-right: auto; }
+      .hero-sub { font-size: clamp(1rem,2vw,1.2rem); color: var(--text-secondary); max-width: 560px;
+        margin: 0 auto 44px; line-height: 1.65; }
+      .hero-actions { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+      .hero-glow { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 700px; height: 400px;
+        background: radial-gradient(ellipse at 50% 0%, rgba(124,107,255,.12) 0%, transparent 65%),
+                    radial-gradient(ellipse at 70% 60%, rgba(0,163,163,.07) 0%, transparent 55%);
+        pointer-events: none; z-index: 0; }
+      #hero .container { position: relative; z-index: 1; }
+
+      /* Section labels */
+      .section-label { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+        letter-spacing: .1em; text-transform: uppercase; color: var(--grad-start); margin-bottom: 14px; }
+      .section-label::before { content: ''; display: inline-block; width: 14px; height: 2px; background: currentColor; border-radius: 2px; }
+      .section-title { font-size: clamp(1.8rem,3.5vw,2.8rem); font-weight: 800; line-height: 1.15;
+        letter-spacing: -.02em; color: var(--text-primary); margin-bottom: 14px; }
+      .section-sub { font-size: 1.05rem; color: var(--text-secondary); max-width: 560px; line-height: 1.65; }
+
+      /* What is Agro */
+      #what { border-top: 1px solid var(--border-subtle); }
+      .what-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+      .what-text p + p { margin-top: 14px; }
+      .what-text p { color: var(--text-secondary); line-height: 1.75; }
+      .what-text strong { color: var(--text-primary); }
+      .what-diagram { background: var(--bg-surface); border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg); padding: 32px; position: relative; overflow: hidden; }
+      .what-diagram::before { content: ''; position: absolute; inset: 0; border-radius: inherit;
+        border-top: 1px solid rgba(124,107,255,.15); pointer-events: none; }
+      .diagram-nodes { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .diag-node { display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 1; }
+      .diag-icon-wrap { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center;
+        background: var(--bg-surface-elevated); border: 1px solid var(--border-strong); font-size: 22px; }
+      .diag-icon-wrap.center { width: 60px; height: 60px; border-radius: 16px;
+        background: linear-gradient(135deg, rgba(124,107,255,.18), rgba(0,163,163,.12)); border-color: rgba(124,107,255,.3); }
+      .diag-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); text-align: center; }
+      .diag-arrow { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+      .diag-arrow-line { width: 36px; height: 2px; background: linear-gradient(90deg, var(--border-strong), rgba(124,107,255,.4)); border-radius: 2px; }
+      .diag-arrow-label { font-size: 9px; font-family: 'JetBrains Mono', monospace; color: var(--text-muted); white-space: nowrap; letter-spacing: .04em; }
+      .diag-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-subtle); }
+      .diag-pill { font-size: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 500;
+        color: var(--status-active); background: var(--status-active-bg); border: 1px solid var(--status-active-border);
+        padding: 3px 8px; border-radius: 5px; letter-spacing: .04em; }
+      .diag-pill.violet { color: #a99fff; background: rgba(124,107,255,.1); border-color: rgba(124,107,255,.25); }
+
+      /* Features */
+      #features { border-top: 1px solid var(--border-subtle); }
+      .features-header { text-align: center; margin-bottom: 56px; }
+      .features-header .section-label { justify-content: center; }
+      .features-header .section-sub { margin: 0 auto; }
+      .features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+      .feature-card { background: rgba(19,19,21,.85); border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg); padding: 28px; position: relative; overflow: hidden;
+        transition: border-color .2s, transform .2s, box-shadow .2s; }
+      .feature-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(124,107,255,.25), transparent); opacity: 0; transition: opacity .2s; }
+      .feature-card:hover { border-color: rgba(124,107,255,.2); transform: translateY(-3px); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+      .feature-card:hover::before { opacity: 1; }
+      .feature-icon { font-size: 28px; margin-bottom: 16px; line-height: 1; }
+      .feature-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+      .feature-desc { font-size: 13.5px; color: var(--text-secondary); line-height: 1.65; }
+      .feature-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 14px; }
+      .feature-tag { font-size: 10px; font-family: 'JetBrains Mono', monospace; font-weight: 500;
+        padding: 2px 7px; border-radius: 4px; color: var(--text-muted); background: var(--bg-surface-elevated);
+        border: 1px solid var(--border-subtle); letter-spacing: .04em; }
+
+      /* Security */
+      #security { border-top: 1px solid var(--border-subtle);
+        background: radial-gradient(ellipse at 50% 0%, rgba(124,107,255,.05) 0%, transparent 60%); }
+      .security-header { text-align: center; margin-bottom: 56px; }
+      .security-header .section-label { justify-content: center; }
+      .security-header .section-sub { margin: 0 auto; }
+      .security-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-bottom: 48px; }
+      .security-card { background: var(--bg-surface); border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg); padding: 28px; position: relative; overflow: hidden; }
+      .security-card::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+        background: linear-gradient(90deg, var(--grad-start), var(--grad-end)); opacity: .4; }
+      .security-icon { font-size: 24px; margin-bottom: 14px; }
+      .security-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 10px; }
+      .security-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+      .security-tag { display: inline-block; margin-top: 12px; font-size: 10px; font-family: 'JetBrains Mono', monospace;
+        font-weight: 600; color: var(--grad-start); background: rgba(124,107,255,.1);
+        border: 1px solid rgba(124,107,255,.22); padding: 3px 8px; border-radius: 5px; letter-spacing: .04em; }
+      .threat-table-wrap { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; }
+      .threat-table-head { padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); font-size: 12px;
+        font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); display: flex; gap: 24px; }
+      .threat-table-head span:first-child { flex: 1; }
+      .threat-row { display: flex; gap: 24px; align-items: flex-start; padding: 14px 24px;
+        border-bottom: 1px solid var(--border-subtle); font-size: 13px; transition: background .12s; }
+      .threat-row:last-child { border-bottom: none; }
+      .threat-row:hover { background: var(--bg-surface-elevated); }
+      .threat-row-cred { flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-primary); font-weight: 500; }
+      .threat-row-how { flex: 2; color: var(--text-secondary); }
+
+      /* Open Source */
+      #opensource { border-top: 1px solid var(--border-subtle); }
+      .oss-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+      .oss-text p { color: var(--text-secondary); line-height: 1.75; }
+      .oss-text p + p { margin-top: 12px; }
+      .oss-text strong { color: var(--text-primary); }
+      .oss-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+      .oss-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 32px; }
+      .oss-stat-row { display: flex; gap: 16px; margin-bottom: 24px; }
+      .oss-stat { flex: 1; background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md); padding: 16px; text-align: center; }
+      .oss-stat-num { font-size: 1.6rem; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+      .oss-stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); }
+      .oss-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+      .oss-badges img { height: 22px; border-radius: 4px; }
+
+      /* Get Started */
+      #getstarted { border-top: 1px solid var(--border-subtle); }
+      .getstarted-header { text-align: center; margin-bottom: 56px; }
+      .getstarted-header .section-label { justify-content: center; }
+      .getstarted-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+      .gs-card { background: var(--bg-surface); border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg); padding: 32px; position: relative; overflow: hidden;
+        display: flex; flex-direction: column; gap: 20px; }
+      .gs-card.featured { border-color: rgba(124,107,255,.3);
+        background: linear-gradient(160deg, rgba(124,107,255,.07) 0%, var(--bg-surface) 60%); }
+      .gs-card.featured::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+        background: linear-gradient(90deg, var(--grad-start), var(--grad-end)); opacity: .6; }
+      .gs-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px;
+        font-weight: 700; text-transform: uppercase; letter-spacing: .07em; border-radius: 100px; align-self: flex-start; }
+      .gs-pill.self { color: var(--text-muted); background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); }
+      .gs-pill.cloud { color: #a99fff; background: rgba(124,107,255,.12); border: 1px solid rgba(124,107,255,.28); }
+      .gs-title { font-size: 1.3rem; font-weight: 700; color: var(--text-primary); }
+      .gs-desc { color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
+      .gs-code-block { background: var(--bg-app); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 16px 18px; overflow-x: auto; }
+      .gs-code-block pre { font-size: 12px; line-height: 1.8; color: #a99fff; white-space: pre; }
+      .gs-code-block .cmt { color: var(--text-muted); }
+      .gs-code-block .val { color: #10b981; }
+      .gs-cloud-detail { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+      .gs-feature-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text-secondary); }
+      .gs-feature-row .chk { width: 18px; height: 18px; border-radius: 50%; background: var(--status-active-bg);
+        border: 1px solid var(--status-active-border); display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0; font-size: 10px; color: var(--status-active); }
+      .gs-url { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted);
+        border-top: 1px solid var(--border-subtle); padding-top: 16px; margin-top: auto; }
+      .gs-url a { color: #a99fff; text-decoration: underline; text-underline-offset: 3px; }
+      .gs-url a:hover { color: var(--grad-start); }
+
+      /* Footer */
+      footer { border-top: 1px solid var(--border-subtle); padding: 40px 0; }
+      .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+      .footer-brand { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; color: var(--text-muted); }
+      .footer-brand svg { width: 24px; height: 24px; border-radius: 5px; }
+      .footer-links { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+      .footer-links a { font-size: 13px; color: var(--text-muted); transition: color .15s; }
+      .footer-links a:hover { color: var(--text-secondary); }
+      .footer-right { display: flex; align-items: center; gap: 10px; }
+
+      /* Modal */
+      .modal-backdrop { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.7);
+        backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center;
+        padding: 24px; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+      .modal-backdrop.open { opacity: 1; pointer-events: all; }
+      .modal { background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: 20px;
+        padding: 32px; width: 100%; max-width: 480px; position: relative; box-shadow: 0 24px 80px rgba(0,0,0,.7);
+        transform: translateY(12px) scale(.97); transition: transform .22s ease; }
+      .modal-backdrop.open .modal { transform: none; }
+      .modal::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(124,107,255,.4), rgba(0,163,163,.4), transparent);
+        border-radius: 20px 20px 0 0; }
+      .modal-logo { display: flex; align-items: center; justify-content: center; margin-bottom: 24px; }
+      .modal-logo svg { width: 44px; height: 44px; border-radius: 12px; }
+      .modal-title { font-size: 1.2rem; font-weight: 700; color: var(--text-primary); text-align: center; margin-bottom: 6px; }
+      .modal-sub { font-size: 13px; color: var(--text-secondary); text-align: center; margin-bottom: 24px; line-height: 1.55; }
+      .modal-input { width: 100%; padding: 12px 16px; font-size: 14px; font-family: 'JetBrains Mono', monospace;
+        color: var(--text-primary); background: var(--bg-app); border: 1px solid var(--border-strong);
+        border-radius: var(--radius-md); outline: none; transition: border-color .15s, box-shadow .15s;
+        caret-color: var(--grad-start); margin-bottom: 8px; }
+      .modal-input::placeholder { color: var(--text-muted); font-size: 13px; }
+      .modal-input:focus { border-color: rgba(124,107,255,.5); box-shadow: 0 0 0 3px rgba(124,107,255,.1); }
+      .modal-error { font-size: 12px; color: #f7768e; margin-bottom: 12px; min-height: 16px; padding-left: 2px; }
+      .modal-recents { margin-bottom: 20px; }
+      .modal-recents-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+        letter-spacing: .07em; color: var(--text-muted); margin-bottom: 8px; }
+      .recents-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+      .recent-chip { font-size: 12px; font-family: 'JetBrains Mono', monospace; padding: 5px 10px;
+        border-radius: 7px; color: var(--text-secondary); background: var(--bg-surface-elevated);
+        border: 1px solid var(--border-subtle); cursor: pointer; transition: all .14s;
+        max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .recent-chip:hover { color: var(--text-primary); border-color: rgba(124,107,255,.3); background: rgba(124,107,255,.08); }
+      .modal-also { text-align: center; font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+      .modal-also a { color: var(--text-secondary); text-decoration: underline; text-underline-offset: 3px; }
+      .modal-also a:hover { color: #a99fff; }
+      .modal-actions { display: flex; gap: 10px; }
+      .modal-actions .btn { flex: 1; justify-content: center; }
+      .modal-close { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 7px;
+        display: flex; align-items: center; justify-content: center; color: var(--text-muted);
+        transition: background .14s, color .14s; font-size: 18px; line-height: 1; }
+      .modal-close:hover { background: var(--bg-surface-elevated); color: var(--text-primary); }
+
+      /* Responsive */
+      @media (max-width: 900px) {
+        .what-grid { grid-template-columns: 1fr; gap: 40px; }
+        .features-grid { grid-template-columns: repeat(2,1fr); }
+        .security-grid { grid-template-columns: 1fr 1fr; }
+        .oss-grid { grid-template-columns: 1fr; }
+        .getstarted-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 640px) {
+        section { padding: 72px 0; }
+        .features-grid { grid-template-columns: 1fr; }
+        .security-grid { grid-template-columns: 1fr; }
+        .nav-links { display: none; }
+        .nav-hamburger { display: flex; }
+        .nav-actions .btn-primary.nav-signin { display: none; }
+        .footer-inner { flex-direction: column; align-items: flex-start; gap: 16px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ps4-bg" aria-hidden="true"></div>
+
+    <!-- Navbar -->
+    <nav class="navbar" aria-label="Main navigation">
+      <div class="container">
+        <a href="#" class="nav-brand" aria-label="Agro home">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" aria-hidden="true">
+            <defs><linearGradient id="nav-g" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/>
+            </linearGradient></defs>
+            <rect width="108" height="108" rx="24" fill="url(#nav-g)"/>
+            <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
+            <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
+            <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+          </svg>
+          Agro
+        </a>
+        <div class="nav-links" role="list">
+          <a href="#features" class="nav-link" role="listitem">Features</a>
+          <a href="#security" class="nav-link" role="listitem">Security</a>
+          <a href="#opensource" class="nav-link" role="listitem">Open Source</a>
+          <a href="#getstarted" class="nav-link" role="listitem">Get Started</a>
+        </div>
+        <div class="nav-actions">
+          <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="nav-gh-link" aria-label="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+            GitHub
+          </a>
+          <button class="btn btn-primary btn-sm nav-signin" onclick="openModal()" aria-haspopup="dialog">Sign in</button>
+        </div>
+        <button class="nav-hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false" onclick="toggleMenu()">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Mobile menu -->
+    <div class="nav-mobile-menu" id="mobile-menu" role="menu">
+      <a href="#features" class="nav-mobile-link" role="menuitem" onclick="closeMenu()">Features</a>
+      <a href="#security" class="nav-mobile-link" role="menuitem" onclick="closeMenu()">Security</a>
+      <a href="#opensource" class="nav-mobile-link" role="menuitem" onclick="closeMenu()">Open Source</a>
+      <a href="#getstarted" class="nav-mobile-link" role="menuitem" onclick="closeMenu()">Get Started</a>
+      <a href="https://github.com/AgroUPlus/Agro" class="nav-mobile-link" role="menuitem" target="_blank" rel="noopener" onclick="closeMenu()">GitHub &uarr;</a>
+      <button class="btn btn-primary" style="margin-top:8px;justify-content:center;" onclick="closeMenu();openModal()">Sign in to Agro</button>
+    </div>
+
+    <div class="page">
+
+      <!-- Hero -->
+      <section id="hero">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="container">
+          <div class="hero-badge" aria-label="Open source project">
+            <div class="hero-badge-dot" aria-hidden="true"></div>
+            Open Source &middot; AGPL-3.0
+          </div>
+          <h1 class="hero-title grad-text">Your music,<br>your server.<br>Everywhere.</h1>
+          <p class="hero-sub">A background sync daemon that keeps playback moving between <strong style="color:var(--text-primary)">Wander</strong> (Linux TUI) and <strong style="color:var(--text-primary)">Wanda</strong> (Android) &mdash; with a social layer, a library relay, and a full GraphQL API.</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary" onclick="openModal()" aria-haspopup="dialog">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              Connect to your instance
+            </button>
+            <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-ghost">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+              View on GitHub
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <!-- What is Agro -->
+      <section id="what">
+        <div class="container">
+          <div class="what-grid">
+            <div class="what-text reveal">
+              <div class="section-label">What it is</div>
+              <h2 class="section-title">One daemon.<br>All your devices.</h2>
+              <p>Agro is a background sync server you run yourself. It holds one <strong>playback handoff</strong> and a set of registered nodes per user &mdash; so a session started on your desktop can be picked up on your phone without touching a button.</p>
+              <p>It is also the <strong>social layer</strong> for the Kolbxyz music stack: profiles, friends, a live &ldquo;what your friends are playing&rdquo; feed, and listen-along. Everything is opt-in per account, per surface, defaulting off.</p>
+              <p>Storage is a single SQLite file. No external database. The dashboard is compiled into the binary. Everything ships in one executable.</p>
+            </div>
+            <div class="what-diagram reveal" style="transition-delay:.1s">
+              <div class="diagram-nodes">
+                <div class="diag-node">
+                  <div class="diag-icon-wrap">&#128241;</div>
+                  <div class="diag-label">Wanda<br>Android</div>
+                </div>
+                <div class="diag-arrow">
+                  <div class="diag-arrow-line"></div>
+                  <div class="diag-arrow-label">GraphQL<br>WebSocket</div>
+                </div>
+                <div class="diag-node">
+                  <div class="diag-icon-wrap center">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="32" height="32">
+                      <defs><linearGradient id="dg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/></linearGradient></defs>
+                      <rect width="108" height="108" rx="24" fill="url(#dg)"/>
+                      <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
+                      <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
+                      <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+                    </svg>
+                  </div>
+                  <div class="diag-label" style="color:var(--text-primary);font-weight:700">Agro</div>
+                </div>
+                <div class="diag-arrow" style="transform:scaleX(-1)">
+                  <div class="diag-arrow-line"></div>
+                  <div class="diag-arrow-label" style="transform:scaleX(-1)">GraphQL<br>WebSocket</div>
+                </div>
+                <div class="diag-node">
+                  <div class="diag-icon-wrap">&#128187;</div>
+                  <div class="diag-label">Wander<br>Linux TUI</div>
+                </div>
+              </div>
+              <div class="diag-pills">
+                <div class="diag-pill">HANDOFF</div>
+                <div class="diag-pill">NODE_UPDATE</div>
+                <div class="diag-pill">FRIEND_PRESENCE</div>
+                <div class="diag-pill violet">LISTEN_ALONG</div>
+                <div class="diag-pill violet">LIBRARY_UPDATED</div>
+                <div class="diag-pill">SYNC_OFFER</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Features -->
+      <section id="features">
+        <div class="container">
+          <div class="features-header">
+            <div class="section-label">Features</div>
+            <h2 class="section-title">Everything a sync daemon should be</h2>
+            <p class="section-sub">Built for the Kolbxyz music stack &mdash; but the GraphQL API is yours to build on.</p>
+          </div>
+          <div class="features-grid">
+            <div class="feature-card reveal">
+              <div class="feature-icon">&#128260;</div>
+              <div class="feature-title">Playback Handoff</div>
+              <p class="feature-desc">One session, all your devices. Pick up exactly where you left off &mdash; same track, same position. The handoff state is end-to-end encrypted when you hold a vault key.</p>
+              <div class="feature-tags"><span class="feature-tag">HANDOFF</span><span class="feature-tag">E2E sealed</span></div>
+            </div>
+            <div class="feature-card reveal" style="transition-delay:.07s">
+              <div class="feature-icon">&#128101;</div>
+              <div class="feature-title">Social Layer</div>
+              <p class="feature-desc">Friends, now-playing feeds, listen-along. Every surface defaults off &mdash; opt in per feature, per account. A friendship is a door, not a window.</p>
+              <div class="feature-tags"><span class="feature-tag">FRIEND_PRESENCE</span><span class="feature-tag">opt-in</span><span class="feature-tag">privacy-first</span></div>
+            </div>
+            <div class="feature-card reveal" style="transition-delay:.14s">
+              <div class="feature-icon">&#128218;</div>
+              <div class="feature-title">Library Relay</div>
+              <p class="feature-desc">Transfer files peer-to-peer between devices. Configurable spool budget, resumable uploads, and an archive hook for Navidrome, Nextcloud, or anything else.</p>
+              <div class="feature-tags"><span class="feature-tag">resumable PUT</span><span class="feature-tag">spool</span><span class="feature-tag">AGRO_ARCHIVE_HOOK</span></div>
+            </div>
+            <div class="feature-card reveal" style="transition-delay:.21s">
+              <div class="feature-icon">&#127758;</div>
+              <div class="feature-title">GraphQL + Live Push</div>
+              <p class="feature-desc">Full GraphQL API at <code style="font-size:12px;color:#a99fff">POST /graphql</code>. Live events over WebSocket &mdash; no polling. Eight event types, multiplexed over one connection.</p>
+              <div class="feature-tags"><span class="feature-tag">GraphQL</span><span class="feature-tag">WebSocket</span><span class="feature-tag">GET /ws/sync</span></div>
+            </div>
+            <div class="feature-card reveal" style="transition-delay:.28s">
+              <div class="feature-icon">&#128279;</div>
+              <div class="feature-title">Share Links</div>
+              <p class="feature-desc">Share tracks via your own domain. A configurable allowlist means no open-redirect risk. Works across Navidrome, YouTube, and more.</p>
+              <div class="feature-tags"><span class="feature-tag">AGRO_PUBLIC_URL</span><span class="feature-tag">allowlist</span></div>
+            </div>
+            <div class="feature-card reveal" style="transition-delay:.35s">
+              <div class="feature-icon">&#128241;</div>
+              <div class="feature-title">Multi-device Pairing</div>
+              <p class="feature-desc">QR code pairing in the dashboard, per-device tokens, revocation without changing your passphrase. A lost phone is revoked on its own.</p>
+              <div class="feature-tags"><span class="feature-tag">QR pairing</span><span class="feature-tag">per-device tokens</span><span class="feature-tag">TOTP 2FA</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Security -->
+      <section id="security">
+        <div class="container">
+          <div class="security-header">
+            <div class="section-label">Security</div>
+            <h2 class="section-title">Built for a hostile network</h2>
+            <p class="section-sub">Agro assumes the network is hostile, the database is exfiltrable, and any authenticated account may be malicious. The code is written around those assumptions.</p>
+          </div>
+          <div class="security-grid">
+            <div class="security-card reveal">
+              <div class="security-icon">&#128272;</div>
+              <div class="security-title">Strong credential model</div>
+              <p class="security-desc">Passphrases are Argon2id hashed &mdash; expensive enough to resist dictionary attacks. Device tokens are 256-bit CSPRNG, stored only as SHA-256 hashes. The database holds nothing replayable.</p>
+              <div class="security-tag">Argon2id &middot; SHA-256</div>
+            </div>
+            <div class="security-card reveal" style="transition-delay:.08s">
+              <div class="security-icon">&#128274;</div>
+              <div class="security-title">Zero-knowledge vault</div>
+              <p class="security-desc">Settings and now-playing metadata are sealed client-side before leaving the device. The server stores an encrypted blob and no key. What&rsquo;s playing is sealed per friend&rsquo;s device public key &mdash; the server relays ciphertexts it cannot open.</p>
+              <div class="security-tag">Client-sealed &middot; HKDF-SHA256</div>
+            </div>
+            <div class="security-card reveal" style="transition-delay:.16s">
+              <div class="security-icon">&#129514;</div>
+              <div class="security-title">Boundary test suites</div>
+              <p class="security-desc">Two test suites enforce the security contract in code: <code style="font-size:11px">guest_boundary_tests.rs</code> for what a hostile account cannot reach, and <code style="font-size:11px">social_boundary_tests.rs</code> for what a friendship must still refuse. They run on every commit.</p>
+              <div class="security-tag">cargo test</div>
+            </div>
+          </div>
+          <div class="threat-table-wrap reveal">
+            <div class="threat-table-head"><span>Credential</span><span>How it&rsquo;s stored</span></div>
+            <div class="threat-row"><div class="threat-row-cred">Account passphrase</div><div class="threat-row-how">Argon2id hash. Generated, not chosen. Shown once. Cannot be recovered.</div></div>
+            <div class="threat-row"><div class="threat-row-cred">Device token</div><div class="threat-row-how">SHA-256 hash + 8-char prefix (index only). Revocable individually.</div></div>
+            <div class="threat-row"><div class="threat-row-cred">TOTP secret</div><div class="threat-row-how">AES-256-GCM under <code style="font-size:11px">AGRO_SECRET_KEY</code>. The server must read it to verify a code.</div></div>
+            <div class="threat-row"><div class="threat-row-cred">Vault key</div><div class="threat-row-how">Not stored. Only a client-sealed blob. The server cannot unwrap it.</div></div>
+            <div class="threat-row"><div class="threat-row-cred">Setup token</div><div class="threat-row-how">In memory only. Minted once for an empty database, printed to the log, burned on use.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Open Source -->
+      <section id="opensource">
+        <div class="container">
+          <div class="oss-grid">
+            <div class="oss-text reveal">
+              <div class="section-label">Open Source</div>
+              <h2 class="section-title">AGPL-3.0.<br>All of it.</h2>
+              <p>Agro is given away. The source, the protocol, the dashboard &mdash; all of it, under AGPL-3.0. Section&nbsp;13 is the part that matters for a server: run a modified Agro where other people can reach it, and those people must be offered its source.</p>
+              <p>That is deliberate. <strong>The project is given away; what is sold is running it.</strong> Someone with the skill to self-host was never a customer. Having them run your code, file your bugs, on your protocol, is worth more than a licence fee you would never collect.</p>
+              <p>Contributions are welcome and require agreement to the <strong>CLA</strong> &mdash; one file that preserves the ability to relicense or dual-license later. See <a href="https://github.com/AgroUPlus/Agro/blob/main/CLA.md" target="_blank" rel="noopener" style="color:#a99fff;text-underline-offset:3px;text-decoration:underline">CLA.md</a>.</p>
+              <div class="oss-actions">
+                <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-ghost">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.373 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.418-1.305.762-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.807 5.625-5.479 5.92.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+                  Star on GitHub
+                </a>
+                <a href="https://github.com/AgroUPlus/Agro/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" class="btn btn-ghost">Contributing guide</a>
+              </div>
+            </div>
+            <div class="oss-card reveal" style="transition-delay:.1s">
+              <div class="oss-stat-row">
+                <div class="oss-stat"><div class="oss-stat-num grad-text">AGPL</div><div class="oss-stat-label">Licence</div></div>
+                <div class="oss-stat"><div class="oss-stat-num" style="color:var(--status-active)">v3.0</div><div class="oss-stat-label">Version</div></div>
+              </div>
+              <div class="oss-badges">
+                <img src="https://img.shields.io/github/license/AgroUPlus/Agro?style=flat-square&color=7C6BFF&labelColor=1a1a1d" alt="AGPL-3.0" loading="lazy" />
+                <img src="https://img.shields.io/github/stars/AgroUPlus/Agro?style=flat-square&color=10b981&labelColor=1a1a1d" alt="Stars" loading="lazy" />
+                <img src="https://img.shields.io/github/forks/AgroUPlus/Agro?style=flat-square&color=5A63E8&labelColor=1a1a1d" alt="Forks" loading="lazy" />
+                <img src="https://img.shields.io/badge/built_with-Rust-f7768e?style=flat-square&labelColor=1a1a1d&logo=rust" alt="Rust" loading="lazy" />
+                <img src="https://img.shields.io/badge/dashboard-React-61dafb?style=flat-square&labelColor=1a1a1d&logo=react" alt="React" loading="lazy" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Get Started -->
+      <section id="getstarted">
+        <div class="container">
+          <div class="getstarted-header">
+            <div class="section-label">Get Started</div>
+            <h2 class="section-title">Two ways in</h2>
+          </div>
+          <div class="getstarted-grid">
+            <div class="gs-card reveal">
+              <div class="gs-pill self">Self-host</div>
+              <div class="gs-title">Run it yourself</div>
+              <p class="gs-desc">One binary. SQLite, no external database. Runs as a systemd service in minutes. Requires a reverse proxy (nginx, Caddy, NPM) for TLS.</p>
+              <div class="gs-code-block">
+                <pre><span class="cmt"># Build dashboard, then the binary</span>
+cd dashboard &amp;&amp; npm ci &amp;&amp; npm run build
+cd .. &amp;&amp; cargo build --release
+
+<span class="cmt"># Run</span>
+PORT=<span style="color:#10b981">1674</span> AGRO_LIBRARY_ROOT=<span style="color:#10b981">/srv/music</span> \
+  ./target/release/agro</pre>
+              </div>
+              <a href="https://github.com/AgroUPlus/Agro#readme" target="_blank" rel="noopener" class="btn btn-ghost" style="align-self:flex-start">Full setup guide &rarr;</a>
+            </div>
+            <div class="gs-card featured reveal" style="transition-delay:.1s">
+              <div class="gs-pill cloud">
+                <span style="width:6px;height:6px;border-radius:50%;background:var(--status-active);display:inline-block;box-shadow:0 0 5px rgba(16,185,129,.8)"></span>
+                Agro Cloud
+              </div>
+              <div class="gs-title">Try the hosted instance</div>
+              <p class="gs-desc">The same binary, the same source &mdash; already running, backed up, and kept up to date. No server to configure, no TLS to set up.</p>
+              <div class="gs-cloud-detail">
+                <div class="gs-feature-row"><span class="chk">&#10003;</span> All features, no limits</div>
+                <div class="gs-feature-row"><span class="chk">&#10003;</span> Always on the latest commit</div>
+                <div class="gs-feature-row"><span class="chk">&#10003;</span> TLS &amp; backups handled for you</div>
+                <div class="gs-feature-row"><span class="chk">&#10003;</span> Share domain on <code style="font-size:12px">kolbxyz.xyz</code></div>
+              </div>
+              <button class="btn btn-primary" onclick="connectToCloud()" style="align-self:flex-start">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                Sign in to agro.kolbxyz.xyz
+              </button>
+              <div class="gs-url"><a href="https://agro.kolbxyz.xyz" target="_blank" rel="noopener">agro.kolbxyz.xyz</a></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /.page -->
+
+    <!-- Footer -->
+    <footer>
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-brand">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" aria-hidden="true">
+              <defs><linearGradient id="fg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/></linearGradient></defs>
+              <rect width="108" height="108" rx="24" fill="url(#fg)"/>
+              <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
+              <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
+              <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+            </svg>
+            Agro &mdash; Built by <a href="https://kolbxyz.xyz" target="_blank" rel="noopener" style="color:var(--text-secondary);margin-left:4px">Kolbxyz</a>
+          </div>
+          <div class="footer-links">
+            <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/AgroUPlus/Agro/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+            <a href="https://github.com/AgroUPlus/Agro/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0</a>
+            <a href="https://github.com/AgroUPlus/Agro/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+          </div>
+          <div class="footer-right">
+            <img src="https://img.shields.io/badge/licence-AGPL--3.0-7C6BFF?style=flat-square&labelColor=131315" alt="AGPL-3.0" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Modal -->
+    <div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="handleBackdropClick(event)">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()" aria-label="Close">&times;</button>
+        <div class="modal-logo">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+            <defs><linearGradient id="mg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/></linearGradient></defs>
+            <rect width="108" height="108" rx="24" fill="url(#mg)"/>
+            <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
+            <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
+            <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+          </svg>
+        </div>
+        <div class="modal-title" id="modal-title">Connect to your Agro instance</div>
+        <p class="modal-sub">Enter your server address &mdash; domain, IP, or IP:port.</p>
+        <input class="modal-input" id="instance-input" type="text" placeholder="https://agro.example.com  or  192.168.1.1:8700" autocomplete="url" spellcheck="false" onkeydown="handleInputKey(event)" />
+        <div class="modal-error" id="modal-error" role="alert" aria-live="polite"></div>
+        <div class="modal-recents" id="modal-recents" style="display:none">
+          <div class="modal-recents-label">Recent</div>
+          <div class="recents-chips" id="recents-chips"></div>
+        </div>
+        <div class="modal-also">or sign in to <a href="https://agro.kolbxyz.xyz" target="_blank" rel="noopener">agro.kolbxyz.xyz</a> &mdash; the hosted instance</div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="connect()">
+            Connect
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = 'agro_recent_instances';
+      const backdrop = document.getElementById('modal-backdrop');
+      const input    = document.getElementById('instance-input');
+      const errorEl  = document.getElementById('modal-error');
+      const recentsEl= document.getElementById('modal-recents');
+      const chipsEl  = document.getElementById('recents-chips');
+
+      function getRecent() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+      }
+      function saveInstance(url) {
+        const list = [url, ...getRecent().filter(u => u !== url)].slice(0, 5);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+      }
+      function renderRecents() {
+        const list = getRecent();
+        if (!list.length) { recentsEl.style.display = 'none'; return; }
+        recentsEl.style.display = '';
+        chipsEl.innerHTML = list.map(u => {
+          const safe = u.replace(/'/g, "\\'");
+          const display = u.replace(/^https?:\/\//, '');
+          return '<button class="recent-chip" title="' + u + '" onclick="selectChip(\'' + safe + '\')">' + display + '</button>';
+        }).join('');
+      }
+      function selectChip(url) { input.value = url; input.focus(); errorEl.textContent = ''; }
+      function openModal() {
+        const recent = getRecent();
+        input.value = recent[0] || '';
+        errorEl.textContent = '';
+        renderRecents();
+        backdrop.classList.add('open');
+        document.body.style.overflow = 'hidden';
+        setTimeout(() => { input.focus(); if (input.value) input.select(); }, 80);
+      }
+      function closeModal() { backdrop.classList.remove('open'); document.body.style.overflow = ''; }
+      function handleBackdropClick(e) { if (e.target === backdrop) closeModal(); }
+      function handleInputKey(e) { if (e.key === 'Enter') connect(); if (e.key === 'Escape') closeModal(); }
+      function showError(msg) {
+        errorEl.textContent = msg;
+        input.style.borderColor = '#f7768e';
+        input.style.boxShadow = '0 0 0 3px rgba(247,118,142,.12)';
+        setTimeout(() => { input.style.borderColor = ''; input.style.boxShadow = ''; }, 1800);
+      }
+      function normalizeUrl(raw) {
+        raw = raw.trim();
+        if (!raw) return null;
+        if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+        try { new URL(raw); return raw; } catch { return null; }
+      }
+      function connect() {
+        const url = normalizeUrl(input.value);
+        if (!url) { showError('Please enter a valid URL or address.'); return; }
+        saveInstance(url);
+        window.location.href = url;
+      }
+      function connectToCloud() { saveInstance('https://agro.kolbxyz.xyz'); window.location.href = 'https://agro.kolbxyz.xyz'; }
+      document.addEventListener('keydown', e => { if (e.key === 'Escape' && backdrop.classList.contains('open')) closeModal(); });
+
+      /* Mobile nav */
+      const hamburger  = document.getElementById('hamburger');
+      const mobileMenu = document.getElementById('mobile-menu');
+      function toggleMenu() { const open = mobileMenu.classList.toggle('open'); hamburger.classList.toggle('open', open); hamburger.setAttribute('aria-expanded', open); }
+      function closeMenu() { mobileMenu.classList.remove('open'); hamburger.classList.remove('open'); hamburger.setAttribute('aria-expanded', 'false'); }
+
+      /* Scroll-reveal */
+      const observer = new IntersectionObserver(
+        entries => entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); } }),
+        { threshold: 0.12 }
+      );
+      document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
+  </body>
+</html>
