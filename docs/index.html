@@ -358,15 +358,122 @@
       .gs-url a { color: #a99fff; text-decoration: underline; text-underline-offset: 3px; }
       .gs-url a:hover { color: var(--grad-start); }
 
-      /* Footer */
-      footer { border-top: 1px solid var(--border-subtle); padding: 40px 0; }
-      .footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-      .footer-brand { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; color: var(--text-muted); }
-      .footer-brand svg { width: 24px; height: 24px; border-radius: 5px; }
-      .footer-links { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
-      .footer-links a { font-size: 13px; color: var(--text-muted); transition: color .15s; }
-      .footer-links a:hover { color: var(--text-secondary); }
-      .footer-right { display: flex; align-items: center; gap: 10px; }
+      /* Cool Modern Footer */
+      footer {
+        position: relative;
+        z-index: 1;
+        border-top: 1px solid var(--border-subtle);
+        background: rgba(11, 11, 12, 0.85);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        padding: 64px 0 36px;
+      }
+      footer::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 10%;
+        right: 10%;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(124, 107, 255, 0.4), rgba(0, 163, 163, 0.4), transparent);
+      }
+      .footer-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 48px;
+        margin-bottom: 48px;
+      }
+      .footer-col-brand {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .footer-brand-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+        color: var(--text-primary);
+      }
+      .footer-brand-logo svg {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+      }
+      .footer-tagline {
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        max-width: 320px;
+        line-height: 1.6;
+      }
+      .footer-by {
+        font-size: 12.5px;
+        color: var(--text-muted);
+      }
+      .footer-by a {
+        color: #a99fff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .footer-by a:hover {
+        color: var(--grad-start);
+      }
+      .footer-col-title {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        color: var(--text-primary);
+        margin-bottom: 16px;
+      }
+      .footer-col-links {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .footer-col-links a {
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        transition: color .15s ease, transform .15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .footer-col-links a:hover {
+        color: var(--text-primary);
+        transform: translateX(2px);
+      }
+      .footer-bottom {
+        border-top: 1px solid rgba(38, 38, 42, 0.6);
+        padding-top: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 12.5px;
+        color: var(--text-muted);
+      }
+      .footer-bottom-badges {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      @media (max-width: 768px) {
+        .footer-grid {
+          grid-template-columns: 1fr;
+          gap: 32px;
+        }
+        .footer-bottom {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 14px;
+        }
+      }
 
       /* Modal */
       .modal-backdrop { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.7);
@@ -830,34 +937,58 @@ PORT=<span style="color:#10b981">1674</span> AGRO_LIBRARY_ROOT=<span style="colo
         </div>
       </section>
 
-    </div><!-- /.page -->
+          <!-- Cool Modern Footer -->
+      <footer>
+        <div class="container">
+          <div class="footer-grid">
+            <div class="footer-col-brand">
+              <div class="footer-brand-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" aria-hidden="true">
+                  <defs><linearGradient id="cfg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/></linearGradient></defs>
+                  <rect width="108" height="108" rx="24" fill="url(#cfg)"/>
+                  <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
+                  <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
+                  <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+                </svg>
+                Agro
+              </div>
+              <p class="footer-tagline">Your music, your server. Everywhere. Open source, self-hosted music ecosystem with playback handoff, private social features, and library relay.</p>
+              <div class="footer-by">Built by <a href="https://kolbxyz.xyz" target="_blank" rel="noopener">Kolbxyz</a></div>
+            </div>
 
-    <!-- Footer -->
-    <footer>
-      <div class="container">
-        <div class="footer-inner">
-          <div class="footer-brand">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" aria-hidden="true">
-              <defs><linearGradient id="fg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C6BFF"/><stop offset=".5" stop-color="#5A63E8"/><stop offset="1" stop-color="#00A3A3"/></linearGradient></defs>
-              <rect width="108" height="108" rx="24" fill="url(#fg)"/>
-              <path fill="#fff" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"/>
-              <path fill="#5A63E8" d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"/>
-              <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/><circle cx="24" cy="59" r="2" fill="#5A63E8"/>
-            </svg>
-            Agro, built by <a href="https://kolbxyz.xyz" target="_blank" rel="noopener" style="color:var(--text-secondary);margin-left:4px">Kolbxyz</a>
+            <div class="footer-col">
+              <div class="footer-col-title">Ecosystem</div>
+              <ul class="footer-col-links">
+                <li><a href="https://agro.kolbxyz.xyz" target="_blank" rel="noopener">Agro Cloud</a></li>
+                <li><a href="#features">Playback Handoff</a></li>
+                <li><a href="#features">Social &amp; Listen-Along</a></li>
+                <li><a href="#features">Library Relay</a></li>
+                <li><a href="#features">GraphQL &amp; WebSockets</a></li>
+              </ul>
+            </div>
+
+            <div class="footer-col">
+              <div class="footer-col-title">Open Source</div>
+              <ul class="footer-col-links">
+                <li><a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener">GitHub Repository</a></li>
+                <li><a href="https://github.com/AgroUPlus/Agro/blob/main/SECURITY.md" target="_blank" rel="noopener">Security Policy</a></li>
+                <li><a href="https://github.com/AgroUPlus/Agro/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0 License</a></li>
+                <li><a href="https://github.com/AgroUPlus/Agro/blob/main/CLA.md" target="_blank" rel="noopener">Contributor CLA</a></li>
+                <li><a href="https://github.com/AgroUPlus/Agro/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing Guide</a></li>
+              </ul>
+            </div>
           </div>
-          <div class="footer-links">
-            <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener">GitHub</a>
-            <a href="https://github.com/AgroUPlus/Agro/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
-            <a href="https://github.com/AgroUPlus/Agro/blob/main/LICENSE" target="_blank" rel="noopener">AGPL-3.0</a>
-            <a href="https://github.com/AgroUPlus/Agro/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
-          </div>
-          <div class="footer-right">
-            <img src="https://img.shields.io/badge/licence-AGPL--3.0-7C6BFF?style=flat-square&labelColor=131315" alt="AGPL-3.0" loading="lazy" />
+
+          <div class="footer-bottom">
+            <div>&copy; 2026 Agro. Released under the GNU Affero General Public License v3.0.</div>
+            <div class="footer-bottom-badges">
+              <img src="https://img.shields.io/badge/licence-AGPL--3.0-7C6BFF?style=flat-square&labelColor=131315" alt="AGPL-3.0" loading="lazy" />
+              <img src="https://img.shields.io/badge/built_with-Rust-f7768e?style=flat-square&labelColor=131315&logo=rust" alt="Rust" loading="lazy" />
+            </div>
           </div>
         </div>
-      </div>
-    </footer>
+      </footer>
+    </div><!-- /.page -->
 
     <!-- Modal -->
     <div class="modal-backdrop" id="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title" onclick="handleBackdropClick(event)">
