@@ -28,6 +28,7 @@ pub struct CatalogEntry {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub lyrics: Option<String>,
     /// Namespaced ids known to hold this audio — `ytm:…`, `navidrome:…`. Never a `local:` id:
     /// those are filesystem paths from somebody's phone, and this list goes to every account.
     pub sources: Vec<String>,
@@ -73,6 +74,7 @@ impl CatalogQuery {
                     title: recording.title,
                     artist: recording.artist,
                     album: recording.album,
+                    lyrics: recording.lyrics,
                     sources,
                     updated_at: recording.updated_at,
                 })
@@ -111,6 +113,7 @@ impl CatalogMutation {
         artist: Option<String>,
         album: Option<String>,
         source_uri: Option<String>,
+        #[graphql(default)] lyrics: Option<String>,
     ) -> Result<String> {
         let db = ctx.data::<Db>()?;
         ctx.data::<AuthedUser>()?;
@@ -141,6 +144,11 @@ impl CatalogMutation {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty() && !s.starts_with("local:"));
 
+        let lyrics = match lyrics {
+            Some(l) if !l.trim().is_empty() => Some(bounded(&l, MAX_LYRICS_LEN, "lyrics")?),
+            _ => None,
+        };
+
         Ok(db.publish_recording(&PublishedRecording {
             embedding: decoded,
             dim,
@@ -150,6 +158,7 @@ impl CatalogMutation {
             title: title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
             artist: artist.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()),
             album: album.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()),
+            lyrics,
             source_uri,
         })?)
     }
@@ -160,6 +169,9 @@ impl CatalogMutation {
 /// The client sends int8 precisely so this can stay a sane number — the same audio as float32 is
 /// four times larger and a three-minute track alone would pass the old 160 KB cap.
 const MAX_EMBEDDING_BYTES: usize = 20 * 60 * 2 * 128;
+
+/// Max length of lyrics payload (synced LRC or plain text) traded per recording.
+const MAX_LYRICS_LEN: usize = 65_536;
 
 /// A plausible width for one vector. The embedder in use produces 128.
 const MAX_DIM: i64 = 4_096;

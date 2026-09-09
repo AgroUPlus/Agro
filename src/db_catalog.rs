@@ -58,6 +58,7 @@ pub struct CatalogRecording {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub lyrics: Option<String>,
     pub updated_at: i64,
 }
 
@@ -74,6 +75,7 @@ pub struct PublishedRecording {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    pub lyrics: Option<String>,
     /// The namespaced id this client knows the audio by — `ytm:…`, `navidrome:…`.
     ///
     /// Never a `local:` id: those are filesystem paths from somebody's phone, and this column is
@@ -171,9 +173,10 @@ impl Db {
                          title      = COALESCE(title, ?2),
                          artist     = COALESCE(artist, ?3),
                          album      = COALESCE(album, ?4),
-                         updated_at = ?5
+                         lyrics     = COALESCE(lyrics, ?5),
+                         updated_at = ?6
                      WHERE recording_id = ?1",
-                    params![id, published.title, published.artist, published.album, now],
+                    params![id, published.title, published.artist, published.album, published.lyrics, now],
                 )?;
                 id
             }
@@ -183,14 +186,15 @@ impl Db {
                 let conn = self.conn.lock().unwrap();
                 conn.execute(
                     "INSERT INTO catalog_recordings
-                         (recording_id, duration_ms, title, artist, album, updated_at)
-                     VALUES (?1,?2,?3,?4,?5,?6)",
+                         (recording_id, duration_ms, title, artist, album, lyrics, updated_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7)",
                     params![
                         id,
                         published.duration_ms,
                         published.title,
                         published.artist,
                         published.album,
+                        published.lyrics,
                         now
                     ],
                 )?;
@@ -315,7 +319,7 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT r.recording_id, e.embedding, e.dim, e.model, e.version,
-                    r.duration_ms, r.title, r.artist, r.album, r.updated_at
+                    r.duration_ms, r.title, r.artist, r.album, r.lyrics, r.updated_at
              FROM catalog_recordings r
              JOIN catalog_embeddings e ON e.recording_id = r.recording_id
              WHERE r.updated_at > ?1
@@ -333,7 +337,8 @@ impl Db {
                 title: row.get(6)?,
                 artist: row.get(7)?,
                 album: row.get(8)?,
-                updated_at: row.get(9)?,
+                lyrics: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?;
         rows.collect()
@@ -448,6 +453,7 @@ mod tests {
             title: Some(title.to_string()),
             artist: Some("An Artist".to_string()),
             album: None,
+            lyrics: None,
             source_uri: Some(source.to_string()),
         }
     }
@@ -574,6 +580,7 @@ mod tests {
                 title: None,
                 artist: None,
                 album: None,
+                lyrics: None,
                 source_uri: Some("ytm:empty".to_string()),
             })
             .unwrap();
@@ -601,5 +608,18 @@ mod tests {
             score >= MATCH_THRESHOLD,
             "int8 round trip scored {score}, below the match threshold"
         );
+    }
+
+    #[test]
+    fn publishing_lyrics_persists_and_returns_in_catalog_since() {
+        let db = Db::new_in_memory().unwrap();
+        let mut p = published(&embedding(1), "Song With Lyrics", "ytm:lyrics_test");
+        p.lyrics = Some("[00:10.00] Test line".to_string());
+        let id = db.publish_recording(&p).unwrap();
+        assert!(!id.is_empty());
+
+        let entries = db.catalog_since(0, 10).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].lyrics.as_deref(), Some("[00:10.00] Test line"));
     }
 }

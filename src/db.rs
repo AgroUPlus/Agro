@@ -999,6 +999,7 @@ const MIGRATIONS: &[&str] = &[
          ON catalog_embeddings(model, version);
      DROP TABLE IF EXISTS catalog_sub_hashes;
      ALTER TABLE catalog_recordings DROP COLUMN sub_hashes;",
+    "ALTER TABLE catalog_recordings ADD COLUMN lyrics TEXT;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
