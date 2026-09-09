@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Agro: Open-source music ecosystem for Wander and Wanda</title>
-    <meta name="description" content="Agro is an open-source self-hosted music ecosystem powering playback handoff, private social listening, and library sync for Wander and Wanda." />
+    <title>Agro: Open-source E2EE music ecosystem for Wander and Wanda</title>
+    <meta name="description" content="Agro is an open-source, End-to-End Encrypted (E2EE) self-hosted music ecosystem powering playback handoff, private social listening, and library sync for Wander and Wanda." />
     <meta property="og:title" content="Agro: Your music, your server. Everywhere." />
-    <meta property="og:description" content="Open-source music ecosystem for Wander and Wanda. GraphQL API, WebSocket live push, zero-knowledge vault, social layer. AGPL-3.0." />
+    <meta property="og:description" content="Open-source E2EE music ecosystem for Wander and Wanda. GraphQL API, WebSocket live push, zero-knowledge vault, social layer. AGPL-3.0." />
     <meta property="og:type" content="website" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,11 +28,52 @@
       button { font-family: inherit; cursor: pointer; border: none; background: none; }
       code, pre { font-family: 'JetBrains Mono', monospace; }
 
-      /* PS4 diagonal mesh */
-      .ps4-bg { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      /* PS4-style dynamic wave flow background */
+      .ps4-bg {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(ellipse at 50% -15%, rgba(124, 107, 255, 0.16) 0%, transparent 65%),
+          radial-gradient(ellipse at 85% 95%, rgba(0, 163, 163, 0.10) 0%, transparent 55%),
+          #0b0b0c;
+      }
+      .ps4-wave-wrap {
+        position: absolute;
+        inset: -10% -10% -10% -10%;
+        width: 120%;
+        height: 120%;
+        opacity: 0.95;
+        animation: ps4-drift 22s ease-in-out infinite alternate;
+      }
+      @keyframes ps4-drift {
+        0% { transform: scale(1) translateY(0px); }
+        50% { transform: scale(1.03) translateY(-18px) rotate(-0.4deg); }
+        100% { transform: scale(1.01) translateY(-6px) rotate(0.3deg); }
+      }
+
+      /* PS4 floating ambient particles */
+      .ps4-particles {
+        position: absolute;
+        inset: 0;
         background-image:
-          repeating-linear-gradient(-45deg, rgba(124,107,255,.026) 0px, rgba(124,107,255,.026) 1px, transparent 1px, transparent 52px),
-          repeating-linear-gradient(45deg, rgba(0,163,163,.018) 0px, rgba(0,163,163,.018) 1px, transparent 1px, transparent 52px); }
+          radial-gradient(1.5px 1.5px at 15% 25%, rgba(124, 107, 255, 0.45) 100%, transparent),
+          radial-gradient(2px 2px at 30% 65%, rgba(90, 99, 232, 0.4) 100%, transparent),
+          radial-gradient(1.5px 1.5px at 70% 35%, rgba(0, 163, 163, 0.5) 100%, transparent),
+          radial-gradient(2px 2px at 85% 75%, rgba(124, 107, 255, 0.35) 100%, transparent),
+          radial-gradient(1.5px 1.5px at 50% 85%, rgba(0, 163, 163, 0.35) 100%, transparent),
+          radial-gradient(1.5px 1.5px at 60% 15%, rgba(244, 244, 245, 0.25) 100%, transparent);
+        background-repeat: repeat;
+        background-size: 500px 500px;
+        opacity: 0.7;
+        animation: particle-float 30s linear infinite;
+      }
+      @keyframes particle-float {
+        0% { transform: translateY(0); }
+        100% { transform: translateY(-500px); }
+      }
 
       .page { position: relative; z-index: 1; }
       .container { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
@@ -120,10 +161,6 @@
       .hero-sub { font-size: clamp(1rem,2vw,1.2rem); color: var(--text-secondary); max-width: 620px;
         margin: 0 auto 40px; line-height: 1.65; }
       .hero-actions { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
-      .hero-glow { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 700px; height: 400px;
-        background: radial-gradient(ellipse at 50% 0%, rgba(124,107,255,.12) 0%, transparent 65%),
-                    radial-gradient(ellipse at 70% 60%, rgba(0,163,163,.07) 0%, transparent 55%);
-        pointer-events: none; z-index: 0; }
       #hero .container { position: relative; z-index: 1; }
 
       /* Section labels */
@@ -182,8 +219,7 @@
         border: 1px solid var(--border-subtle); letter-spacing: .04em; }
 
       /* Security */
-      #security { border-top: 1px solid var(--border-subtle);
-        background: radial-gradient(ellipse at 50% 0%, rgba(124,107,255,.05) 0%, transparent 60%); }
+      #security { border-top: 1px solid var(--border-subtle); }
       .security-header { text-align: center; margin-bottom: 56px; }
       .security-header .section-label { justify-content: center; }
       .security-header .section-sub { margin: 0 auto; }
@@ -319,7 +355,60 @@
     </style>
   </head>
   <body>
-    <div class="ps4-bg" aria-hidden="true"></div>
+    <!-- PS4-style silky flow ribbons and ambient particles -->
+    <div class="ps4-bg" aria-hidden="true">
+      <div class="ps4-particles"></div>
+      <div class="ps4-wave-wrap">
+        <svg viewBox="0 0 1440 900" fill="none" preserveAspectRatio="none" style="width:100%; height:100%;">
+          <defs>
+            <linearGradient id="ps4-ribbon-1" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#7C6BFF" stop-opacity="0.22" />
+              <stop offset="45%" stop-color="#5A63E8" stop-opacity="0.14" />
+              <stop offset="100%" stop-color="#00A3A3" stop-opacity="0.08" />
+            </linearGradient>
+            <linearGradient id="ps4-ribbon-2" x1="100%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#00A3A3" stop-opacity="0.18" />
+              <stop offset="60%" stop-color="#5A63E8" stop-opacity="0.12" />
+              <stop offset="100%" stop-color="#7C6BFF" stop-opacity="0.04" />
+            </linearGradient>
+            <linearGradient id="ps4-stroke-1" x1="0%" y1="30%" x2="100%" y2="70%">
+              <stop offset="0%" stop-color="#7C6BFF" stop-opacity="0.45" />
+              <stop offset="50%" stop-color="#5A63E8" stop-opacity="0.30" />
+              <stop offset="100%" stop-color="#00A3A3" stop-opacity="0.40" />
+            </linearGradient>
+            <linearGradient id="ps4-stroke-2" x1="100%" y1="20%" x2="0%" y2="80%">
+              <stop offset="0%" stop-color="#00A3A3" stop-opacity="0.35" />
+              <stop offset="60%" stop-color="#7C6BFF" stop-opacity="0.25" />
+              <stop offset="100%" stop-color="#5A63E8" stop-opacity="0.10" />
+            </linearGradient>
+            <filter id="ps4-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="12" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          <!-- Deep ambient ribbon layer -->
+          <path d="M-100 480 C 260 220, 620 580, 1020 320 C 1240 180, 1460 380, 1600 340 L 1600 950 L -100 950 Z"
+            fill="url(#ps4-ribbon-1)" />
+
+          <!-- Secondary overlapping fluid wave ribbon -->
+          <path d="M-100 360 C 380 540, 780 220, 1140 420 C 1340 520, 1500 360, 1600 320 L 1600 950 L -100 950 Z"
+            fill="url(#ps4-ribbon-2)" />
+
+          <!-- Glowing silky contour line 1 (PS4 wave crest) -->
+          <path d="M-100 480 C 260 220, 620 580, 1020 320 C 1240 180, 1460 380, 1600 340"
+            stroke="url(#ps4-stroke-1)" stroke-width="2.5" filter="url(#ps4-glow)" />
+
+          <!-- Glowing silky contour line 2 (PS4 secondary crest) -->
+          <path d="M-100 360 C 380 540, 780 220, 1140 420 C 1340 520, 1500 360, 1600 320"
+            stroke="url(#ps4-stroke-2)" stroke-width="2" />
+
+          <!-- Delicate fine light filament 3 -->
+          <path d="M-100 560 C 320 380, 700 680, 1080 440 C 1300 320, 1480 490, 1600 450"
+            stroke="url(#ps4-stroke-1)" stroke-width="1.2" stroke-opacity="0.35" />
+        </svg>
+      </div>
+    </div>
 
     <!-- Navbar -->
     <nav class="navbar" aria-label="Main navigation">
@@ -369,10 +458,9 @@
 
       <!-- Hero -->
       <section id="hero">
-        <div class="hero-glow" aria-hidden="true"></div>
         <div class="container">
           <h1 class="hero-title grad-text">Your music,<br>your server.<br>Everywhere.</h1>
-          <p class="hero-sub">A safe, open-source music ecosystem for self-hosters. Seamless playback sync, private social features, and library handoff between <strong style="color:var(--text-primary)">Wander</strong> (Linux) and <strong style="color:var(--text-primary)">Wanda</strong> (Android).</p>
+          <p class="hero-sub">A safe, End-to-End Encrypted (E2EE) music ecosystem for self-hosters. Seamless playback sync, a zero-knowledge vault, and private social features between <strong style="color:var(--text-primary)">Wander</strong> (Linux) and <strong style="color:var(--text-primary)">Wanda</strong> (Android).</p>
           <div class="hero-actions">
             <button class="btn btn-primary" onclick="openModal()" aria-haspopup="dialog">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -392,12 +480,12 @@
           <div class="what-grid">
             <div class="what-text reveal">
               <div class="section-label">What it is</div>
-              <h2 class="section-title">A unified self-hosted<br>music ecosystem.</h2>
-              <p>Agro brings your music together across all your personal devices without relying on proprietary cloud services. Built from the ground up for self-hosting, it unifies:</p>
-              <p><strong>Playback sync and handoff:</strong> Transfer tracks, positions, and active queues between desktop and mobile with zero effort.</p>
-              <p><strong>Private social layer:</strong> Real-time friend activity, now-playing presence, and synchronized listen-along, fully opt-in with strict privacy boundaries.</p>
-              <p><strong>Library relay and spool:</strong> Direct peer-to-peer file transfer, spool caching, and automated hooks for your local media scanners.</p>
-              <p><strong>Single-binary simplicity:</strong> Everything runs from a single executable backed by embedded SQLite and a clean, integrated web dashboard.</p>
+              <h2 class="section-title">A unified, End-to-End<br>Encrypted music ecosystem.</h2>
+              <p>Agro connects your personal music life across all your devices without relying on third-party servers or proprietary clouds. Built around a zero-trust <strong>End-to-End Encryption (E2EE)</strong> architecture, it unifies:</p>
+              <p><strong>E2EE playback handoff:</strong> Active queues, playback positions, and tracks are sealed on your device with keys the server never holds.</p>
+              <p><strong>E2EE social &amp; listen-along:</strong> Now-playing presence is encrypted per-friend using their individual device public keys. The server merely relays ciphertexts it cannot inspect.</p>
+              <p><strong>Peer-to-peer library relay:</strong> Direct device-to-device file streaming and media server spooling with cryptographic verification.</p>
+              <p><strong>Zero-knowledge architecture:</strong> Powered by SQLite, an embedded modern web dashboard, and client-sealed vault credentials.</p>
             </div>
             <div class="what-diagram reveal" style="transition-delay:.1s">
               <div class="diagram-nodes">
@@ -431,9 +519,9 @@
                 </div>
               </div>
               <div class="diag-pills">
-                <div class="diag-pill">HANDOFF</div>
+                <div class="diag-pill">E2EE HANDOFF</div>
                 <div class="diag-pill">NODE_UPDATE</div>
-                <div class="diag-pill">FRIEND_PRESENCE</div>
+                <div class="diag-pill">E2EE PRESENCE</div>
                 <div class="diag-pill violet">LISTEN_ALONG</div>
                 <div class="diag-pill violet">LIBRARY_UPDATED</div>
                 <div class="diag-pill">SYNC_OFFER</div>
@@ -449,25 +537,25 @@
           <div class="features-header">
             <div class="section-label">Features</div>
             <h2 class="section-title">Complete control over your music experience</h2>
-            <p class="section-sub">Built for independent listening, backed by a modern GraphQL API and real-time WebSockets.</p>
+            <p class="section-sub">Built with End-to-End Encryption, backed by a modern GraphQL API and real-time WebSockets.</p>
           </div>
           <div class="features-grid">
             <div class="feature-card reveal">
               <div class="feature-icon">&#128260;</div>
-              <div class="feature-title">Playback Handoff</div>
-              <p class="feature-desc">Continuous playback across all your devices. Switch between your phone and computer with end-to-end encrypted session state.</p>
-              <div class="feature-tags"><span class="feature-tag">HANDOFF</span><span class="feature-tag">E2E encrypted</span></div>
+              <div class="feature-title">E2EE Playback Handoff</div>
+              <p class="feature-desc">Continuous playback across all your devices. Seamlessly transfer between phone and desktop with end-to-end encrypted session state.</p>
+              <div class="feature-tags"><span class="feature-tag">E2EE</span><span class="feature-tag">HANDOFF</span><span class="feature-tag">Zero-knowledge</span></div>
             </div>
             <div class="feature-card reveal" style="transition-delay:.07s">
               <div class="feature-icon">&#128101;</div>
-              <div class="feature-title">Social &amp; Listen-Along</div>
-              <p class="feature-desc">Follow what your friends are enjoying and listen along in sync. Every social surface defaults off and remains strictly opt-in.</p>
-              <div class="feature-tags"><span class="feature-tag">FRIEND_PRESENCE</span><span class="feature-tag">Listen-along</span><span class="feature-tag">Opt-in</span></div>
+              <div class="feature-title">E2EE Social &amp; Listen-Along</div>
+              <p class="feature-desc">Follow what your friends are enjoying and listen in sync. Updates are sealed directly to each friend's public key with strict opt-in boundaries.</p>
+              <div class="feature-tags"><span class="feature-tag">E2EE presence</span><span class="feature-tag">Friend keys</span><span class="feature-tag">Opt-in</span></div>
             </div>
             <div class="feature-card reveal" style="transition-delay:.14s">
               <div class="feature-icon">&#128218;</div>
               <div class="feature-title">Library Relay</div>
-              <p class="feature-desc">Direct peer-to-peer file transfers and background spooling. Works seamlessly with local directories and media servers.</p>
+              <p class="feature-desc">Direct peer-to-peer file transfers and background spooling. Works seamlessly with local directories and media scanners.</p>
               <div class="feature-tags"><span class="feature-tag">Relay</span><span class="feature-tag">Spool</span><span class="feature-tag">Archive hook</span></div>
             </div>
             <div class="feature-card reveal" style="transition-delay:.21s">
@@ -497,27 +585,27 @@
         <div class="container">
           <div class="security-header">
             <div class="section-label">Security</div>
-            <h2 class="section-title">Private by default. Safe by design.</h2>
-            <p class="section-sub">Agro assumes the network is hostile and the host could be inspected. Every layer enforces strict cryptographic boundaries.</p>
+            <h2 class="section-title">End-to-End Encrypted. Private by design.</h2>
+            <p class="section-sub">Agro is engineered so the server never holds your secrets or listening habits. Every layer enforces strict cryptographic boundaries.</p>
           </div>
           <div class="security-grid">
             <div class="security-card reveal">
+              <div class="security-icon">&#128274;</div>
+              <div class="security-title">Zero-knowledge vault &amp; E2EE</div>
+              <p class="security-desc">Settings and now-playing metadata are sealed client-side before leaving the device. The server stores only encrypted payloads and holds no decryption keys.</p>
+              <div class="security-tag">E2EE &middot; HKDF-SHA256</div>
+            </div>
+            <div class="security-card reveal" style="transition-delay:.08s">
               <div class="security-icon">&#128272;</div>
               <div class="security-title">Strong credential model</div>
               <p class="security-desc">Passphrases use Argon2id hashing to resist dictionary attacks. Device tokens are 256-bit CSPRNG, stored only as SHA-256 hashes.</p>
               <div class="security-tag">Argon2id &middot; SHA-256</div>
             </div>
-            <div class="security-card reveal" style="transition-delay:.08s">
-              <div class="security-icon">&#128274;</div>
-              <div class="security-title">Zero-knowledge vault</div>
-              <p class="security-desc">Settings and now-playing metadata are sealed client-side before leaving the device. The server stores an encrypted payload and holds no decryption key.</p>
-              <div class="security-tag">Client-sealed &middot; HKDF-SHA256</div>
-            </div>
             <div class="security-card reveal" style="transition-delay:.16s">
               <div class="security-icon">&#129514;</div>
-              <div class="security-title">Hardened security boundaries</div>
-              <p class="security-desc">Two automated boundary test suites verify isolation on every commit, guaranteeing that multi-tenant accounts and social links never leak data.</p>
-              <div class="security-tag">cargo test</div>
+              <div class="security-title">Hardened cryptographic boundaries</div>
+              <p class="security-desc">Presence payloads are sealed per recipient public key, and automated boundary test suites verify isolation on every single commit.</p>
+              <div class="security-tag">cargo test &middot; Isolated keys</div>
             </div>
           </div>
         </div>
@@ -530,8 +618,7 @@
             <div class="oss-text reveal">
               <div class="section-label">Open Source</div>
               <h2 class="section-title">AGPL-3.0.<br>All of it.</h2>
-              <p>Agro is given away. The source, the protocol, the dashboard: all of it, under AGPL-3.0. Section 13 is the part that matters for a server: run a modified Agro where other people can reach it, and those people must be offered its source.</p>
-              <p>That is deliberate. <strong>The project is given away; what is sold is running it.</strong> Someone with the skill to self-host was never a customer. Having them run your code, file your bugs, on your protocol, is worth more than a licence fee you would never collect.</p>
+              <p>Agro is given away. The source, the protocol, the dashboard: all of it, under AGPL-3.0.</p>
               <p>Contributions are welcome and require agreement to the <strong>CLA</strong>: one file that preserves the ability to relicense or dual-license later. See <a href="https://github.com/AgroUPlus/Agro/blob/main/CLA.md" target="_blank" rel="noopener" style="color:#a99fff;text-underline-offset:3px;text-decoration:underline">CLA.md</a>.</p>
               <div class="oss-actions">
                 <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-ghost">
@@ -587,11 +674,11 @@ PORT=<span style="color:#10b981">1674</span> AGRO_LIBRARY_ROOT=<span style="colo
                 Agro Cloud
               </div>
               <div class="gs-title">The premier hosted instance</div>
-              <p class="gs-desc">High uptime, effortless to use, and the smartest Agro server connected to the most active devices across the ecosystem.</p>
+              <p class="gs-desc">High uptime, effortless to use, and the smartest Agro server in the network.</p>
               <div class="gs-cloud-detail">
                 <div class="gs-feature-row"><span class="chk">&#10003;</span> High uptime and automatic updates</div>
                 <div class="gs-feature-row"><span class="chk">&#10003;</span> Zero configuration or server maintenance</div>
-                <div class="gs-feature-row"><span class="chk">&#10003;</span> The smartest Agro server (most active devices)</div>
+                <div class="gs-feature-row"><span class="chk">&#10003;</span> The smartest Agro server in the ecosystem</div>
                 <div class="gs-feature-row"><span class="chk">&#10003;</span> Managed share domain on <code style="font-size:12px">kolbxyz.xyz</code></div>
               </div>
               <button class="btn btn-primary" onclick="connectToCloud()" style="align-self:flex-start">
