@@ -28,6 +28,7 @@ mod offers;
 mod passphrase;
 mod plugins;
 mod proxy;
+mod rate_limit;
 mod schema;
 mod schema_catalog;
 mod schema_drops;
@@ -140,6 +141,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // decides which sync mode the clients are told to run in.
         .data(state.storage.clone())
         .data(setup_token.clone())
+        // Per-account ceiling on catalogue publishing. Lives with the schema rather than in
+        // `AppState` because the only thing that spends it is a resolver.
+        .data(schema_catalog::PublishQuota::default())
         // A public endpoint with no depth or complexity limit is a denial-of-service primitive:
         // GraphQL lets one request ask for a deeply nested or heavily aliased tree, and the cost
         // is paid by the server before any resolver decides the caller was not allowed to ask.

@@ -1000,6 +1000,7 @@ const MIGRATIONS: &[&str] = &[
      DROP TABLE IF EXISTS catalog_sub_hashes;
      ALTER TABLE catalog_recordings DROP COLUMN sub_hashes;",
     "ALTER TABLE catalog_recordings ADD COLUMN lyrics TEXT;",
+    "ALTER TABLE catalog_recordings ADD COLUMN lyrics_source TEXT;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
