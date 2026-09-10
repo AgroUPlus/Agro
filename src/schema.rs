@@ -219,10 +219,40 @@ pub struct NodePayload {
     pub petname: String,
     pub client_type: String,
     pub lan_address: Option<String>,
+    /// The *client's* version, as the client reported it. Echoed back, never set here.
     pub version: Option<String>,
     pub current_track: Option<String>,
     pub last_seen_at: String,
     pub is_online: bool,
+    /// This server's version.
+    ///
+    /// Distinct from [`version`], which is whatever the client said about itself. Nothing here
+    /// described the server at all before, so a client had no way to find out what it was talking
+    /// to except by trying something and reading the error.
+    pub server_version: String,
+    /// What this server can do that an older one could not.
+    ///
+    /// Named rather than inferred from [`server_version`]: a client that has to map version
+    /// numbers to features carries a table that goes stale, and a fork or a partial deployment
+    /// makes the mapping wrong anyway. A client looks for the name it needs and falls back when it
+    /// is missing.
+    pub capabilities: Vec<String>,
+}
+
+/// What this build of the server supports, for clients to branch on.
+///
+/// Additive: a name that appears here stays, because a client that learned to rely on it is still
+/// out there. Removing a feature means the name goes and older clients take their fallback path,
+/// which is what the fallback is for.
+pub fn server_capabilities() -> Vec<String> {
+    vec![
+        // The catalogue accepts and returns lyrics alongside the fingerprint.
+        "catalog.lyrics".to_string(),
+        // ...and records what supplied them.
+        "catalog.lyricsSource".to_string(),
+        // `publishRecordings` takes a list, so a client need not spend one request per recording.
+        "catalog.batchPublish".to_string(),
+    ]
 }
 
 #[derive(SimpleObject, Clone)]
@@ -870,6 +900,8 @@ impl QueryRoot {
                 current_track: n.current_track,
                 last_seen_at: n.last_seen_at,
                 is_online,
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                capabilities: server_capabilities(),
             }
         }).collect();
         Ok(payload)
@@ -1501,6 +1533,8 @@ impl MutationRoot {
             current_track,
             last_seen_at: chrono::Utc::now().to_rfc3339(),
             is_online: true,
+            server_version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: server_capabilities(),
         };
 
         if let Ok(ws_hub) = ctx.data::<Arc<WsHub>>() {

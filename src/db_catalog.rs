@@ -59,6 +59,11 @@ pub struct CatalogRecording {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub lyrics: Option<String>,
+    /// Where the lyrics came from — `LRCLIB`, `Native`, whatever the publishing client called it.
+    ///
+    /// Null on every row written before this column existed, and null whenever [`lyrics`] is: it
+    /// describes the text and cannot be reconstructed without it.
+    pub lyrics_source: Option<String>,
     pub updated_at: i64,
 }
 
@@ -76,6 +81,8 @@ pub struct PublishedRecording {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub lyrics: Option<String>,
+    /// What the publishing client says supplied [`lyrics`]. Ignored when there are none.
+    pub lyrics_source: Option<String>,
     /// The namespaced id this client knows the audio by — `ytm:…`, `navidrome:…`.
     ///
     /// Never a `local:` id: those are filesystem paths from somebody's phone, and this column is
@@ -169,14 +176,27 @@ impl Db {
                 // usually had tags worth having; a later one may be the source with none.
                 let conn = self.conn.lock().unwrap();
                 conn.execute(
+                    // `lyrics_source` is filled in only alongside the lyrics it describes: a row
+                    // that already holds text keeps the attribution that came with it, and a row
+                    // that gains text now gains this client's attribution with it.
                     "UPDATE catalog_recordings SET
-                         title      = COALESCE(title, ?2),
-                         artist     = COALESCE(artist, ?3),
-                         album      = COALESCE(album, ?4),
-                         lyrics     = COALESCE(lyrics, ?5),
-                         updated_at = ?6
+                         title         = COALESCE(title, ?2),
+                         artist        = COALESCE(artist, ?3),
+                         album         = COALESCE(album, ?4),
+                         lyrics_source = CASE WHEN lyrics IS NULL AND ?5 IS NOT NULL
+                                              THEN ?6 ELSE lyrics_source END,
+                         lyrics        = COALESCE(lyrics, ?5),
+                         updated_at    = ?7
                      WHERE recording_id = ?1",
-                    params![id, published.title, published.artist, published.album, published.lyrics, now],
+                    params![
+                        id,
+                        published.title,
+                        published.artist,
+                        published.album,
+                        published.lyrics,
+                        published.lyrics_source,
+                        now
+                    ],
                 )?;
                 id
             }
@@ -186,8 +206,9 @@ impl Db {
                 let conn = self.conn.lock().unwrap();
                 conn.execute(
                     "INSERT INTO catalog_recordings
-                         (recording_id, duration_ms, title, artist, album, lyrics, updated_at)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                         (recording_id, duration_ms, title, artist, album, lyrics, lyrics_source,
+                          updated_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                     params![
                         id,
                         published.duration_ms,
@@ -195,6 +216,7 @@ impl Db {
                         published.artist,
                         published.album,
                         published.lyrics,
+                        published.lyrics.as_ref().and(published.lyrics_source.as_ref()),
                         now
                     ],
                 )?;
@@ -319,7 +341,8 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT r.recording_id, e.embedding, e.dim, e.model, e.version,
-                    r.duration_ms, r.title, r.artist, r.album, r.lyrics, r.updated_at
+                    r.duration_ms, r.title, r.artist, r.album, r.lyrics, r.lyrics_source,
+                    r.updated_at
              FROM catalog_recordings r
              JOIN catalog_embeddings e ON e.recording_id = r.recording_id
              WHERE r.updated_at > ?1
@@ -338,7 +361,8 @@ impl Db {
                 artist: row.get(7)?,
                 album: row.get(8)?,
                 lyrics: row.get(9)?,
-                updated_at: row.get(10)?,
+                lyrics_source: row.get(10)?,
+                updated_at: row.get(11)?,
             })
         })?;
         rows.collect()
@@ -454,6 +478,7 @@ mod tests {
             artist: Some("An Artist".to_string()),
             album: None,
             lyrics: None,
+            lyrics_source: None,
             source_uri: Some(source.to_string()),
         }
     }
@@ -581,6 +606,7 @@ mod tests {
                 artist: None,
                 album: None,
                 lyrics: None,
+                lyrics_source: None,
                 source_uri: Some("ytm:empty".to_string()),
             })
             .unwrap();
