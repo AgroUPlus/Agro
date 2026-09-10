@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use crate::db_identity::{AccountState, Role};
 use crate::passphrase::generate_passphrase;
+use crate::rate_limit::FixedWindow;
 use crate::AppState;
 
 /// Names which step of a login an answer belongs to.
@@ -84,9 +85,9 @@ const FAILURE_MEMORY: Duration = Duration::from_secs(900);
 /// becomes the enumeration oracle that [`login`] refuses to be in every other respect.
 #[derive(Default)]
 pub struct RateLimiter {
-    hits: Mutex<HashMap<String, (Instant, usize)>>,
+    hits: FixedWindow,
     /// Second-factor attempts, kept apart from [`hits`]. See [`MAX_SECOND_FACTOR_ATTEMPTS`].
-    second_factor_hits: Mutex<HashMap<String, (Instant, usize)>>,
+    second_factor_hits: FixedWindow,
     failures: Mutex<HashMap<String, (Instant, u32)>>,
 }
 
@@ -143,35 +144,13 @@ impl RateLimiter {
     /// from anywhere, which is the lockout weapon `backoff_for` is written to avoid.
     fn allow_second_factor(&self, client_ip: &str, account: &str) -> bool {
         let key = format!("{client_ip}|{}", account.to_ascii_lowercase());
-        let mut hits = self.second_factor_hits.lock().unwrap();
-        let now = Instant::now();
-        if hits.len() > 4096 {
-            hits.retain(|_, (started, _)| now.duration_since(*started) < WINDOW);
-        }
-        let entry = hits.entry(key).or_insert((now, 0));
-        if now.duration_since(entry.0) >= WINDOW {
-            *entry = (now, 0);
-        }
-        entry.1 += 1;
-        entry.1 <= MAX_SECOND_FACTOR_ATTEMPTS
+        self.second_factor_hits
+            .charge(&key, 1, MAX_SECOND_FACTOR_ATTEMPTS, WINDOW)
     }
 
     /// Records an attempt and reports whether it is allowed.
     fn allow(&self, key: &str) -> bool {
-        let mut hits = self.hits.lock().unwrap();
-        let now = Instant::now();
-
-        // Opportunistic sweep, so the map cannot grow without bound on a server being scanned.
-        if hits.len() > 4096 {
-            hits.retain(|_, (started, _)| now.duration_since(*started) < WINDOW);
-        }
-
-        let entry = hits.entry(key.to_string()).or_insert((now, 0));
-        if now.duration_since(entry.0) >= WINDOW {
-            *entry = (now, 0);
-        }
-        entry.1 += 1;
-        entry.1 <= MAX_ATTEMPTS
+        self.hits.charge(key, 1, MAX_ATTEMPTS, WINDOW)
     }
 }
 
