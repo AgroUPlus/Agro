@@ -1001,6 +1001,63 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE catalog_recordings DROP COLUMN sub_hashes;",
     "ALTER TABLE catalog_recordings ADD COLUMN lyrics TEXT;",
     "ALTER TABLE catalog_recordings ADD COLUMN lyrics_source TEXT;",
+    // 47 — artists become rows, so that something can be subscribed to.
+    //
+    // `catalog_recordings.artist` is free text copied off whatever tagged the file. There is no
+    // identity in it: "Tyler, The Creator" and "tyler the creator" are two strings and the same
+    // person, and a subscription keyed on either one misses every release filed under the other.
+    //
+    // `norm_name` is the identity and carries the UNIQUE. It holds the same normalisation
+    // `norm::normalize_artist` applies — case folded, punctuation and articles stripped — which is
+    // already what the library matcher uses to decide two tags mean one artist. `display_name` is
+    // the first spelling seen, kept only to have something to print.
+    //
+    // The backfill below is deliberately done in SQL rather than by reading every row into Rust:
+    // it runs inside the migration's transaction, so a database either gains the whole artist
+    // table or none of it. It can only apply the cheap half of the normalisation — lowercase and
+    // trim — because SQLite has no access to `normalize_artist`. That is the conservative
+    // direction to be wrong in: two spellings that the Rust normaliser would have merged stay
+    // separate rows until one of them is published again, and `upsert_artist` merges them then.
+    // The opposite mistake, collapsing two artists who are not the same, cannot be undone.
+    "CREATE TABLE IF NOT EXISTS artists (
+         artist_id    TEXT PRIMARY KEY,
+         norm_name    TEXT NOT NULL UNIQUE,
+         display_name TEXT NOT NULL,
+         external_id  TEXT,
+         created_at   INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_artists_external ON artists(external_id);
+
+     ALTER TABLE catalog_recordings ADD COLUMN artist_id TEXT;
+
+     INSERT OR IGNORE INTO artists (artist_id, norm_name, display_name, external_id, created_at)
+     SELECT
+         lower(hex(randomblob(16))),
+         lower(trim(artist)),
+         min(artist),
+         NULL,
+         strftime('%s', 'now')
+     FROM catalog_recordings
+     WHERE artist IS NOT NULL AND trim(artist) <> ''
+     GROUP BY lower(trim(artist));
+
+     UPDATE catalog_recordings
+        SET artist_id = (
+            SELECT a.artist_id FROM artists a WHERE a.norm_name = lower(trim(catalog_recordings.artist))
+        )
+      WHERE artist IS NOT NULL AND trim(artist) <> '';
+
+     CREATE INDEX IF NOT EXISTS idx_catalog_recordings_artist
+         ON catalog_recordings(artist_id, updated_at);
+
+     CREATE TABLE IF NOT EXISTS artist_subscriptions (
+         user_id    TEXT NOT NULL,
+         artist_id  TEXT NOT NULL,
+         since_at   INTEGER NOT NULL,
+         PRIMARY KEY (user_id, artist_id)
+     );
+     CREATE INDEX IF NOT EXISTS idx_artist_subscriptions_artist
+         ON artist_subscriptions(artist_id);",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -3465,6 +3522,11 @@ mod migration_order_tests {
         "137eac22d9cf2270",
         "32e9dd64f1769710",
         "873725f41d4130d2",
+        // The two lyrics columns shipped without a line here, which left them unpinned: an entry
+        // inserted before either of them would have renumbered it with nothing to notice.
+        "1d4f6a273e4bcf5b",
+        "d5bc8bb460c3e9c5",
+        "549e6b2be0e83b04",
     ];
 
     fn digest(migration: &str) -> String {

@@ -253,6 +253,26 @@ impl Db {
             }
         }
 
+        // Joined to an artist row here rather than when somebody asks. A recording published while
+        // nobody was subscribed would otherwise never belong to an artist at all, and so would be
+        // invisible to a subscriber who arrived a minute later — which is most of them.
+        //
+        // The name is read back from the row rather than taken from `published`: on a match the
+        // metadata was filled in with `COALESCE`, so the artist that stuck may be the one an
+        // earlier client supplied and this one left null.
+        let artist: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT artist FROM catalog_recordings WHERE recording_id = ?1",
+                params![recording_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        self.link_recording_artist(&recording_id, artist.as_deref())?;
+
         Ok(recording_id)
     }
 

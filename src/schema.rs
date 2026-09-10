@@ -22,6 +22,7 @@ pub struct Query(
     crate::schema_drops::DropsQuery,
     crate::schema_playlists::PlaylistsQuery,
     crate::schema_catalog::CatalogQuery,
+    crate::schema_artists::ArtistQuery,
     crate::schema_popularity::PopularityQuery,
     crate::schema_acoustic::AcousticQuery,
 );
@@ -34,6 +35,7 @@ pub struct Mutation(
     crate::schema_drops::DropsMutation,
     crate::schema_playlists::PlaylistsMutation,
     crate::schema_catalog::CatalogMutation,
+    crate::schema_artists::ArtistMutation,
     crate::schema_popularity::PopularityMutation,
     crate::schema_acoustic::AcousticMutation,
 );
@@ -50,7 +52,7 @@ pub type AgroSchema = Schema<Query, Mutation, async_graphql::EmptySubscription>;
 /// **Fails closed.** This used to return `Ok` when there was no authenticated identity at all, to
 /// leave room for a first-run window in the middleware. Both halves of that are gone: setup now
 /// needs a token the operator reads from the log, and no identity means no.
-fn authorize(ctx: &Context<'_>, user_id: &str) -> async_graphql::Result<()> {
+pub(crate) fn authorize(ctx: &Context<'_>, user_id: &str) -> async_graphql::Result<()> {
     let authed = caller(ctx)?;
     if authed.username().eq_ignore_ascii_case(user_id.trim()) {
         Ok(())
