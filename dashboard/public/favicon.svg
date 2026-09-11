@@ -1,80 +1,23 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Agro's mark: a horse, in Wanda's clothes.
-
-  The two are one product from opposite ends — the player and the server it syncs to — so this
-  borrows Wanda's launcher identity exactly: the violet-to-teal diagonal from the app's
-  `ui/theme/Color.kt` (#7C6BFF → #5A63E8 → #00A3A3) under a single bold white motif with round
-  joins. Where Wanda draws a wave, Agro draws the horse it is named for.
-
-  A filled silhouette rather than a stroked outline, because a stroke thin enough to look right at
-  full size closes up at 16px — which is the size a favicon is actually seen at. The ears and the
-  throat go first, so both are cut deliberately wide.
-
-  The 108 viewBox is Wanda's launcher canvas, kept so the two can be held side by side without
-  rescaling. Unlike the launcher there is no system mask here, so the rounded square is drawn.
-
-  This replaces a 9 KB export of blurred ellipses behind an alpha mask, in `color(display-p3 …)`
-  fills: someone else's logo, and mush at tab size.
--->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
-  <defs>
-    <linearGradient id="agro-ground" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7C6BFF"/>
-      <stop offset="0.5" stop-color="#5A63E8"/>
-      <stop offset="1" stop-color="#00A3A3"/>
-    </linearGradient>
-  </defs>
+  <!-- M3 Expressive squircle background — primary container purple -->
+  <rect width="108" height="108" rx="36" fill="#D0BCFF"/>
 
-  <rect width="108" height="108" rx="24" fill="url(#agro-ground)"/>
-
-  <!--
-    A chess knight, facing left.
-
-    The knight is the most legible horse there is at 16px, which is what settled the form after
-    three vaguer attempts: a level head read as a dog, a rectangular neck read as a plinth, and a
-    single centred ear read as a horn. What carries it here is the combination of a long flat-topped
-    muzzle, a jaw that steps back sharply, an ear swept *back* rather than standing up, and a mane
-    ridge down the crest.
-
-    Traced from the chin: forward along the underside of the muzzle, up its blunt front, back along
-    the nose to the brow, out to the ear, down the maned crest, across the base, then up the throat.
-  -->
+  <!-- Horse silhouette in on-primary-container tone -->
   <path
-    fill="#FFFFFF"
-    stroke="#FFFFFF"
-    stroke-width="2"
-    stroke-linejoin="round"
-    stroke-linecap="round"
-    d="M16 63
-       C16 57 19 53 25 51
-       L38 47
-       C44 45 48 41 51 34
-       C52 31 54 29 57 29
-       L58 15
-       C58 11 63 10 65 14
-       L71 28
-       C79 31 85 38 87 48
-       C89 60 86 71 81 79
-       C79 83 77 86 76 88
-       L48 88
-       C48 79 45 73 39 70
-       C33 67 27 68 22 70
-       C18 71 16 68 16 63 Z"/>
+    d="M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z"
+    fill="#381E72"
+  />
 
-  <!--
-    The mane, as three notches cut out of the crest in the ground colour. A silhouette this smooth
-    could be any long-necked animal; the notches are what name it.
-  -->
+  <!-- Mane notches in background colour -->
   <path
-    fill="#5A63E8"
-    d="M69 33 C74 35 78 39 80 45 L73 47 C71 41 69 37 69 33 Z
-       M81 52 C82 57 82 62 81 67 L74 65 C75 60 75 56 74 52 Z
-       M79 73 C78 77 76 81 74 85 L68 82 C70 78 71 74 72 71 Z"/>
+    d="M69 33C74 35 78 39 80 45L73 47C71 41 69 37 69 33ZM81 52C82 57 82 62 81 67L74 65C75 60 75 56 74 52ZM79 73C78 77 76 81 74 85L68 82C70 78 71 74 72 71Z"
+    fill="#D0BCFF"
+    opacity="0.85"
+  />
 
-  <!-- Punched in the ground colour rather than drawn dark, so it reads as a hole when scaled down. -->
-  <circle cx="54" cy="45" r="3.4" fill="#5A63E8"/>
+  <!-- Eye — punched in background colour so it reads at small sizes -->
+  <circle cx="54" cy="45" r="3.4" fill="#D0BCFF"/>
 
-  <!-- The nostril: the one detail that settles "horse" over "dog" at medium size. -->
-  <circle cx="24" cy="59" r="2" fill="#5A63E8"/>
+  <!-- Nostril — settles "horse" vs "dog" at medium size -->
+  <circle cx="24" cy="59" r="2" fill="#D0BCFF"/>
 </svg>
