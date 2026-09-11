@@ -3,6 +3,7 @@ import { Copy, Check, ArrowLeft, Loader2, KeyRound, ShieldCheck } from 'lucide-r
 import { login, ssoConfig, TotpRequiredError } from './api.js';
 import Field from './components/form/Field.jsx';
 import TextInput from './components/form/TextInput.jsx';
+import AgroLogo from './components/AgroLogo.jsx';
 
 /**
  * The whole of the signed-out experience: signing in, and creating an account.
@@ -268,7 +269,10 @@ function AuthShell({ subtitle, children }) {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-brand">Agro</div>
+        <div className="auth-brand">
+          <AgroLogo size={52} />
+          <span>Agro</span>
+        </div>
         <p className="auth-subtitle">{subtitle}</p>
         {children}
       </div>

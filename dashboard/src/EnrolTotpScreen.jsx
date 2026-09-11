@@ -4,6 +4,7 @@ import { Shield, Check, KeyRound, Loader2 } from 'lucide-react';
 import { gql, setToken } from './api.js';
 import Field from './components/form/Field.jsx';
 import TextInput from './components/form/TextInput.jsx';
+import AgroLogo from './components/AgroLogo.jsx';
 
 const BEGIN = `mutation { beginTotp { otpauthUri secretBase32 } }`;
 const CONFIRM = `mutation Confirm($code: String!) {
@@ -169,7 +170,10 @@ function Shell({ title, children }) {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="auth-brand"><KeyRound size={18} /> Agro</div>
+        <div className="auth-brand">
+          <AgroLogo size={52} />
+          <span>Agro</span>
+        </div>
         <p className="auth-subtitle">{title}</p>
         {children}
       </div>

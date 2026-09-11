@@ -12,6 +12,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import Avatar from '../Avatar.jsx';
+import AgroLogo from './AgroLogo.jsx';
 
 export const NAV_ITEMS = [
   { id: 'social', label: 'Social', icon: Activity },
@@ -37,7 +38,10 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">Agro</div>
+      <div className="sidebar-brand">
+        <AgroLogo size={30} />
+        <span>Agro</span>
+      </div>
 
       <nav className="sidebar-nav">
         {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
