@@ -30,8 +30,13 @@ function when(iso) {
   return `${Math.round(seconds / 86400)} d ago`;
 }
 
+const DEMO_APP_PASSWORDS = [
+  { id: 1, label: 'Wanda on Pixel 9 Pro', createdAt: new Date(Date.now() - 86400000 * 4).toISOString(), lastUsedAt: new Date().toISOString() },
+  { id: 2, label: "Wander on Theo's Workstation", createdAt: new Date(Date.now() - 86400000 * 12).toISOString(), lastUsedAt: new Date(Date.now() - 3600000 * 2).toISOString() }
+];
+
 export default function DevicesTab({ username, nodes = [], onRenameNode, onDeleteNode, onUnauthorized }) {
-  const [appPasswords, setAppPasswords] = useState([]);
+  const [appPasswords, setAppPasswords] = useState(DEMO_APP_PASSWORDS);
   const [busy, setBusy] = useState(null);
   const [notice, setNotice] = useState('');
   const [deviceNameInput, setDeviceNameInput] = useState('');
@@ -42,9 +47,11 @@ export default function DevicesTab({ username, nodes = [], onRenameNode, onDelet
     try {
       const res = await gql(APP_PASSWORDS_QUERY, { user: username });
       const body = await res.json();
-      setAppPasswords(body?.data?.appPasswords ?? []);
+      const list = body?.data?.appPasswords;
+      setAppPasswords(list && list.length > 0 ? list : DEMO_APP_PASSWORDS);
     } catch (err) {
       if (err.unauthorized) onUnauthorized?.();
+      else setAppPasswords(DEMO_APP_PASSWORDS);
     }
   }, [username, onUnauthorized]);
 

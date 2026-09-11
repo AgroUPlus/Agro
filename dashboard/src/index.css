@@ -1353,6 +1353,10 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+  background:
+    radial-gradient(750px circle at 50% -80px, rgba(208, 188, 255, 0.07), transparent 70%),
+    var(--bg-app);
 }
 
 .page-header {
@@ -1371,10 +1375,22 @@ input:checked + .slider:before {
 .page-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-lg) var(--space-xl) var(--space-xl);
+  padding: var(--space-lg) var(--space-xl) calc(var(--now-bar-height) + 32px);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  animation: tabFadeIn 0.2s ease-out;
+}
+
+@keyframes tabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Now playing bar ───────────────────────────────────────────────────────────────────────── */
@@ -1621,6 +1637,12 @@ input:checked + .slider:before {
   animation: pulseEqualizer 1.2s ease-in-out infinite alternate;
 }
 
+.audio-pulse-indicator.is-paused .wave-bar {
+  animation: none;
+  height: 4px !important;
+  opacity: 0.4;
+}
+
 .audio-pulse-indicator.is-playing .bar-1 { animation-delay: 0.1s; }
 .audio-pulse-indicator.is-playing .bar-2 { animation-delay: 0.4s; }
 .audio-pulse-indicator.is-playing .bar-3 { animation-delay: 0.2s; }
@@ -1674,13 +1696,46 @@ input:checked + .slider:before {
 
 .now-bar-center {
   flex: 1;
-  max-width: 480px;
+  max-width: 520px;
   display: flex;
+  align-items: center;
+  gap: 14px;
   justify-content: center;
 }
 
+.now-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.now-bar-play-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(208, 188, 255, 0.35);
+  transition: transform 0.15s var(--m3-spring-fast), background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.now-bar-play-btn:hover {
+  transform: scale(1.08);
+  background: #E8DEF8;
+}
+
+.now-bar-play-btn:active {
+  transform: scale(0.94);
+}
+
 .now-bar-progress-container {
-  width: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1701,6 +1756,15 @@ input:checked + .slider:before {
   border-radius: var(--radius-pill);
   overflow: hidden;
   position: relative;
+  transition: height 0.15s ease;
+}
+
+.now-bar-progress-track.interactive {
+  cursor: pointer;
+}
+
+.now-bar-progress-track.interactive:hover {
+  height: 7px;
 }
 
 .now-bar-progress-fill {
@@ -1709,6 +1773,32 @@ input:checked + .slider:before {
   border-radius: var(--radius-pill);
   box-shadow: 0 0 10px rgba(208, 188, 255, 0.6);
   transition: width 0.1s linear;
+}
+
+.device-indicator-pill.interactive {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.device-indicator-pill.interactive:hover {
+  border-color: rgba(208, 188, 255, 0.4);
+  background: var(--md-sys-color-surface-container-high);
+}
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: var(--md-sys-color-background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--md-sys-color-outline);
 }
 
 .now-bar-meta-right {

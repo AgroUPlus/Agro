@@ -146,6 +146,30 @@ export default function App() {
     }
   };
 
+  const handleTogglePlay = () => {
+    setLastHandoff((prev) => ({
+      ...prev,
+      isPlaying: !prev.isPlaying
+    }));
+  };
+
+  const handleSeek = (posMs) => {
+    setLastHandoff((prev) => ({
+      ...prev,
+      positionMs: posMs
+    }));
+  };
+
+  const handleSwitchDevice = () => {
+    if (!nodes.length) return;
+    const currentIndex = nodes.findIndex((n) => n.deviceId === lastHandoff.deviceId);
+    const nextIndex = (currentIndex + 1) % nodes.length;
+    setLastHandoff((prev) => ({
+      ...prev,
+      deviceId: nodes[nextIndex].deviceId
+    }));
+  };
+
   const poll = useCallback(async () => {
     if (!getToken()) return;
     try {
@@ -287,7 +311,13 @@ export default function App() {
         </div>
       </main>
 
-      <NowBar lastHandoff={lastHandoff} nodes={nodes} />
+      <NowBar
+        lastHandoff={lastHandoff}
+        nodes={nodes}
+        onTogglePlay={handleTogglePlay}
+        onSeek={handleSeek}
+        onSwitchDevice={handleSwitchDevice}
+      />
     </div>
   );
 }
