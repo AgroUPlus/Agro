@@ -27,7 +27,7 @@
           </a>
           <nav class="nav-links">
             <a href="#cascade-showcase" class="nav-link">Overview</a>
-            <a href="#features" class="nav-link">Features</a>
+            <a href="#capabilities" class="nav-link">Capabilities</a>
             <a href="#security" class="nav-link">Security</a>
             <a href="#getstarted" class="nav-link">Get Started</a>
           </nav>
@@ -56,10 +56,29 @@
                   <span class="material-symbols-rounded">login</span>
                   Connect to instance
                 </button>
-                <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-outlined">
-                  <span class="material-symbols-rounded">terminal</span>
-                  View on GitHub
-                </a>
+                <div class="menu-anchor" id="download-menu">
+                  <button class="btn btn-tonal" aria-haspopup="true" aria-expanded="false" onclick="toggleDownloads(event)">
+                    <span class="material-symbols-rounded">download</span>
+                    Download
+                    <span class="material-symbols-rounded menu-caret">expand_more</span>
+                  </button>
+                  <div class="menu-sheet" role="menu">
+                    <a href="https://github.com/AgroUPlus/Wanda/releases/latest" target="_blank" rel="noopener" class="menu-item" role="menuitem">
+                      <span class="material-symbols-rounded">android</span>
+                      <span>
+                        <span class="menu-item-title">Wanda</span>
+                        <span class="menu-item-sub">Android client</span>
+                      </span>
+                    </a>
+                    <a href="https://github.com/Kolbxyz/Wander/releases/latest" target="_blank" rel="noopener" class="menu-item" role="menuitem">
+                      <span class="material-symbols-rounded">terminal</span>
+                      <span>
+                        <span class="menu-item-title">Wander</span>
+                        <span class="menu-item-sub">Desktop terminal client</span>
+                      </span>
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -126,101 +145,91 @@
         </div>
       </section>
 
-      <!-- Architecture Block -->
-      <section id="what">
-        <div class="container">
-          <div class="what-grid">
-            <div class="what-text">
-              <span class="section-badge">
-                <span class="material-symbols-rounded" style="font-size:18px;">architecture</span>
-                Architecture
-              </span>
-              <h2 class="section-title">A unified self-hosted music ecosystem.</h2>
-              <p>Agro bridges your music life across all devices without big tech snooping, telemetry, or walled gardens.</p>
-              <p><strong>Playback handoff:</strong> Transfer active queues, playback progress, and seek positions seamlessly between phone and computer.</p>
-              <p><strong>Private social listening:</strong> Share live now-playing presence with friends via direct recipient-key encryption.</p>
-              <p><strong>Direct spool relay:</strong> Peer-to-peer file staging with zero server decoding.</p>
-            </div>
-            
-            <div class="what-diagram">
-              <div class="diagram-nodes">
-                <div class="diag-node">
-                  <div class="blob-icon blob-1"><span class="material-symbols-rounded">smartphone</span></div>
-                  <div style="font-size:13px;font-weight:800;margin-top:8px;">Wanda<br><span style="color:var(--md-sys-color-outline);font-size:11px;font-weight:500;">Android</span></div>
-                </div>
-                <div class="diag-arrow">
-                  <div class="diag-arrow-line"></div>
-                  <div class="diag-arrow-label">GraphQL</div>
-                </div>
-                <div class="diag-node">
-                  <div class="blob-icon blob-center"><span class="material-symbols-rounded">dns</span></div>
-                  <div style="font-size:13px;font-weight:900;color:var(--md-sys-color-primary);margin-top:8px;">Agro<br><span style="color:var(--md-sys-color-outline);font-size:11px;font-weight:500;">Core</span></div>
-                </div>
-                <div class="diag-arrow">
-                  <div class="diag-arrow-line"></div>
-                  <div class="diag-arrow-label">WebSockets</div>
-                </div>
-                <div class="diag-node">
-                  <div class="blob-icon blob-2"><span class="material-symbols-rounded">terminal</span></div>
-                  <div style="font-size:13px;font-weight:800;margin-top:8px;">Wander<br><span style="color:var(--md-sys-color-outline);font-size:11px;font-weight:500;">Linux TUI</span></div>
-                </div>
-              </div>
-              <div class="diag-tags">
-                <span class="m3-tag">HANDOFF</span>
-                <span class="m3-tag">LISTEN_ALONG</span>
-                <span class="m3-tag">FRIEND_PRESENCE</span>
-                <span class="m3-tag">LIBRARY_RELAY</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Features -->
-      <section id="features">
+      <!-- Capabilities Section -->
+      <section id="capabilities">
         <div class="container">
           <span class="section-badge">
             <span class="material-symbols-rounded" style="font-size:18px;">auto_awesome</span>
-            Features
+            Capabilities
           </span>
-          <h2 class="section-title">Complete control over your music experience</h2>
-          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px;">Built for listeners who care about quality, privacy, and full autonomy.</p>
+          <h2 class="section-title">Built for every side of your listening</h2>
+          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px; margin-bottom: 40px;">Agro bridges your music life across all devices without big tech snooping, telemetry, or walled gardens.</p>
 
-          <div class="features-grid">
-            <div class="feature-card card-shape-1">
-              <div class="feature-icon-badge bg-purple">
-                <span class="material-symbols-rounded">sync_alt</span>
+          <div class="promo-grid">
+            <!-- Playback Handoff -->
+            <div class="promo-card">
+              <div class="promo-img-wrapper">
+                <img src="./assets/mockups/promo-agro-flagship.jpg" alt="Playback moving between Wanda and Wander" />
               </div>
-              <div class="feature-title">Playback Handoff</div>
-              <div class="feature-lead">Continuous playback across your desktop and mobile devices without missing a single beat.</div>
-              <ul class="feature-bullets">
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Instant queue &amp; position sync</span></li>
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Zero lag between phone and laptop</span></li>
-              </ul>
+              <div class="promo-info">
+                <div class="promo-badge bg-violet">
+                  <span class="material-symbols-rounded">sync_alt</span>
+                  <span>Cross-device</span>
+                </div>
+                <h3 class="promo-title">Playback Handoff</h3>
+                <p class="promo-desc">Transfer active queues, playback progress, and seek positions between phone and computer in real time, without missing a single beat.</p>
+                <ul class="feature-bullets">
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Instant queue &amp; position sync</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Zero lag between phone and laptop</span></li>
+                </ul>
+              </div>
             </div>
 
-            <div class="feature-card card-shape-2">
-              <div class="feature-icon-badge bg-mint">
-                <span class="material-symbols-rounded">group</span>
+            <!-- Social Jam -->
+            <div class="promo-card">
+              <div class="promo-img-wrapper">
+                <img src="./assets/mockups/promo-agro-jam-social.jpg" alt="Social Jam Session" />
               </div>
-              <div class="feature-title">Social &amp; Listen-Along</div>
-              <div class="feature-lead">Connect with friends and listen together in real time with absolute cryptographic privacy.</div>
-              <ul class="feature-bullets">
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Presence feeds sealed with E2EE</span></li>
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>No centralized party room surveillance</span></li>
-              </ul>
+              <div class="promo-info">
+                <div class="promo-badge bg-magenta">
+                  <span class="material-symbols-rounded">group</span>
+                  <span>Social Listening</span>
+                </div>
+                <h3 class="promo-title">Live Jam Sessions &amp; Presence</h3>
+                <p class="promo-desc">Listen together in real time. Agro coordinates active queues, seek positions, and recipient-encrypted presence without any central server eavesdropping.</p>
+                <ul class="feature-bullets">
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Presence feeds sealed with E2EE</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>No centralized party room surveillance</span></li>
+                </ul>
+              </div>
             </div>
 
-            <div class="feature-card card-shape-3">
-              <div class="feature-icon-badge bg-peach">
-                <span class="material-symbols-rounded">cloud_sync</span>
+            <!-- Discovery Tools -->
+            <div class="promo-card">
+              <div class="promo-img-wrapper">
+                <img src="./assets/mockups/promo-wanda-discovery-tools.jpg" alt="Music Recognition & Discovery Tools" />
               </div>
-              <div class="feature-title">Library Relay &amp; Spool</div>
-              <div class="feature-lead">Direct peer-to-peer file transfers and background staging for media libraries.</div>
-              <ul class="feature-bullets">
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Resumable peer transfers</span></li>
-                <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Automated cache eviction budget</span></li>
-              </ul>
+              <div class="promo-info">
+                <div class="promo-badge bg-cyan">
+                  <span class="material-symbols-rounded">travel_explore</span>
+                  <span>Smart Tools</span>
+                </div>
+                <h3 class="promo-title">Audio Recognition, Lyrics &amp; Import</h3>
+                <p class="promo-desc">Hear something playing in the real world? Wanda identifies tracks on-device via ACR acoustic fingerprinting, fetches synchronized lyrics from LRCLIB, and imports entire playlists seamlessly.</p>
+                <ul class="feature-bullets">
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>On-device acoustic fingerprinting</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Synced lyrics &amp; playlist import</span></li>
+                </ul>
+              </div>
+            </div>
+
+            <!-- Library & Insights -->
+            <div class="promo-card">
+              <div class="promo-img-wrapper">
+                <img src="./assets/mockups/promo-wanda-cascade.jpg" alt="Listening stats, artist pages and daily mixes" />
+              </div>
+              <div class="promo-info">
+                <div class="promo-badge bg-teal">
+                  <span class="material-symbols-rounded">cloud_sync</span>
+                  <span>Library &amp; Insights</span>
+                </div>
+                <h3 class="promo-title">Your Library, Everywhere</h3>
+                <p class="promo-desc">Local files, Navidrome/Subsonic and stream sources behave as one library. Direct peer-to-peer relay stages media between your own devices, and every statistic is computed on-device with local SQLite.</p>
+                <ul class="feature-bullets">
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Resumable peer transfers &amp; cache budget</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Stats stay local, never uploaded</span></li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
@@ -262,6 +271,8 @@
             Deployment
           </span>
           <h2 class="section-title">Two ways in</h2>
+          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px; max-width:640px;">Run the binary yourself, or sign in to the hosted instance. Either way the clients, keys and libraries behave identically.</p>
+
           <div class="getstarted-grid">
             <div class="gs-card">
               <span class="gs-pill lemon">Self-host binary</span>
@@ -315,9 +326,9 @@ PORT=<span class="val">1674</span> AGRO_LIBRARY_ROOT=<span class="val">/srv/musi
               <div class="footer-col-title">Ecosystem</div>
               <ul class="footer-col-links">
                 <li><a href="https://agro.kolbxyz.xyz" target="_blank" rel="noopener">Agro Cloud &rarr;</a></li>
-                <li><a href="#features">Playback Handoff</a></li>
-                <li><a href="#features">Social &amp; Listen-Along</a></li>
-                <li><a href="#features">Library Relay</a></li>
+                <li><a href="#capabilities">Playback Handoff</a></li>
+                <li><a href="#capabilities">Social &amp; Listen-Along</a></li>
+                <li><a href="#capabilities">Library Relay</a></li>
               </ul>
             </div>
 
@@ -381,6 +392,24 @@ PORT=<span class="val">1674</span> AGRO_LIBRARY_ROOT=<span class="val">/srv/musi
           navbarWrapper.classList.remove('scrolled');
         }
       }, { passive: true });
+
+      const downloadMenu = document.getElementById('download-menu');
+      const downloadTrigger = downloadMenu.querySelector('button');
+
+      function setDownloads(open) {
+        downloadMenu.classList.toggle('open', open);
+        downloadTrigger.setAttribute('aria-expanded', String(open));
+      }
+      function toggleDownloads(e) {
+        e.stopPropagation();
+        setDownloads(!downloadMenu.classList.contains('open'));
+      }
+      document.addEventListener('click', (e) => {
+        if (!downloadMenu.contains(e.target)) setDownloads(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setDownloads(false);
+      });
 
       const backdrop = document.getElementById('modal-backdrop');
       const input = document.getElementById('instance-input');
