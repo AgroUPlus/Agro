@@ -123,9 +123,6 @@ export default function NowBar({ lastHandoff, nodes = [] }) {
         {isEncrypted && (
           <span className="quality-pill" style={{ background: '#3b82f6', color: '#fff' }}>E2EE</span>
         )}
-        {isPlaying && (
-          <span className="quality-pill">LOSSLESS</span>
-        )}
         <div className="device-indicator-pill">
           {isMobile ? <Smartphone size={12} /> : <Terminal size={12} />}
           <span>{devicePetname}</span>

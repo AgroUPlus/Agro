@@ -6,12 +6,12 @@ import {
   BarChart3,
   Link2 as LinkIcon,
   Settings,
-  UserPlus,
-  Layers,
-  ScrollText,
+  ShieldCheck,
+  LogOut,
   ChevronDown
 } from 'lucide-react';
 import Avatar from '../Avatar.jsx';
+import AgroLogo from './AgroLogo.jsx';
 
 export const NAV_ITEMS = [
   { id: 'social', label: 'Social', icon: Activity },
@@ -19,10 +19,12 @@ export const NAV_ITEMS = [
   { id: 'stats', label: 'Stats', icon: BarChart3 },
   { id: 'library', label: 'Library', icon: Library },
   { id: 'links', label: 'Links', icon: LinkIcon },
-  { id: 'settings', label: 'Settings', icon: Settings },
-  { id: 'people', label: 'People', icon: UserPlus, adminOnly: true },
-  { id: 'plugins', label: 'Plugins', icon: Layers, adminOnly: true },
-  { id: 'logs', label: 'Logs', icon: ScrollText, adminOnly: true }
+  { id: 'management', label: 'Management', icon: ShieldCheck, adminOnly: true }
+];
+
+export const ALL_TABS = [
+  ...NAV_ITEMS,
+  { id: 'settings', label: 'Settings', icon: Settings }
 ];
 
 export default function Sidebar({
@@ -37,7 +39,10 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">Agro</div>
+      <div className="sidebar-brand">
+        <AgroLogo size={30} />
+        <span>Agro</span>
+      </div>
 
       <nav className="sidebar-nav">
         {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
@@ -62,7 +67,8 @@ export default function Sidebar({
       <div className="sidebar-footer">
         <div className="user-dropdown-container">
           <button
-            className="user-badge-btn"
+            type="button"
+            className={`user-badge-btn ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setShowUserMenu(!showUserMenu)}
           >
             <Avatar username={username} size={22} />
@@ -72,17 +78,29 @@ export default function Sidebar({
           </button>
           {showUserMenu && (
             <div className="user-dropdown-menu">
-              <div className="user-dropdown-row">
-                <button
-                  className="btn btn-secondary btn-block"
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    onSignOut();
-                  }}
-                >
-                  Sign out
-                </button>
-              </div>
+              <button
+                type="button"
+                className={`user-dropdown-action ${activeTab === 'settings' ? 'active' : ''}`}
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onTabSelect('settings');
+                }}
+              >
+                <Settings size={15} />
+                <span>Settings</span>
+              </button>
+              <div className="user-dropdown-divider" />
+              <button
+                type="button"
+                className="user-dropdown-action danger"
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onSignOut();
+                }}
+              >
+                <LogOut size={15} />
+                <span>Sign out</span>
+              </button>
             </div>
           )}
         </div>
