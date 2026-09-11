@@ -49,29 +49,23 @@ export default function App() {
   }, []);
   const [activeTab, setActiveTab] = useState(getTabFromHash());
   const [unreadDrops, setUnreadDrops] = useState(0);
-  const [username, setUsername] = useState(localStorage.getItem('agro.username') || 'theogrosjean');
-  const [role, setRole] = useState(localStorage.getItem('agro.role') || 'admin');
+  const [username, setUsername] = useState('');
+  const [role, setRole] = useState('');
   const isAdmin = role === 'admin';
 
-  const [nodes, setNodes] = useState([
-    { deviceId: 'node-desktop', clientType: 'wander', petname: "Theo's Workstation", isOnline: true, lanAddress: '192.168.1.100', currentTrack: 'Resonance' },
-    { deviceId: 'node-phone', clientType: 'wanda', petname: 'Pixel 9 Pro (Wanda)', isOnline: true, lanAddress: '192.168.1.105', currentTrack: 'Resonance' }
-  ]);
+  const [nodes, setNodes] = useState([]);
   const [rules, setRules] = useState(FALLBACK_RULES);
   const [lastHandoff, setLastHandoff] = useState({
-    title: 'Resonance (Agro Sync)',
-    artist: 'HOME',
-    album: 'Odyssey',
+    title: 'Wander Daemon Ready',
+    artist: 'Kolb Audio Subsystem',
+    album: '',
     artworkUrl: '',
-    positionMs: 68000,
-    durationMs: 212000,
-    isPlaying: true,
-    deviceId: 'node-desktop'
+    positionMs: 0,
+    durationMs: 0,
+    isPlaying: false,
+    deviceId: 'fleet'
   });
-  const [syncLogs, setSyncLogs] = useState([
-    { time: new Date().toLocaleTimeString(), event: '[HANDOFF] Playback position synced across fleet' },
-    { time: new Date(Date.now() - 30000).toLocaleTimeString(), event: '[NODE] Wanda Mobile connected over LAN' }
-  ]);
+  const [syncLogs, setSyncLogs] = useState([]);
 
   // Hash-based URL routing
   useEffect(() => {
@@ -90,8 +84,6 @@ export default function App() {
 
   const handleSignOut = () => {
     setToken('');
-    localStorage.removeItem('agro.username');
-    localStorage.removeItem('agro.role');
     setLocked(true);
   };
 
@@ -142,30 +134,6 @@ export default function App() {
     } catch (e) {
       if (e.unauthorized) setLocked(true);
     }
-  };
-
-  const handleTogglePlay = () => {
-    setLastHandoff((prev) => ({
-      ...prev,
-      isPlaying: !prev.isPlaying
-    }));
-  };
-
-  const handleSeek = (posMs) => {
-    setLastHandoff((prev) => ({
-      ...prev,
-      positionMs: posMs
-    }));
-  };
-
-  const handleSwitchDevice = () => {
-    if (!nodes.length) return;
-    const currentIndex = nodes.findIndex((n) => n.deviceId === lastHandoff.deviceId);
-    const nextIndex = (currentIndex + 1) % nodes.length;
-    setLastHandoff((prev) => ({
-      ...prev,
-      deviceId: nodes[nextIndex].deviceId
-    }));
   };
 
   const poll = useCallback(async () => {
@@ -307,9 +275,6 @@ export default function App() {
       <NowBar
         lastHandoff={lastHandoff}
         nodes={nodes}
-        onTogglePlay={handleTogglePlay}
-        onSeek={handleSeek}
-        onSwitchDevice={handleSwitchDevice}
       />
     </div>
   );

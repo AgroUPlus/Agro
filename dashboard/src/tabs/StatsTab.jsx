@@ -24,43 +24,17 @@ const STATS_QUERY = `query Stats($user: String!, $period: String, $device: Strin
 
 const PERIODS = ['WEEK', 'MONTH', 'YEAR', 'ALL'];
 
-const DEMO_STATS = {
-  secsToday: 13320,
-  secsWeek: 65700,
-  secsTotal: 1231200,
-  playsTotal: 4892,
-  streak: 14,
-  topArtists: [
-    { name: 'HOME', value: 412 },
-    { name: 'Tycho', value: 328 },
-    { name: 'Boards of Canada', value: 295 },
-    { name: 'Com Truise', value: 210 },
-    { name: 'Kiasmos', value: 164 }
-  ],
-  topAlbums: [
-    { name: 'Odyssey', value: 240 },
-    { name: 'Dive', value: 198 },
-    { name: 'Music Has the Right to Children', value: 172 },
-    { name: 'Galactic Melt', value: 144 }
-  ],
-  topTracks: [
-    { name: 'Resonance', value: 122 },
-    { name: 'Awake', value: 89 },
-    { name: 'Dayvan Cowboy', value: 74 },
-    { name: 'Color', value: 68 }
-  ],
-  byDay: [35, 52, 48, 65, 80, 95, 70, 84, 60, 92, 110, 88, 75, 96],
-  byHour: [2, 0, 0, 0, 0, 1, 3, 12, 28, 35, 42, 38, 50, 48, 45, 62, 70, 84, 92, 78, 60, 40, 22, 10],
-  byDevice: [
-    { name: "Theo's Workstation", value: 3120 },
-    { name: 'Pixel 9 Pro (Wanda)', value: 1772 }
-  ]
-};
-
 export default function StatsTab({ username, nodes = [], onUnauthorized }) {
   const [period, setPeriod] = useState('MONTH');
   const [device, setDevice] = useState('');
   const [stats, setStats] = useState(null);
+  // The dropdown's options, kept separately from `stats.byDevice`.
+  //
+  // They cannot come from the response being displayed: that response is filtered by the very
+  // device selected, so it comes back listing only that one and the dropdown collapses to a single
+  // choice — you could pick a device, but never a different one without going via "All devices"
+  // first. Only an unfiltered response knows the whole fleet, so only an unfiltered response is
+  // allowed to update this.
   const [deviceOptions, setDeviceOptions] = useState([]);
 
   const getDisplayName = useCallback((rawName) => {
@@ -89,19 +63,30 @@ export default function StatsTab({ username, nodes = [], onUnauthorized }) {
 
   useEffect(() => {
     load();
+    // Statistics move slowly. A minute is frequent enough to feel live and rare enough not to
+    // re-aggregate somebody's whole history every few seconds.
     const timer = setInterval(load, 60000);
     return () => clearInterval(timer);
   }, [load]);
-
-  const activeStats = stats || DEMO_STATS;
 
   const availableDevices = Array.from(
     new Set([
       ...nodes.map(n => n.petname).filter(Boolean),
       ...deviceOptions.map(getDisplayName),
-      ...(activeStats.byDevice.map(e => getDisplayName(e.name)) || [])
+      ...(stats?.byDevice?.map(e => getDisplayName(e.name)) || [])
     ])
   );
+
+  if (!stats) {
+    return (
+      <div className="card">
+        <div className="empty-hint">
+          No listening recorded yet. Play something in <strong>wander</strong> or{' '}
+          <strong>wanda</strong> and it will appear here.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -142,13 +127,13 @@ export default function StatsTab({ username, nodes = [], onUnauthorized }) {
         </div>
 
         <div className="stat-tiles">
-          <StatTile icon={<Clock size={15} />} label="Today" value={formatHours(activeStats.secsToday)} />
-          <StatTile icon={<Clock size={15} />} label="This week" value={formatHours(activeStats.secsWeek)} />
-          <StatTile icon={<Music2 size={15} />} label="Plays" value={activeStats.playsTotal} />
+          <StatTile icon={<Clock size={15} />} label="Today" value={formatHours(stats.secsToday)} />
+          <StatTile icon={<Clock size={15} />} label="This week" value={formatHours(stats.secsWeek)} />
+          <StatTile icon={<Music2 size={15} />} label="Plays" value={stats.playsTotal} />
           <StatTile
             icon={<Flame size={15} />}
             label="Streak"
-            value={`${activeStats.streak} ${activeStats.streak === 1 ? 'day' : 'days'}`}
+            value={`${stats.streak} ${stats.streak === 1 ? 'day' : 'days'}`}
           />
         </div>
       </div>
@@ -157,7 +142,7 @@ export default function StatsTab({ username, nodes = [], onUnauthorized }) {
         <div className="card-header">
           <div className="card-title">Last 14 days</div>
         </div>
-        <Bars values={activeStats.byDay} labelFor={index => `${activeStats.byDay.length - index - 1}d ago`} />
+        <Bars values={stats.byDay} labelFor={index => `${stats.byDay.length - index - 1}d ago`} />
       </div>
 
       <div className="card">
@@ -167,24 +152,24 @@ export default function StatsTab({ username, nodes = [], onUnauthorized }) {
             <div className="card-subtitle">UTC, so it will be offset from your clock</div>
           </div>
         </div>
-        <Bars values={activeStats.byHour} labelFor={index => `${String(index).padStart(2, '0')}:00`} />
+        <Bars values={stats.byHour} labelFor={index => `${String(index).padStart(2, '0')}:00`} />
       </div>
 
       <div className="stats-columns">
-        <TopList title="Top artists" entries={activeStats.topArtists} unit="plays" />
-        <TopList title="Top albums" entries={activeStats.topAlbums} unit="plays" />
-        <TopList title="Top tracks" entries={activeStats.topTracks} unit="plays" />
+        <TopList title="Top artists" entries={stats.topArtists} unit="plays" />
+        <TopList title="Top albums" entries={stats.topAlbums} unit="plays" />
+        <TopList title="Top tracks" entries={stats.topTracks} unit="plays" />
       </div>
 
       <div className="card">
         <div className="card-header">
           <div className="card-title">By device</div>
         </div>
-        {activeStats.byDevice.length === 0 ? (
+        {stats.byDevice.length === 0 ? (
           <div className="empty-hint">Nothing reported yet.</div>
         ) : (
           <div className="top-list">
-            {activeStats.byDevice.map(entry => (
+            {stats.byDevice.map(entry => (
               <div key={entry.name} className="top-row">
                 <Radio size={13} />
                 <span className="top-name">{getDisplayName(entry.name)}</span>

@@ -113,120 +113,15 @@ function periodNoun(period) {
   }
 }
 
-const DEMO_FRIENDS = [
-  {
-    profile: {
-      username: 'elena',
-      displayName: 'Elena Vance',
-      bio: 'Ambient & IDM explorer 🪐',
-      avatarUrl: '',
-      friendState: 'accepted',
-      showNowPlaying: true,
-      showStats: true,
-      showActivity: true,
-      discoverable: true
-    },
-    nowPlaying: {
-      username: 'elena',
-      trackUri: 'agro:track:sample1',
-      trackTitle: 'Coastal Brake',
-      artistName: 'Tycho',
-      albumName: 'Dive',
-      artworkUrl: '',
-      positionMs: 84000,
-      isPlaying: true,
-      updatedAt: new Date().toISOString()
-    }
-  },
-  {
-    profile: {
-      username: 'marcus',
-      displayName: 'Marcus K.',
-      bio: 'Synthwave & chiptune collector',
-      avatarUrl: '',
-      friendState: 'accepted',
-      showNowPlaying: true,
-      showStats: true,
-      showActivity: true,
-      discoverable: true
-    },
-    nowPlaying: {
-      username: 'marcus',
-      trackUri: 'agro:track:sample2',
-      trackTitle: 'Resonance',
-      artistName: 'HOME',
-      albumName: 'Odyssey',
-      artworkUrl: '',
-      positionMs: 45000,
-      isPlaying: false,
-      updatedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString()
-    }
-  }
-];
-
-const DEMO_FEED = [
-  {
-    username: 'elena',
-    at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    kind: 'ON_REPEAT',
-    summary: 'looped Dive 4 times in a row',
-    artist: 'Tycho',
-    title: 'Dive',
-    count: 4
-  },
-  {
-    username: 'marcus',
-    at: new Date(Date.now() - 1000 * 60 * 110).toISOString(),
-    kind: 'NEW_FAVOURITE',
-    summary: 'added Odyssey to favorites',
-    artist: 'HOME',
-    title: 'Odyssey',
-    count: 1
-  }
-];
-
-const DEMO_RECAP = {
-  period: 'MONTH',
-  members: 3,
-  anthem: {
-    title: 'Resonance',
-    artist: 'HOME',
-    plays: 142,
-    byMember: [
-      { name: 'theogrosjean', value: 78 },
-      { name: 'elena', value: 42 },
-      { name: 'marcus', value: 22 }
-    ]
-  },
-  topTracks: [
-    { name: 'Resonance', value: 142 },
-    { name: 'Coastal Brake', value: 98 },
-    { name: 'Awake', value: 76 }
-  ],
-  topArtists: [
-    { name: 'HOME', value: 210 },
-    { name: 'Tycho', value: 185 },
-    { name: 'Boards of Canada', value: 130 }
-  ],
-  trendsetter: {
-    username: 'elena',
-    count: 5
-  },
-  affinity: [
-    { a: 'theogrosjean', b: 'elena', score: 88 },
-    { a: 'theogrosjean', b: 'marcus', score: 74 }
-  ]
-};
-
 export default function SocialTab({ onUnauthorized }) {
   const [activeSection, setActiveSection] = useState('overview'); // 'overview' | 'feed' | 'recap'
   const [days, setDays] = useState(14);
   const [period, setPeriod] = useState('MONTH');
 
-  const [friends, setFriends] = useState(DEMO_FRIENDS);
-  const [feedItems, setFeedItems] = useState(DEMO_FEED);
-  const [recap, setRecap] = useState(DEMO_RECAP);
-  const [loaded, setLoaded] = useState(true);
+  const [friends, setFriends] = useState([]);
+  const [feedItems, setFeedItems] = useState([]);
+  const [recap, setRecap] = useState(null);
+  const [loaded, setLoaded] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -234,10 +129,9 @@ export default function SocialTab({ onUnauthorized }) {
       const data = (await res.json())?.data;
 
       const rawFriends = data?.friends || [];
-      const accepted = rawFriends.filter(f => f.profile?.friendState?.toLowerCase() === 'accepted');
-      setFriends(accepted.length > 0 ? accepted : DEMO_FRIENDS);
-      setFeedItems(data?.friendActivity?.length ? data.friendActivity : DEMO_FEED);
-      setRecap(data?.circleRecap || DEMO_RECAP);
+      setFriends(rawFriends.filter(f => f.profile?.friendState?.toLowerCase() === 'accepted'));
+      setFeedItems(data?.friendActivity ?? []);
+      setRecap(data?.circleRecap ?? null);
     } catch (err) {
       if (err.unauthorized) onUnauthorized?.();
     } finally {
