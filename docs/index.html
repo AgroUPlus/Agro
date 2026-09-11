@@ -58,18 +58,29 @@
                   <span class="material-symbols-rounded">login</span>
                   Connect to instance
                 </button>
-                <a href="https://github.com/AgroUPlus/Wanda/releases/latest" target="_blank" rel="noopener" class="btn btn-tonal">
-                  <span class="material-symbols-rounded">android</span>
-                  Download Wanda
-                </a>
-                <a href="https://github.com/Kolbxyz/Wander/releases/latest" target="_blank" rel="noopener" class="btn btn-tonal">
-                  <span class="material-symbols-rounded">terminal</span>
-                  Download Wander
-                </a>
-                <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="btn btn-outlined">
-                  <span class="material-symbols-rounded">code</span>
-                  GitHub
-                </a>
+                <div class="menu-anchor" id="download-menu">
+                  <button class="btn btn-tonal" aria-haspopup="true" aria-expanded="false" onclick="toggleDownloads(event)">
+                    <span class="material-symbols-rounded">download</span>
+                    Download
+                    <span class="material-symbols-rounded menu-caret">expand_more</span>
+                  </button>
+                  <div class="menu-sheet" role="menu">
+                    <a href="https://github.com/AgroUPlus/Wanda/releases/latest" target="_blank" rel="noopener" class="menu-item" role="menuitem">
+                      <span class="material-symbols-rounded">android</span>
+                      <span>
+                        <span class="menu-item-title">Wanda</span>
+                        <span class="menu-item-sub">Android client</span>
+                      </span>
+                    </a>
+                    <a href="https://github.com/Kolbxyz/Wander/releases/latest" target="_blank" rel="noopener" class="menu-item" role="menuitem">
+                      <span class="material-symbols-rounded">terminal</span>
+                      <span>
+                        <span class="menu-item-title">Wander</span>
+                        <span class="menu-item-sub">Desktop terminal client</span>
+                      </span>
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -408,6 +419,24 @@ PORT=<span class="val">1674</span> AGRO_LIBRARY_ROOT=<span class="val">/srv/musi
           navbarWrapper.classList.remove('scrolled');
         }
       }, { passive: true });
+
+      const downloadMenu = document.getElementById('download-menu');
+      const downloadTrigger = downloadMenu.querySelector('button');
+
+      function setDownloads(open) {
+        downloadMenu.classList.toggle('open', open);
+        downloadTrigger.setAttribute('aria-expanded', String(open));
+      }
+      function toggleDownloads(e) {
+        e.stopPropagation();
+        setDownloads(!downloadMenu.classList.contains('open'));
+      }
+      document.addEventListener('click', (e) => {
+        if (!downloadMenu.contains(e.target)) setDownloads(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') setDownloads(false);
+      });
 
       const backdrop = document.getElementById('modal-backdrop');
       const input = document.getElementById('instance-input');
