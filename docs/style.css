@@ -419,7 +419,10 @@ section { padding: 90px 0; }
 }
 .security-card:hover { transform: translateY(-6px); border-color: var(--md-sys-color-primary); }
 
-.security-icon { margin-bottom: 16px; transition: transform 0.3s var(--m3-spring-fast); }
+.security-icon {
+  margin-bottom: 16px; width: fit-content; transform-origin: left center;
+  transition: transform 0.3s var(--m3-spring-fast);
+}
 .security-card:hover .security-icon { transform: scale(1.12); }
 .security-title { font-size: 17px; font-weight: 800; color: var(--md-sys-color-on-surface); margin-bottom: 8px; }
 .security-desc { font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); line-height: 1.6; }
