@@ -430,7 +430,9 @@ section { padding: 90px 0; }
 .gs-card {
   background: var(--md-sys-color-surface-container-low); border-radius: 36px 16px 36px 16px;
   padding: 36px; border: 2px solid var(--md-sys-color-outline-variant); display: flex; flex-direction: column; gap: 18px;
+  transition: border-color 0.25s ease;
 }
+.gs-card:hover { border-color: var(--md-sys-color-primary); }
 .gs-card.featured {
   background: var(--md-sys-color-surface-container); border: 2px solid var(--md-sys-color-primary); border-radius: 16px 36px 16px 36px;
 }
