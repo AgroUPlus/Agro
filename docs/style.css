@@ -380,6 +380,18 @@ section { padding: 90px 0; }
   border: 1px solid rgba(80, 180, 240, 0.35);
 }
 
+.bg-violet {
+  background: rgba(208, 188, 255, 0.16);
+  color: var(--md-sys-color-primary);
+  border: 1px solid rgba(208, 188, 255, 0.35);
+}
+
+.bg-teal {
+  background: rgba(125, 220, 185, 0.16);
+  color: var(--md-sys-color-tertiary);
+  border: 1px solid rgba(125, 220, 185, 0.35);
+}
+
 .promo-title {
   font-size: 1.35rem;
   font-weight: 800;
@@ -522,7 +534,7 @@ footer {
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 640px) {
-  .features-grid, .security-grid, .footer-grid { grid-template-columns: 1fr; }
+  .features-grid, .security-grid, .footer-grid, .promo-grid { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .hero-title { font-size: 2.5rem; }
   .phone-slanted { left: -10px; transform: rotate(-24deg) scale(0.85); }
