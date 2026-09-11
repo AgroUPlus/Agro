@@ -283,34 +283,122 @@ section { padding: 90px 0; }
   font-size: clamp(2rem, 3.8vw, 2.7rem); font-weight: 900; letter-spacing: -0.03em;
   color: var(--md-sys-color-on-surface); margin-bottom: 16px;
 }
-.what-text p { color: var(--md-sys-color-on-surface-variant); margin-top: 14px; font-size: 15.5px; }
+.what-text p {
+  color: var(--md-sys-color-on-surface-variant);
+  margin-top: 18px;
+  font-size: 15.5px;
+  line-height: 1.75;
+}
 
-.what-diagram {
-  background: var(--md-sys-color-surface-container);
-  border-radius: 24px 56px 24px 56px;
-  padding: 36px;
+/* Architecture - Transparent Visual */
+.what-transparent-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.what-transparent-img {
+  width: 100%;
+  max-width: 580px;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 20px 45px rgba(0, 0, 0, 0.75));
+  transition: transform 0.4s var(--m3-spring-fast);
+}
+
+.what-transparent-img:hover {
+  transform: translateY(-6px) scale(1.02);
+}
+
+/* Capabilities Showcase Section */
+#capabilities {
+  border-top: 2px dashed var(--md-sys-color-outline-variant);
+  padding: 90px 0;
+}
+
+.promo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+
+.promo-card {
+  background: var(--md-sys-color-surface-container-low);
   border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: 32px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s var(--m3-spring-fast), border-color 0.25s ease;
 }
-.diagram-nodes { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.diag-node { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1; text-align: center; }
 
-.blob-icon {
-  width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;
-  font-size: 26px;
+.promo-card:hover {
+  transform: translateY(-6px);
+  border-color: var(--md-sys-color-primary);
 }
-.blob-1 { border-radius: 30px 14px 28px 12px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.blob-center { border-radius: 16px 36px 16px 36px; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); transform: rotate(-3deg); }
-.blob-2 { border-radius: 14px 30px 12px 28px; background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); }
 
-.diag-arrow { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
-.diag-arrow-line { width: 38px; height: 3px; background: var(--md-sys-color-outline-variant); border-radius: 99px; }
-.diag-arrow-label { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--md-sys-color-outline); font-weight: 600; }
-.diag-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; padding-top: 20px; border-top: 2px dashed var(--md-sys-color-outline-variant); }
+.promo-img-wrapper {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: #000;
+}
 
-.m3-tag {
-  font-size: 11px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
-  padding: 5px 12px; border-radius: 9999px;
-  background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
+.promo-img-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.promo-card:hover .promo-img-wrapper img {
+  transform: scale(1.03);
+}
+
+.promo-info {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.promo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  align-self: flex-start;
+}
+
+.bg-magenta {
+  background: rgba(230, 80, 180, 0.16);
+  color: #ff85d8;
+  border: 1px solid rgba(230, 80, 180, 0.35);
+}
+
+.bg-cyan {
+  background: rgba(80, 180, 240, 0.16);
+  color: #8ed6ff;
+  border: 1px solid rgba(80, 180, 240, 0.35);
+}
+
+.promo-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--md-sys-color-on-surface);
+}
+
+.promo-desc {
+  font-size: 14.5px;
+  color: var(--md-sys-color-on-surface-variant);
+  line-height: 1.6;
 }
 
 /* Features */
