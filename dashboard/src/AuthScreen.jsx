@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Check, ArrowLeft, Loader2, KeyRound, ShieldCheck, Sparkles, Info } from 'lucide-react';
+import { Copy, Check, ArrowLeft, Loader2, KeyRound, ShieldCheck } from 'lucide-react';
 import { login, ssoConfig, TotpRequiredError } from './api.js';
 import Field from './components/form/Field.jsx';
 import TextInput from './components/form/TextInput.jsx';
@@ -45,13 +45,6 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
   useEffect(() => {
     ssoConfig().then(setSso);
   }, []);
-
-  function handlePreviewMode() {
-    localStorage.setItem('agro.token', 'agro_preview_session_token_1234567890');
-    localStorage.setItem('agro.username', 'theogrosjean');
-    localStorage.setItem('agro.role', 'admin');
-    onSignedIn();
-  }
 
   async function handleSignIn(event) {
     event.preventDefault();
@@ -268,53 +261,6 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
       >
         {signingUp ? (<><ArrowLeft size={14} /> Back to sign in</>) : 'Create an account'}
       </button>
-
-      {!signingUp && (
-        <>
-          <div className="auth-divider"><span>or preview</span></div>
-
-          <button
-            type="button"
-            className="auth-secondary"
-            onClick={handlePreviewMode}
-            style={{
-              background: 'rgba(208, 188, 255, 0.12)',
-              borderColor: 'rgba(208, 188, 255, 0.35)',
-              color: 'var(--md-sys-color-primary)',
-              fontWeight: 600,
-              gap: 8,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Sparkles size={15} /> Explore UI Preview (Admin)
-          </button>
-
-          <div
-            className="auth-helper-note"
-            style={{
-              marginTop: 18,
-              padding: '10px 14px',
-              background: 'var(--md-sys-color-surface-container-high)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 'var(--text-xs)',
-              color: 'var(--text-secondary)',
-              lineHeight: 1.45,
-              display: 'flex',
-              gap: 10,
-              alignItems: 'flex-start',
-              textAlign: 'left',
-            }}
-          >
-            <Info size={16} style={{ flexShrink: 0, marginTop: 2, color: 'var(--md-sys-color-tertiary)' }} />
-            <span>
-              <strong>Instance Setup:</strong> Agro has no default passwords. When running the daemon (<code>cargo run</code>), a one-time <code>setup_token</code> is printed to console to bootstrap the admin account via <code>POST /api/v1/bootstrap</code>.
-            </span>
-          </div>
-        </>
-      )}
     </AuthShell>
   );
 }
