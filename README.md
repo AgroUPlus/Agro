@@ -1,5 +1,7 @@
 # Agro
 
+<img width="100" height="100" alt="Agro logo" src="https://github.com/user-attachments/assets/fa04b25a-4918-4102-b7f8-540a2865aa45" />
+
 Background sync daemon for [Wander](https://github.com/Kolbxyz/wander) (Linux TUI) and
 [Wanda](https://github.com/Kolbxyz/Wanda) (Android). It keeps one playback handoff and a set of registered nodes per user, so a
 session started on one device can be picked up on another, and serves its own dashboard.
