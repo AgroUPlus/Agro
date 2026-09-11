@@ -525,3 +525,33 @@ footer {
   .phone-slanted { left: -10px; transform: rotate(-24deg) scale(0.85); }
   .phone-upright { right: 0; transform: scale(0.85); }
 }
+
+/* Reduced motion: keep every static pose, remove the movement between poses */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Hover/active states resolve to their resting transform, so nothing shifts */
+  .btn:hover, .btn:active,
+  .promo-card:hover,
+  .promo-card:hover .promo-img-wrapper img,
+  .security-card:hover,
+  .security-card:hover .security-icon,
+  .gs-card:hover,
+  .footer-col-links a:hover, .footer-col-links button:hover { transform: none; }
+
+  .phone-slanted:hover { transform: rotate(-32deg) scale(0.98); }
+  .phone-upright:hover { transform: scale(0.94); }
+  .fanning-stage:hover .fan-1 { transform: rotateY(24deg) rotateZ(-4deg) scale(0.85); }
+  .fanning-stage:hover .fan-3 { transform: rotateY(10deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) and (max-width: 640px) {
+  .phone-slanted:hover { transform: rotate(-24deg) scale(0.85); }
+  .phone-upright:hover { transform: scale(0.85); }
+}
