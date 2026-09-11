@@ -168,9 +168,6 @@ export default function NowBar({
         {isEncrypted && (
           <span className="quality-pill" style={{ background: '#3b82f6', color: '#fff' }}>E2EE</span>
         )}
-        {isPlaying && (
-          <span className="quality-pill">LOSSLESS</span>
-        )}
         <button
           type="button"
           className="device-indicator-pill interactive"

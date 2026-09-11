@@ -1379,15 +1379,15 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  animation: tabFadeIn 0.2s ease-out;
+  animation: tabContentEntrance 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-@keyframes tabFadeIn {
-  from {
+@keyframes tabContentEntrance {
+  0% {
     opacity: 0;
-    transform: translateY(3px);
+    transform: translateY(8px);
   }
-  to {
+  100% {
     opacity: 1;
     transform: translateY(0);
   }

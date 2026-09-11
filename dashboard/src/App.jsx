@@ -263,7 +263,7 @@ export default function App() {
           <h1>{currentTabItem?.label ?? 'Agro'}</h1>
         </header>
 
-        <div className="page-content">
+        <div className="page-content" key={activeTab}>
           {activeTab === 'social' && (
             <SocialTab me={username} onUnauthorized={() => setLocked(true)} />
           )}
