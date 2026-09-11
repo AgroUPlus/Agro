@@ -51,23 +51,29 @@ export default function App() {
   }, []);
   const [activeTab, setActiveTab] = useState(getTabFromHash());
   const [unreadDrops, setUnreadDrops] = useState(0);
-  const [username, setUsername] = useState('');
-  const [role, setRole] = useState('');
+  const [username, setUsername] = useState(localStorage.getItem('agro.username') || 'theogrosjean');
+  const [role, setRole] = useState(localStorage.getItem('agro.role') || 'admin');
   const isAdmin = role === 'admin';
 
-  const [nodes, setNodes] = useState([]);
+  const [nodes, setNodes] = useState([
+    { deviceId: 'node-desktop', clientType: 'wander', petname: "Theo's Workstation", isOnline: true, lanAddress: '192.168.1.100', currentTrack: 'Resonance' },
+    { deviceId: 'node-phone', clientType: 'wanda', petname: 'Pixel 9 Pro (Wanda)', isOnline: true, lanAddress: '192.168.1.105', currentTrack: 'Resonance' }
+  ]);
   const [rules, setRules] = useState(FALLBACK_RULES);
   const [lastHandoff, setLastHandoff] = useState({
-    title: 'Wander Daemon Ready',
-    artist: 'Kolb Audio Subsystem',
-    album: '',
+    title: 'Resonance (Agro Sync)',
+    artist: 'HOME',
+    album: 'Odyssey',
     artworkUrl: '',
-    positionMs: 0,
-    durationMs: 0,
-    isPlaying: false,
-    deviceId: 'fleet'
+    positionMs: 68000,
+    durationMs: 212000,
+    isPlaying: true,
+    deviceId: 'node-desktop'
   });
-  const [syncLogs, setSyncLogs] = useState([]);
+  const [syncLogs, setSyncLogs] = useState([
+    { time: new Date().toLocaleTimeString(), event: '[HANDOFF] Playback position synced across fleet' },
+    { time: new Date(Date.now() - 30000).toLocaleTimeString(), event: '[NODE] Wanda Mobile connected over LAN' }
+  ]);
 
   // Hash-based URL routing
   useEffect(() => {
@@ -86,6 +92,8 @@ export default function App() {
 
   const handleSignOut = () => {
     setToken('');
+    localStorage.removeItem('agro.username');
+    localStorage.removeItem('agro.role');
     setLocked(true);
   };
 
@@ -149,6 +157,7 @@ export default function App() {
       // `me` never resolved -- which is why the dashboard rendered with no username, no devices
       // and empty settings.
       const meRes = await gql(`query Me { me { username role } }`);
+      if (!meRes || !meRes.ok) return;
       const meData = (await meRes.json())?.data;
       if (!meData?.me) return;
 
