@@ -118,7 +118,6 @@ section { padding: 90px 0; }
 #hero {
   padding: calc(var(--navbar-h) + 60px) 0 80px;
   position: relative;
-  overflow: hidden;
 }
 .hero-grid {
   display: grid;
