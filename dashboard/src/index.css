@@ -1265,6 +1265,11 @@ input:checked + .slider:before {
 }
 
 .user-badge-btn:hover { border-color: var(--border-strong); }
+.user-badge-btn.active {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: 0 0 16px rgba(208, 188, 255, 0.15);
+}
 
 .user-badge-name {
   flex: 1;
@@ -1301,6 +1306,44 @@ input:checked + .slider:before {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow);
+}
+
+.user-dropdown-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.user-dropdown-action:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-h);
+}
+
+.user-dropdown-action.active {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  font-weight: 600;
+}
+
+.user-dropdown-action.danger {
+  color: var(--status-error);
+}
+
+.user-dropdown-action.danger:hover {
+  background: rgba(255, 180, 171, 0.12);
+  color: var(--status-error);
 }
 
 .user-dropdown-title {

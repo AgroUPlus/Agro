@@ -7,7 +7,7 @@ import {
   setEnrolmentRequiredHandler,
   FALLBACK_RULES
 } from './api.js';
-import Sidebar, { NAV_ITEMS } from './components/Sidebar.jsx';
+import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
 import AuthScreen from './AuthScreen.jsx';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
@@ -18,13 +18,11 @@ import StatsTab from './tabs/StatsTab.jsx';
 import LibraryBrowser from './tabs/LibraryBrowser.jsx';
 import LinksTab from './tabs/LinksTab.jsx';
 import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
-import PeopleTab from './tabs/PeopleTab.jsx';
-import AdminPluginsTab from './tabs/AdminPluginsTab.jsx';
-import LogsTab from './tabs/LogsTab.jsx';
+import ManagementTab from './tabs/ManagementTab.jsx';
 
 function getTabFromHash() {
   const hash = window.location.hash.replace(/^#\/?/, '').trim();
-  const valid = NAV_ITEMS.map((item) => item.id);
+  const valid = ALL_TABS.map((item) => item.id);
   return valid.includes(hash) ? hash : 'social';
 }
 
@@ -245,7 +243,7 @@ export default function App() {
     );
   }
 
-  const currentTabItem = NAV_ITEMS.find((item) => item.id === activeTab);
+  const currentTabItem = ALL_TABS.find((item) => item.id === activeTab);
 
   return (
     <div className="app-shell">
@@ -294,19 +292,14 @@ export default function App() {
             <AccountSettingsTab username={username} onUnauthorized={() => setLocked(true)} />
           )}
 
-          {activeTab === 'people' && isAdmin && (
-            <PeopleTab me={username} onUnauthorized={() => setLocked(true)} />
-          )}
-
-          {activeTab === 'plugins' && isAdmin && (
-            <AdminPluginsTab
+          {activeTab === 'management' && isAdmin && (
+            <ManagementTab
+              me={username}
               rules={rules}
               onToggleRule={handleToggleRule}
+              logs={syncLogs}
+              onUnauthorized={() => setLocked(true)}
             />
-          )}
-
-          {activeTab === 'logs' && isAdmin && (
-            <LogsTab logs={syncLogs} />
           )}
         </div>
       </main>
