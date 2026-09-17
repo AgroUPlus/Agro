@@ -73,7 +73,7 @@ export async function login(username, passphrase, totpCode) {
       username: username.trim(),
       passphrase,
       label: deviceLabel(),
-      ...(totpCode ? { totp_code: totpCode.trim() } : {}),
+      ...(totpCode ? { totpCode: totpCode.trim() } : {}),
     }),
   });
 

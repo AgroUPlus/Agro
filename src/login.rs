@@ -200,7 +200,8 @@ pub(crate) fn client_ip(peer: SocketAddr, headers: &HeaderMap) -> String {
     peer.ip().to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginBody {
     username: String,
     passphrase: String,
@@ -220,6 +221,21 @@ pub struct LoginBody {
 /// The passphrase itself is never a bearer token — that equivalence is what let a revocable device
 /// credential be traded for the permanent account one. What comes back is scoped to this device
 /// and can be revoked on its own.
+#[utoipa::path(
+    post,
+    path = "/api/v1/login",
+    tag = "auth",
+    request_body = LoginBody,
+    responses(
+        (status = 200, description = "Signed in", body = crate::openapi::LoginResponse),
+        (status = 401, description = "Credentials rejected, or a second factor is required or was \
+                                       rejected — disambiguated by the X-Agro-Auth-Stage response \
+                                       header and the totpRequired body field, since the status \
+                                       code is the same for all three by design (kept for client \
+                                       compatibility).", body = crate::openapi::ApiError),
+        (status = 429, description = "Too many attempts", body = crate::openapi::ApiError),
+    ),
+)]
 pub async fn login(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -424,7 +440,8 @@ pub async fn login(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapBody {
     setup_token: String,
     username: String,
@@ -435,6 +452,16 @@ pub struct BootstrapBody {
 /// Needs the one-time setup token printed to the server's log at boot. This replaces a window in
 /// the middleware that let *any* unauthenticated request through while no accounts existed — a
 /// race the operator had to win against whoever was scanning the port.
+#[utoipa::path(
+    post,
+    path = "/api/v1/bootstrap",
+    tag = "auth",
+    request_body = BootstrapBody,
+    responses(
+        (status = 200, description = "First administrator created", body = crate::openapi::BootstrapResponse),
+        (status = 401, description = "Invalid setup token, or the server already has an account", body = crate::openapi::ApiError),
+    ),
+)]
 pub async fn bootstrap(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -549,7 +576,8 @@ pub fn normalise_username(raw: &str) -> Option<String> {
     usable.then_some(clean)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SignupBody {
     username: String,
     invite_code: Option<String>,
@@ -565,6 +593,16 @@ pub struct SignupBody {
 /// A taken username is refused with the same words as an unusable one. That makes this endpoint a
 /// poor way to test whether an account exists — the public directory only lists people who asked to
 /// be listed, and this must not quietly undo that choice.
+#[utoipa::path(
+    post,
+    path = "/api/v1/signup",
+    tag = "auth",
+    request_body = SignupBody,
+    responses(
+        (status = 200, description = "Account created (Pending approval, or Active if an invite was spent)", body = crate::openapi::SignupResponse),
+        (status = 401, description = "Signups closed, username unavailable, or invite invalid", body = crate::openapi::ApiError),
+    ),
+)]
 pub async fn signup(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,

@@ -26,6 +26,7 @@ mod listen;
 mod login;
 mod norm;
 mod offers;
+mod openapi;
 mod passphrase;
 mod plugins;
 mod proxy;
@@ -59,6 +60,8 @@ use db::Db;
 use schema::{AgroSchema, Mutation, Query};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
+use utoipa::OpenApi as _;
+use utoipa_swagger_ui::SwaggerUi;
 use ws::WsHub;
 
 /// How often the storage sweeper runs.
@@ -87,6 +90,14 @@ pub struct AppState {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
+
+    // Prints the OpenAPI document and exits, touching no state. This is what the GitHub Pages
+    // workflow calls to publish an up-to-date spec — the document is built entirely from
+    // `#[utoipa::path]` annotations, so nothing here needs a database or a bound port.
+    if std::env::args().any(|arg| arg == "dump-openapi") {
+        println!("{}", openapi::ApiDoc::openapi().to_pretty_json()?);
+        return Ok(());
+    }
 
     let db = Db::new("agro_data.db")?;
     let ws_hub = Arc::new(WsHub::new());
@@ -260,6 +271,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/share/{token}", get(share::share_handler))
         // Public by design: a shared link is opened by someone with no account here.
         .route("/listen", get(listen::listen_handler))
+        // Documentation, not data: safe to leave public. GraphQL's SDL describes the shape of the
+        // schema, not any account's contents, and GraphiQL still needs a real bearer token typed
+        // into its headers panel before it can query anything.
+        .route("/graphql/sdl", get(graphql_sdl))
+        .route("/graphql/playground", get(graphql_playground))
+        .merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", openapi::ApiDoc::openapi()))
         .fallback(embedded_dashboard::static_dashboard_handler)
         // Without this a single request can stream unbounded bytes into any JSON handler. The
         // upload routes opt back out, because that is exactly what they are for.
@@ -274,6 +291,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Agro Server running at http://{}", addr);
     println!("📊 GraphQL endpoint: http://{}/graphql", addr);
     println!("🔄 WebSocket sync: ws://{}/ws/sync", addr);
+    println!("📖 REST API docs: http://{}/api/docs", addr);
+    println!("🧭 GraphQL playground: http://{}/graphql/playground", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     // `into_make_service_with_connect_info` is what makes the peer address available to the
@@ -385,6 +404,24 @@ async fn security_headers(
         );
     }
     response
+}
+
+/// `GET /graphql/sdl` — the schema definition language, for anyone who wants a typed client.
+async fn graphql_sdl(schema: axum::Extension<AgroSchema>) -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        schema.sdl(),
+    )
+}
+
+/// `GET /graphql/playground` — a GraphiQL client wired to `/graphql`, for exploring the schema by
+/// hand. A real bearer token still has to be typed into its headers panel to query anything.
+async fn graphql_playground() -> axum::response::Html<String> {
+    axum::response::Html(
+        async_graphql::http::GraphiQLSource::build()
+            .endpoint("/graphql")
+            .finish(),
+    )
 }
 
 async fn graphql_handler(

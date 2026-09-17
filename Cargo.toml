@@ -39,3 +39,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 # that quietly accepts the wrong codes is worse than none.
 totp-rs = "6.0.0"
 jsonwebtoken = "11.0.0"
+# Generates the OpenAPI spec for the REST surface from annotations on the handlers themselves, so
+# the spec cannot drift silently the way a hand-maintained document would.
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }

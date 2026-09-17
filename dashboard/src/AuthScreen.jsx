@@ -79,7 +79,7 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: username.trim(),
-          ...(inviteCode.trim() ? { invite_code: inviteCode.trim() } : {})
+          ...(inviteCode.trim() ? { inviteCode: inviteCode.trim() } : {})
         })
       });
       const body = await res.json().catch(() => ({}));

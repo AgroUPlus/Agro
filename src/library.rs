@@ -44,7 +44,7 @@ const MAX_UPLOAD_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 /// How long an unfinished upload's `.part` file is kept before the sweeper reclaims it.
 const UPLOAD_TTL_HOURS: i64 = 24;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BeginUpload {
     pub device_id: String,
@@ -73,7 +73,7 @@ pub struct BeginUpload {
 /// `rename_all` on the enum renames the *variants*; the per-variant attributes are what rename
 /// their fields. Without those the clients receive `upload_id` while every other field on the wire
 /// is camelCase.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(tag = "status")]
 pub enum BeginUploadResponse {
     /// The server already has these bytes. Nothing is transferred — by far the most common
@@ -86,6 +86,17 @@ pub enum BeginUploadResponse {
 }
 
 /// Declares a file and finds out whether it needs sending.
+#[utoipa::path(
+    post,
+    path = "/api/v1/library/upload",
+    tag = "library",
+    security(("bearer_token" = [])),
+    request_body = BeginUpload,
+    responses(
+        (status = 200, description = "Either \"exists\" (nothing to send) or \"upload\" (send bytes to the PUT route)", body = BeginUploadResponse),
+        (status = 400, description = "Invalid content hash, size, or device id", body = crate::openapi::ApiError),
+    ),
+)]
 pub async fn begin_upload(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
@@ -236,6 +247,23 @@ fn quota_exceeded(used: i64, quota: i64) -> Response {
 /// The body is copied straight to disk in fixed-size chunks. It is never collected into a `Vec`:
 /// this host has 512 MB of RAM, and a handful of concurrent FLAC uploads buffered in memory is an
 /// OOM — which is exactly what the endpoint this replaces did.
+#[utoipa::path(
+    put,
+    path = "/api/v1/library/upload/{upload_id}",
+    tag = "library",
+    security(("bearer_token" = [])),
+    params(
+        ("upload_id" = String, Path, description = "Upload id returned by `begin_upload`'s \"upload\" response"),
+        ("x-agro-offset" = Option<i64>, Header, description = "Byte offset to resume from; omit to start from the beginning"),
+    ),
+    request_body(content_type = "application/octet-stream", description = "Raw file bytes, from the resume offset onward"),
+    responses(
+        (status = 200, description = "Upload accepted"),
+        (status = 400, description = "Resume offset is past what the server holds", body = crate::openapi::ApiError),
+        (status = 403, description = "That upload does not belong to the caller"),
+        (status = 404, description = "No such upload session"),
+    ),
+)]
 pub async fn put_upload(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
@@ -637,6 +665,18 @@ pub async fn sweep_storage(state: &AppState) {
 }
 
 /// Hands a spooled file to the device collecting it.
+#[utoipa::path(
+    get,
+    path = "/api/v1/library/fetch/{content_hash}",
+    tag = "library",
+    security(("bearer_token" = [])),
+    params(("content_hash" = String, Path, description = "Lowercase hex SHA-256 of the file")),
+    responses(
+        (status = 200, description = "Raw file bytes", content_type = "application/octet-stream"),
+        (status = 400, description = "Not a content hash", body = crate::openapi::ApiError),
+        (status = 404, description = "Nothing to fetch under that hash, or it does not belong to the caller"),
+    ),
+)]
 pub async fn fetch(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
@@ -681,6 +721,18 @@ pub async fn fetch(
 /// Aggressively cacheable: the key is a hash of the album's identity and the file under it never
 /// changes in place, so a browser that has fetched one never needs to ask for it again. That
 /// matters here because the library grid asks for a screenful of these at once.
+#[utoipa::path(
+    get,
+    path = "/api/v1/cover/{album_key}",
+    tag = "library",
+    security(("bearer_token" = [])),
+    params(("album_key" = String, Path, description = "32-character hex key identifying the album")),
+    responses(
+        (status = 200, description = "Cover art bytes", content_type = "application/octet-stream"),
+        (status = 400, description = "Not an album key", body = crate::openapi::ApiError),
+        (status = 404, description = "No cover for that album, or caller is not an administrator"),
+    ),
+)]
 pub async fn cover(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,

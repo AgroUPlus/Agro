@@ -132,6 +132,12 @@ impl FlowStore {
 }
 
 /// `GET /api/v1/oidc/config` — what the sign-in page needs to decide whether to show the button.
+#[utoipa::path(
+    get,
+    path = "/api/v1/oidc/config",
+    tag = "oidc",
+    responses((status = 200, description = "`{ enabled: false }`, or `{ enabled: true, displayName }`")),
+)]
 pub async fn config() -> Response {
     match Config::from_env() {
         Some(config) => axum::Json(serde_json::json!({
@@ -144,6 +150,15 @@ pub async fn config() -> Response {
 }
 
 /// `GET /api/v1/oidc/start` — sends the browser to the provider.
+#[utoipa::path(
+    get,
+    path = "/api/v1/oidc/start",
+    tag = "oidc",
+    responses(
+        (status = 302, description = "Redirects to the identity provider"),
+        (status = 404, description = "SSO is not configured on this server"),
+    ),
+)]
 pub async fn start(State(state): State<AppState>) -> Response {
     begin_flow(&state, None)
 }
@@ -152,6 +167,16 @@ pub async fn start(State(state): State<AppState>) -> Response {
 ///
 /// The account is taken from the token on *this* request and remembered server-side, so the
 /// callback links to whoever started the flow and not to whoever the callback claims to be.
+#[utoipa::path(
+    get,
+    path = "/api/v1/oidc/link",
+    tag = "oidc",
+    security(("bearer_token" = [])),
+    responses(
+        (status = 302, description = "Redirects to the identity provider"),
+        (status = 404, description = "SSO is not configured on this server"),
+    ),
+)]
 pub async fn start_link(
     State(state): State<AppState>,
     user: axum::Extension<crate::auth::AuthedUser>,
@@ -193,7 +218,7 @@ fn begin_flow(state: &AppState, link_to: Option<String>) -> Response {
     Redirect::to(&url).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct CallbackQuery {
     code: Option<String>,
     state: Option<String>,
@@ -205,6 +230,18 @@ pub struct CallbackQuery {
 /// Ends by redirecting into the dashboard with a token in the fragment. A fragment rather than a
 /// query string because fragments are not sent to the server and do not land in access logs; the
 /// page reads it and immediately clears it.
+#[utoipa::path(
+    get,
+    path = "/api/v1/oidc/callback",
+    tag = "oidc",
+    params(CallbackQuery),
+    responses(
+        (status = 302, description = "Redirects into the dashboard, either with a token in the \
+                                       fragment (`/#token=...`) on success or an error message \
+                                       (`/#ssoError=...`) on failure"),
+        (status = 404, description = "SSO is not configured on this server"),
+    ),
+)]
 pub async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,

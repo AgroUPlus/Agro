@@ -188,7 +188,7 @@ impl RelayHub {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenRelayRequest {
     pub content_hash: String,
@@ -209,13 +209,24 @@ pub struct OpenRelayRequest {
     pub jam_id: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenRelayResponse {
     pub session_id: String,
 }
 
 /// Initiates an ephemeral relay session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/relay/open",
+    tag = "relay",
+    security(("bearer_token" = [])),
+    request_body = OpenRelayRequest,
+    responses(
+        (status = 200, description = "Relay session opened", body = OpenRelayResponse),
+        (status = 403, description = "Device or jam authorization failed"),
+    ),
+)]
 pub async fn open_relay(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
@@ -333,6 +344,20 @@ pub async fn open_relay(
 }
 
 /// Sender streams bytes into the relay pipe.
+#[utoipa::path(
+    post,
+    path = "/api/v1/relay/{session_id}/send",
+    tag = "relay",
+    security(("bearer_token" = [])),
+    params(("session_id" = String, Path, description = "Session id returned by open_relay")),
+    request_body(content_type = "application/octet-stream", description = "Raw audio bytes"),
+    responses(
+        (status = 200, description = "Streaming finished"),
+        (status = 403, description = "Not the sender of this session"),
+        (status = 404, description = "No such session, or it expired"),
+        (status = 409, description = "A sender is already attached to this session"),
+    ),
+)]
 pub async fn send_relay(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
@@ -435,6 +460,19 @@ pub async fn send_relay(
 }
 
 /// Receiver streams bytes out of the relay pipe.
+#[utoipa::path(
+    get,
+    path = "/api/v1/relay/{session_id}/receive",
+    tag = "relay",
+    security(("bearer_token" = [])),
+    params(("session_id" = String, Path, description = "Session id returned by open_relay")),
+    responses(
+        (status = 200, description = "Raw audio bytes", content_type = "application/octet-stream"),
+        (status = 403, description = "Not the receiver of this session, or not a member of the jam"),
+        (status = 404, description = "No such session, or it expired"),
+        (status = 409, description = "A receiver is already attached to this session"),
+    ),
+)]
 pub async fn receive_relay(
     State(state): State<AppState>,
     user: axum::Extension<AuthedUser>,
