@@ -1,0 +1,25 @@
+services:
+  agro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agrouplus/agro:latest
+    container_name: agro
+    restart: unless-stopped
+    ports:
+      - "8700:8700"
+    environment:
+      - PORT=8700
+      - AGRO_PUBLIC_URL=https://agro.example.com
+      - AGRO_LIBRARY_ROOT=/srv/music
+      - AGRO_SIGNUP=approval
+      # - AGRO_SECRET_KEY=change_this_to_a_secure_random_string_for_totp
+      # - AGRO_ALLOWED_ORIGIN=https://agro.example.com
+    volumes:
+      - agro_data:/opt/agro/data
+      - /path/to/your/music:/srv/music:ro
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  agro_data:

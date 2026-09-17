@@ -5,14 +5,23 @@
 <h1 align="center">Agro</h1>
 
 <p align="center">
-  Open-source, self-hosted music ecosystem for <a href="https://github.com/Kolbxyz/wander">Wander</a> and <a href="https://github.com/AgroUPlus/Wanda">Wanda</a>
+  Open-source, self-hosted music ecosystem for <a href="https://github.com/AgroUPlus/Wander">Wander</a> and <a href="https://github.com/AgroUPlus/Wanda">Wanda</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AgroUPlus/Agro/actions/workflows/ci.yml"><img src="https://github.com/AgroUPlus/Agro/actions/workflows/ci.yml/badge.svg" alt="CI Status"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"/></a>
+  <a href="https://agrouplus.github.io/Agro"><img src="https://img.shields.io/badge/docs-OpenAPI%20%2F%20GraphQL-brightgreen" alt="Documentation"/></a>
 </p>
 
 <p align="center">
   <a href="https://agrouplus.github.io/Agro">Website</a> ·
+  <a href="https://github.com/AgroUPlus/Wanda">Wanda (Android)</a> ·
+  <a href="https://github.com/AgroUPlus/Wander">Wander (Desktop)</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="SHARE_LINKS.md">Share Links</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a>
 </p>
 
 ---
@@ -304,7 +313,7 @@ Builds the dashboard and the server locally (the Rust binary inside a Debian 12 
 
 ---
 
-## Licence
+## License
 
 **AGPL-3.0** — see [`LICENSE`](LICENSE).
 
