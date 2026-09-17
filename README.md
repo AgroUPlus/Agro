@@ -19,7 +19,8 @@
 
 Agro is a lightweight Rust daemon that keeps playback state, library sync, and social presence in one place — so a session started on your desktop can be picked up on your phone, and your friends can follow along if you let them.
 
-- **GraphQL API** — `POST /graphql`
+- **GraphQL API** — `POST /graphql` (schema definition language at `/graphql/sdl`, interactive GraphiQL client at `/graphql/playground`)
+- **REST API docs** — Swagger UI at `/api/docs` (raw OpenAPI spec at `/api/docs/openapi.json`), covering the handful of REST endpoints — auth, uploads, relay, SSO, share links — that exist because GraphQL is a poor fit for them
 - **Live push** — `GET /ws/sync` (WebSocket: `HANDOFF`, `NODE_UPDATE`, `SETTINGS_SYNC`, `LIBRARY_UPDATED`, `SYNC_OFFER`, `FRIEND_PRESENCE`, `FRIEND_REQUEST`, `LISTEN_ALONG`)
 - **Embedded dashboard** — served at `/`, compiled into the binary
 - **SQLite storage** — single file, no external database
@@ -190,7 +191,7 @@ journalctl -u agro | grep -A2 'setup token'
 ```bash
 curl -s -X POST https://agro.example.com/api/v1/bootstrap \
   -H 'Content-Type: application/json' \
-  -d '{"setup_token":"<from the log>","username":"alpha"}'
+  -d '{"setupToken":"<from the log>","username":"alpha"}'
 ```
 The response carries the **passphrase** and a device token — both shown once. Save the passphrase; there is no reset.
 
@@ -276,6 +277,8 @@ Public routes (no token needed):
 | `GET /share/{token}`, `GET /listen` | Capability URLs — the token in the path is the credential. |
 
 All three mutation routes are rate-limited (10 attempts / 5 min per IP).
+
+Full request/response shapes for every REST endpoint, including error responses, are documented interactively at `/api/docs`.
 
 ---
 

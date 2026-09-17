@@ -39,7 +39,7 @@ const DEFAULT_HOSTS: &[&str] = &[
 /// decorated value from being pasted into a `Location` header.
 const VIDEO_ID_LEN: usize = 11;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 pub struct ListenParams {
     /// A short link UID minted by Agro.
     id: Option<String>,
@@ -103,6 +103,19 @@ fn playback_suffix(speed: Option<f32>, pitch: Option<f32>) -> String {
     }
 }
 
+/// Public, unauthenticated, and logs nothing — see the module docs. **Implements
+/// `SHARE_LINKS.md`, which is normative and shared with external Kotlin/JS clients: the
+/// parameter names and bounds here are frozen.**
+#[utoipa::path(
+    get,
+    path = "/listen",
+    tag = "sharing",
+    params(ListenParams),
+    responses(
+        (status = 200, description = "HTML page that forwards the browser to the resolved track link client-side", content_type = "text/html"),
+        (status = 404, description = "No usable target (unknown short link, or a host not on the allow-list)", content_type = "text/html"),
+    ),
+)]
 pub async fn listen_handler(
     Query(params): Query<ListenParams>,
     State(state): State<AppState>,

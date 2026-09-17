@@ -5,6 +5,15 @@ use axum::{
 use crate::listen::escape_html;
 use crate::AppState;
 
+/// Public, unauthenticated. Renders a small HTML player page for a capability-URL share link, or
+/// an "expired" page once the 24-hour ephemeral share is gone.
+#[utoipa::path(
+    get,
+    path = "/share/{token}",
+    tag = "sharing",
+    params(("token" = String, Path, description = "Ephemeral share token")),
+    responses((status = 200, description = "HTML page: the player, or an expiry notice", content_type = "text/html")),
+)]
 pub async fn share_handler(
     Path(token): Path<String>,
     State(state): State<AppState>,

@@ -24,6 +24,25 @@ pub fn is_allowed_proxy_domain(host: &str) -> bool {
         .any(|&d| host == d || host.ends_with(&format!(".{d}")))
 }
 
+/// Documented as `GET` only: the real route is mounted with `axum::routing::any(...)` in
+/// `main.rs` and accepts every HTTP method, but utoipa requires one method per path item and
+/// Swagger UI has no way to represent "any method" anyway. Do not read this as a signal that the
+/// route could be narrowed to GET without checking `main.rs`'s route registration first.
+#[utoipa::path(
+    get,
+    path = "/api/v1/proxy",
+    tag = "proxy",
+    security(("bearer_token" = [])),
+    description = "Passthrough proxy to an allow-listed metadata/lyrics host (see \
+                   `is_allowed_proxy_domain`). Accepts any HTTP method. The target URL is given \
+                   in the `X-Agro-Proxy-Url` request header, not a query parameter.",
+    responses(
+        (status = 200, description = "Proxied response, headers and body passed through"),
+        (status = 400, description = "Missing or invalid X-Agro-Proxy-Url header"),
+        (status = 403, description = "Domain not on the allow-list, or the privacy relay is disabled"),
+        (status = 502, description = "The upstream request failed"),
+    ),
+)]
 pub async fn proxy_handler(
     State(state): State<AppState>,
     Extension(_user): Extension<AuthedUser>,
