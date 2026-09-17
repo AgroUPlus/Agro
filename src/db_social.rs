@@ -80,6 +80,11 @@ pub struct Profile {
     pub incognito: bool,
     /// The public identity key (e.g. X25519) used for end-to-end encrypted track drops and messages.
     pub public_key: Option<String>,
+    /// Whether this account's plays count toward the fleet-wide Popular on Agro chart.
+    ///
+    /// Unlike the switches above, this defaults open — see migration 48: `popularity_counters`
+    /// never stores an account id, so there is no identity here for a default to leak.
+    pub popular_opt_in: bool,
 }
 
 /// One device's published identity key.
@@ -104,10 +109,10 @@ pub struct FriendEdge {
 
 /// How many columns [`PROFILE_COLUMNS`] selects, so anything appended after them can be indexed
 /// relative to it rather than by a number that has to be remembered.
-const PROFILE_COLUMN_COUNT: usize = 12;
+const PROFILE_COLUMN_COUNT: usize = 13;
 
 const PROFILE_COLUMNS: &str =
-    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity, incognito, public_key";
+    "username, display_name, bio, avatar_url, created_at, show_now_playing, show_stats, discoverable, share_library, show_activity, incognito, public_key, popular_opt_in";
 
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
     Ok(Profile {
@@ -123,6 +128,7 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         show_activity: row.get::<_, i64>(9)? != 0,
         incognito: row.get::<_, i64>(10)? != 0,
         public_key: row.get(11)?,
+        popular_opt_in: row.get::<_, i64>(12)? != 0,
     })
 }
 
@@ -145,6 +151,11 @@ impl Profile {
     /// Whether the activity timeline is open.
     pub fn shows_activity(&self) -> bool {
         self.show_activity && !self.incognito
+    }
+
+    /// Whether this account's plays should be counted into Popular on Agro.
+    pub fn contributes_to_popular(&self) -> bool {
+        self.popular_opt_in && !self.incognito
     }
 }
 
@@ -802,5 +813,51 @@ impl Db {
             .query_map([], profile_from_row)?
             .collect::<Result<Vec<_>>>()?;
         Ok(pending)
+    }
+}
+
+#[cfg(test)]
+mod popular_opt_in_tests {
+    use crate::db::Db;
+    use crate::db_identity::{AccountState, Role};
+
+    /// Unlike every other visibility flag, this one starts open — see migration 48.
+    #[test]
+    fn defaults_on_for_a_new_account() {
+        let db = Db::new_in_memory().unwrap();
+        db.create_account("alpha", "alpha-pass", Role::Member, AccountState::Active)
+            .unwrap();
+
+        let profile = db.profile("alpha").unwrap().unwrap();
+        assert!(profile.popular_opt_in, "Popular on Agro must default to on");
+        assert!(profile.contributes_to_popular());
+    }
+
+    #[test]
+    fn opting_out_stops_contribution_without_touching_incognito() {
+        let db = Db::new_in_memory().unwrap();
+        db.create_account("alpha", "alpha-pass", Role::Member, AccountState::Active)
+            .unwrap();
+
+        db.set_popular_opt_in("alpha", false).unwrap();
+
+        let profile = db.profile("alpha").unwrap().unwrap();
+        assert!(!profile.popular_opt_in);
+        assert!(!profile.contributes_to_popular());
+        assert!(!profile.incognito, "opting out of the chart must not be incognito");
+    }
+
+    /// Incognito is a blanket override, same as it is for now-playing and stats.
+    #[test]
+    fn incognito_suppresses_contribution_even_when_opted_in() {
+        let db = Db::new_in_memory().unwrap();
+        db.create_account("alpha", "alpha-pass", Role::Member, AccountState::Active)
+            .unwrap();
+
+        db.set_incognito("alpha", true).unwrap();
+
+        let profile = db.profile("alpha").unwrap().unwrap();
+        assert!(profile.popular_opt_in, "the standing consent itself must be untouched");
+        assert!(!profile.contributes_to_popular(), "incognito must still override it");
     }
 }

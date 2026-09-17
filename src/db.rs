@@ -1058,6 +1058,13 @@ const MIGRATIONS: &[&str] = &[
      );
      CREATE INDEX IF NOT EXISTS idx_artist_subscriptions_artist
          ON artist_subscriptions(artist_id);",
+    // 48 — opting in to Popular on Agro.
+    //
+    // Defaults to 1, unlike every other visibility column here, and that is a deliberate
+    // departure from the "defaults closed" rule the rest of this file follows: `popularity_counters`
+    // never carries an account id and never exposes a row below the exposure floor, so this switch
+    // controls disclosure of aggregate taste, not identity. There is nothing under it to leak.
+    "ALTER TABLE users ADD COLUMN popular_opt_in INTEGER NOT NULL DEFAULT 1;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so

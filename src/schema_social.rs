@@ -88,6 +88,8 @@ pub struct ProfilePayload {
     pub incognito: bool,
     /// Public identity key for E2EE track drops and communications.
     pub public_key: Option<String>,
+    /// Whether this account's plays count toward the fleet-wide Popular on Agro chart.
+    pub popular_opt_in: bool,
 }
 
 /// What a client needs to finish enrolling a second factor. Shown once and never again.
@@ -244,6 +246,7 @@ pub fn profile_payload(profile: &Profile, state: Option<FriendState>, outgoing: 
         show_activity: profile.show_activity,
         incognito: profile.incognito,
         public_key: profile.public_key.clone(),
+        popular_opt_in: profile.popular_opt_in,
     }
 }
 
@@ -934,16 +937,17 @@ impl SocialMutation {
         Ok(codes)
     }
 
-    /// The three switches that decide what a friend can see, and whether strangers can find you.
+    /// The switches that decide what a friend can see, whether strangers can find you, and whether
+    /// your plays feed the fleet-wide Popular on Agro chart.
     ///
-    /// One mutation rather than three, so the privacy screen writes what the user sees in a single
-    /// round trip and cannot land half-applied.
-    /// Each switch is optional and one left out is left alone.
+    /// One mutation rather than one per switch, so the privacy screen writes what the user sees in
+    /// a single round trip and cannot land half-applied. Each switch is optional and one left out is
+    /// left alone.
     ///
-    /// This matters more than it looks: the flags are three independent decisions, and requiring
-    /// all three on every call means a client flipping one has to resend its idea of the other two.
-    /// Two devices doing that concurrently silently undo each other — a switch turned on over here
-    /// gets reverted by a stale copy sent from over there.
+    /// This matters more than it looks: the flags are independent decisions, and requiring all of
+    /// them on every call means a client flipping one has to resend its idea of the rest. Two
+    /// devices doing that concurrently silently undo each other — a switch turned on over here gets
+    /// reverted by a stale copy sent from over there.
     async fn set_visibility(
         &self,
         ctx: &Context<'_>,
@@ -952,6 +956,7 @@ impl SocialMutation {
         discoverable: Option<bool>,
         share_library: Option<bool>,
         show_activity: Option<bool>,
+        popular_opt_in: Option<bool>,
     ) -> async_graphql::Result<ProfilePayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -970,6 +975,9 @@ impl SocialMutation {
         }
         if let Some(show) = show_activity {
             db.set_show_activity(authed.username(), show)?;
+        }
+        if let Some(opt_in) = popular_opt_in {
+            db.set_popular_opt_in(authed.username(), opt_in)?;
         }
 
         // Turning now-playing off ends every session following it. Leaving them attached would mean

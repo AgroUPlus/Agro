@@ -40,7 +40,20 @@ pub struct PluginContext {
 }
 
 fn meta(key: &str, value: impl Into<String>) -> PluginMetaItem {
-    PluginMetaItem { key: key.to_string(), value: value.into() }
+    PluginMetaItem {
+        key: key.to_string(),
+        value: value.into(),
+    }
+}
+
+/// Whether an admin has left plugin `id` on. Defaults on, like every entry in [`get_plugins`]
+/// until a saved state overrides it.
+pub(crate) fn is_enabled(db: &crate::db::Db, id: &str) -> bool {
+    db.get_plugin_states()
+        .unwrap_or_default()
+        .get(id)
+        .copied()
+        .unwrap_or(true)
 }
 
 pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
@@ -171,6 +184,26 @@ pub fn get_plugins(ctx: &PluginContext) -> Vec<AgroPlugin> {
             metadata: vec![
                 meta("Caching", "Enabled (24 hours)"),
                 meta("Target", "Metadata APIs only (no media streams)"),
+            ],
+        },
+        AgroPlugin {
+            id: "popular-charts".to_string(),
+            name: "Popular on Agro".to_string(),
+            description: "A fleet-wide chart of what the server is listening to. Counted with no \
+                account attached and nothing shown below the exposure floor — see submitPlayCounts \
+                and popularTracks."
+                .to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            category: "Social".to_string(),
+            target: "Core".to_string(),
+            is_enabled: true,
+            is_connected: true,
+            latency_ms: None,
+            endpoint: Some("/graphql".to_string()),
+            metadata: vec![
+                meta("Exposure floor", format!("{} plays", crate::db_popularity::MIN_EXPOSURE_COUNT)),
+                meta("Retention", format!("{} days", crate::db_popularity::RETENTION_DAYS)),
+                meta("Per-user opt-out", "Account Settings → Privacy"),
             ],
         },
     ]

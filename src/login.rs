@@ -296,7 +296,10 @@ pub async fn login(
     // Only a *confirmed* enrolment is demanded here. An admin under enforcement who has not
     // enrolled yet cannot be asked for a code they do not have — they are let in, and the GraphQL
     // gate confines them to the enrolment mutations until they finish.
-    let needs_totp = state.db.totp_is_confirmed(&account.username).unwrap_or(false);
+    let needs_totp = state
+        .db
+        .totp_is_confirmed(&account.username)
+        .unwrap_or(false);
 
     if needs_totp {
         let presented = body.totp_code.as_deref().unwrap_or_default();
@@ -326,7 +329,10 @@ pub async fn login(
 
         // From here the passphrase is already proved, so these attempts belong in their own bucket
         // rather than the anonymous one they used to share.
-        if !state.rate_limiter.allow_second_factor(&client_ip, &account.username) {
+        if !state
+            .rate_limiter
+            .allow_second_factor(&client_ip, &account.username)
+        {
             tracing::warn!(
                 target: "agro::auth",
                 stage = "second-factor-throttled",
@@ -339,7 +345,9 @@ pub async fn login(
                 if outcome == crate::db_identity::TotpOutcome::AcceptedRecoveryCode {
                     state.db.record_event(
                         crate::audit::Event::RecoveryCodeUsed,
-                        crate::audit::Record::new().user(&account.username).ip(&client_ip),
+                        crate::audit::Record::new()
+                            .user(&account.username)
+                            .ip(&client_ip),
                     );
                 }
             }
@@ -407,7 +415,10 @@ pub async fn login(
 
     let enrolment_owed = account.is_admin()
         && crate::auth::admin_totp_required()
-        && !state.db.totp_is_confirmed(&account.username).unwrap_or(false);
+        && !state
+            .db
+            .totp_is_confirmed(&account.username)
+            .unwrap_or(false);
 
     match state.db.mint_device_token(&account.username, label) {
         Ok(token) => {
@@ -485,19 +496,20 @@ pub async fn bootstrap(
     };
 
     let passphrase = generate_passphrase();
-    let account = match state
-        .db
-        .create_account(&username, &passphrase, Role::Admin, AccountState::Active)
-    {
-        Ok(account) => account,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("could not create the account: {err}") })),
-            )
-                .into_response()
-        }
-    };
+    let account =
+        match state
+            .db
+            .create_account(&username, &passphrase, Role::Admin, AccountState::Active)
+        {
+            Ok(account) => account,
+            Err(err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("could not create the account: {err}") })),
+                )
+                    .into_response()
+            }
+        };
 
     let token = state
         .db
@@ -730,7 +742,10 @@ pub(crate) mod tests {
     fn a_client_is_cut_off_after_the_limit() {
         let limiter = RateLimiter::new();
         for attempt in 1..=MAX_ATTEMPTS {
-            assert!(limiter.allow("10.0.0.1"), "attempt {attempt} should be allowed");
+            assert!(
+                limiter.allow("10.0.0.1"),
+                "attempt {attempt} should be allowed"
+            );
         }
         assert!(!limiter.allow("10.0.0.1"), "the limit was not enforced");
     }
@@ -829,6 +844,7 @@ pub(crate) mod tests {
             http_client: reqwest::Client::new(),
             setup_token: crate::auth::SetupToken::for_fresh_server(1),
             rate_limiter: std::sync::Arc::new(RateLimiter::new()),
+            popular_rate_limiter: std::sync::Arc::new(crate::rate_limit::FixedWindow::new()),
             oidc_flows: std::sync::Arc::new(crate::oidc::FlowStore::new()),
         }
     }
@@ -863,7 +879,11 @@ pub(crate) mod tests {
             StatusCode::UNAUTHORIZED,
             "signup was allowed to claim the empty database"
         );
-        assert_eq!(db.user_count().unwrap(), 0, "a refused signup still created an account");
+        assert_eq!(
+            db.user_count().unwrap(),
+            0,
+            "a refused signup still created an account"
+        );
 
         // With an administrator in place it behaves normally again.
         db.create_account("alpha", "alpha-pass", Role::Admin, AccountState::Active)
@@ -902,8 +922,14 @@ mod client_ip_tests {
         for _ in 0..MAX_ATTEMPTS {
             limiter.allow(&first);
         }
-        assert!(!limiter.allow(&first), "the exhausted client is still allowed");
-        assert!(limiter.allow(&second), "one client's attempts locked out another");
+        assert!(
+            !limiter.allow(&first),
+            "the exhausted client is still allowed"
+        );
+        assert!(
+            limiter.allow(&second),
+            "one client's attempts locked out another"
+        );
     }
 
     /// A header from someone who is not a proxy is a claim, not a fact.

@@ -1291,6 +1291,20 @@ impl Db {
         Ok(changed > 0)
     }
 
+    /// Whether this account's plays count toward the fleet-wide Popular on Agro chart.
+    ///
+    /// Its own setter for the same reason `set_share_library` and `set_show_activity` are: a
+    /// client resending the whole visibility struct with one field changed must not silently
+    /// re-enable a contribution decision it never touched.
+    pub fn set_popular_opt_in(&self, username: &str, opt_in: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE users SET popular_opt_in = ?1 WHERE username = ?2 COLLATE NOCASE",
+            params![opt_in as i64, username.trim()],
+        )?;
+        Ok(changed > 0)
+    }
+
     pub fn set_visibility(
         &self,
         username: &str,

@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Charts — Agro</title>
+    <meta name="description" content="Popular on Agro: what the fleet has been playing, counted with no account attached. No login required." />
+
+    <!-- Google Fonts & Material Symbols -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,600,1,0" />
+
+    <link rel="stylesheet" href="../style.css" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Crect width='108' height='108' rx='42' fill='%23D0BCFF'/%3E%3Cpath fill='%23381E72' d='M16 63C16 57 19 53 25 51L38 47C44 45 48 41 51 34C52 31 54 29 57 29L58 15C58 11 63 10 65 14L71 28C79 31 85 38 87 48C89 60 86 71 81 79C79 83 77 86 76 88L48 88C48 79 45 73 39 70C33 67 27 68 22 70C18 71 16 68 16 63Z'/%3E%3C/svg%3E" />
+
+    <style>
+      /* Chart-specific markup with no equivalent in style.css — mirrors the dashboard's
+         PopularTab.jsx classes so the same visual language carries over to this public page. */
+      .charts-page { padding: 140px 0 90px; min-height: 100vh; }
+      .charts-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 28px; }
+      .charts-back { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); margin-bottom: 14px; }
+      .charts-back:hover { color: var(--md-sys-color-on-surface); }
+      .charts-server { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--md-sys-color-outline); margin-top: 6px; }
+
+      .card {
+        background: var(--md-sys-color-surface-container-low); border: 2px solid var(--md-sys-color-outline-variant);
+        border-radius: 28px; padding: 24px; margin-bottom: 16px;
+      }
+      .card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+      .card-title { font-size: 15.5px; font-weight: 800; color: var(--md-sys-color-on-surface); }
+      .card-subtitle { font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-top: 2px; }
+
+      .segmented { display: inline-flex; background: var(--md-sys-color-surface-container-lowest); border-radius: 9999px; padding: 4px; gap: 2px; }
+      .segmented-btn { padding: 8px 16px; font-size: 12.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); border-radius: 9999px; transition: all 0.15s; }
+      .segmented-btn.active { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+      .segmented-btn:not(.active):hover { color: var(--md-sys-color-on-surface); }
+
+      .empty-hint { display: flex; align-items: center; padding: 32px 8px; font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); text-align: left; }
+
+      .chart-list { display: flex; flex-direction: column; gap: 6px; }
+      .chart-row {
+        position: relative; display: flex; align-items: center; gap: 14px; padding: 8px 16px 8px 8px;
+        border-radius: 16px; overflow: hidden; color: inherit; transition: background-color 0.15s;
+      }
+      .chart-row:hover { background: var(--md-sys-color-surface-container-highest); }
+      .chart-row-fill {
+        position: absolute; inset: 0; right: auto; background: var(--md-sys-color-secondary-container);
+        opacity: 0.5; border-radius: 16px; transition: width 0.3s var(--m3-spring-fast);
+      }
+      .chart-rank { position: relative; width: 20px; text-align: center; font-size: 13px; font-weight: 800; color: var(--md-sys-color-on-surface-variant); }
+      .chart-cover {
+        position: relative; width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+        background: var(--md-sys-color-surface-container-highest); object-fit: cover;
+        display: flex; align-items: center; justify-content: center; overflow: hidden;
+      }
+      .chart-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .chart-cover .material-symbols-rounded { font-size: 20px; color: var(--md-sys-color-on-surface-variant); }
+      .chart-info { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+      .chart-title { font-size: 14px; font-weight: 700; color: var(--md-sys-color-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .chart-artist { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .chart-count { position: relative; font-size: 12.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); flex-shrink: 0; }
+    </style>
+  </head>
+  <body>
+    <main class="page charts-page">
+      <div class="container" style="max-width: 720px;">
+        <a href="../" class="charts-back">
+          <span class="material-symbols-rounded" style="font-size:18px;">arrow_back</span>
+          Agro
+        </a>
+
+        <div class="charts-header">
+          <div>
+            <span class="section-badge">
+              <span class="material-symbols-rounded" style="font-size:18px;">bar_chart</span>
+              Charts
+            </span>
+            <h1 class="section-title" style="margin-top:10px;">Popular on Agro</h1>
+            <div class="charts-server">Server: <span id="server-display"></span></div>
+          </div>
+          <button class="btn btn-tonal btn-sm" onclick="openServerModal()">
+            <span class="material-symbols-rounded" style="font-size:16px;">dns</span>
+            Change server
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">What the fleet has been playing</div>
+              <div class="card-subtitle">Counted with no account attached — see the project's privacy notes.</div>
+            </div>
+            <div class="segmented" id="window-switcher"></div>
+          </div>
+        </div>
+
+        <div class="card" id="chart-card">
+          <div class="empty-hint">Loading…</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Change-server dialog, mirroring the home page's Connect dialog -->
+    <div class="modal-backdrop" id="server-backdrop" onclick="handleServerBackdropClick(event)">
+      <div class="modal">
+        <button class="modal-close" onclick="closeServerModal()"><span class="material-symbols-rounded">close</span></button>
+        <h3 style="font-size:1.3rem;font-weight:900;color:var(--md-sys-color-on-surface);margin-bottom:6px;">Change server</h3>
+        <p style="font-size:13.5px;color:var(--md-sys-color-on-surface-variant);">Point this chart at any Agro server. Nothing here requires signing in.</p>
+        <input class="modal-input" id="server-input" type="text" placeholder="https://agro.example.com" />
+        <div style="display:flex;gap:12px;justify-content:flex-end;">
+          <button class="btn btn-tonal btn-sm" onclick="closeServerModal()">Cancel</button>
+          <button class="btn btn-filled btn-sm" onclick="saveServer()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const DEFAULT_SERVER = 'https://agro.kolbxyz.xyz';
+      const STORAGE_KEY = 'agro_charts_server';
+      const WINDOWS = [
+        { label: '24 hours', days: 1 },
+        { label: '7 days', days: 7 },
+        { label: '30 days', days: 30 },
+      ];
+
+      let days = 7;
+
+      function readStoredServer() {
+        try {
+          return localStorage.getItem(STORAGE_KEY);
+        } catch (e) {
+          return null;
+        }
+      }
+      function writeStoredServer(value) {
+        try {
+          localStorage.setItem(STORAGE_KEY, value);
+        } catch (e) {
+          // Private browsing, blocked storage, etc. — the ?server= override or the default still
+          // work for this page load, so there is nothing to recover from here.
+        }
+      }
+
+      function resolveServer() {
+        const fromQuery = new URLSearchParams(window.location.search).get('server');
+        if (fromQuery) return fromQuery.replace(/\/$/, '');
+        const stored = readStoredServer();
+        if (stored) return stored.replace(/\/$/, '');
+        return DEFAULT_SERVER;
+      }
+
+      let server = resolveServer();
+
+      const serverDisplay = document.getElementById('server-display');
+      const chartCard = document.getElementById('chart-card');
+      const windowSwitcher = document.getElementById('window-switcher');
+      const serverBackdrop = document.getElementById('server-backdrop');
+      const serverInput = document.getElementById('server-input');
+
+      function renderServerDisplay() {
+        serverDisplay.textContent = server;
+      }
+
+      function renderWindowSwitcher() {
+        windowSwitcher.innerHTML = '';
+        for (const option of WINDOWS) {
+          const btn = document.createElement('button');
+          btn.className = 'segmented-btn' + (option.days === days ? ' active' : '');
+          btn.textContent = option.label;
+          btn.onclick = () => {
+            days = option.days;
+            renderWindowSwitcher();
+            loadChart();
+          };
+          windowSwitcher.appendChild(btn);
+        }
+      }
+
+      // A search link, not a specific video: the server never claims to know which upload is
+      // "the" recording, since that identifier would have to come from someone's own library and
+      // this chart is deliberately anonymous. See docs on `/api/v1/popular` for why.
+      function youtubeMusicSearchUrl(artist, title) {
+        const query = encodeURIComponent(`${artist} ${title}`);
+        return `https://music.youtube.com/search?q=${query}`;
+      }
+
+      function coverPlaceholderIcon() {
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-rounded';
+        icon.textContent = 'music_note';
+        return icon;
+      }
+
+      function setHint(text) {
+        chartCard.innerHTML = '';
+        const hint = document.createElement('div');
+        hint.className = 'empty-hint';
+        hint.textContent = text;
+        chartCard.appendChild(hint);
+      }
+
+      function renderTracks(tracks) {
+        chartCard.innerHTML = '';
+        const peak = Math.max(1, ...tracks.map((t) => t.count));
+        const list = document.createElement('div');
+        list.className = 'chart-list';
+        tracks.forEach((track, index) => {
+          const row = document.createElement('a');
+          row.className = 'chart-row';
+          row.href = youtubeMusicSearchUrl(track.artist, track.title);
+          row.target = '_blank';
+          row.rel = 'noopener';
+          row.title = `Search "${track.artist} - ${track.title}" on YouTube Music`;
+
+          const fill = document.createElement('div');
+          fill.className = 'chart-row-fill';
+          fill.style.width = `${(track.count / peak) * 100}%`;
+          row.appendChild(fill);
+
+          const rank = document.createElement('span');
+          rank.className = 'chart-rank';
+          rank.textContent = String(index + 1);
+          row.appendChild(rank);
+
+          const cover = document.createElement('div');
+          cover.className = 'chart-cover';
+          if (track.cover_url) {
+            const img = document.createElement('img');
+            img.src = track.cover_url;
+            img.alt = '';
+            img.loading = 'lazy';
+            // A dead image link falls back to the same placeholder icon a missing cover gets.
+            img.onerror = () => {
+              cover.innerHTML = '';
+              cover.appendChild(coverPlaceholderIcon());
+            };
+            cover.appendChild(img);
+          } else {
+            cover.appendChild(coverPlaceholderIcon());
+          }
+          row.appendChild(cover);
+
+          const info = document.createElement('div');
+          info.className = 'chart-info';
+          const title = document.createElement('span');
+          title.className = 'chart-title';
+          title.title = track.title;
+          title.textContent = track.title;
+          const artist = document.createElement('span');
+          artist.className = 'chart-artist';
+          const artistLine = track.album ? `${track.artist} · ${track.album}` : track.artist;
+          artist.title = artistLine;
+          artist.textContent = artistLine;
+          info.appendChild(title);
+          info.appendChild(artist);
+          row.appendChild(info);
+
+          const count = document.createElement('span');
+          count.className = 'chart-count';
+          count.textContent = `${track.count} plays`;
+          row.appendChild(count);
+
+          list.appendChild(row);
+        });
+        chartCard.appendChild(list);
+      }
+
+      async function loadChart() {
+        setHint('Loading…');
+        let response;
+        try {
+          response = await fetch(`${server}/api/v1/popular?days=${days}&limit=25`);
+        } catch (e) {
+          setHint("Couldn't reach that server. Check the address and try again.");
+          return;
+        }
+        if (!response.ok) {
+          setHint("Couldn't reach that server. Check the address and try again.");
+          return;
+        }
+        let body;
+        try {
+          body = await response.json();
+        } catch (e) {
+          setHint("That server did not answer with a chart.");
+          return;
+        }
+        if (!body.enabled) {
+          setHint('Charts are turned off on this server.');
+          return;
+        }
+        if (!body.tracks || body.tracks.length === 0) {
+          setHint('Nothing charted yet.');
+          return;
+        }
+        renderTracks(body.tracks);
+      }
+
+      function openServerModal() {
+        serverInput.value = server;
+        serverBackdrop.classList.add('open');
+        serverInput.focus();
+      }
+      function closeServerModal() {
+        serverBackdrop.classList.remove('open');
+      }
+      function handleServerBackdropClick(e) {
+        if (e.target === serverBackdrop) closeServerModal();
+      }
+      function saveServer() {
+        let val = serverInput.value.trim();
+        if (!val) return;
+        if (!/^https?:\/\//i.test(val)) val = 'https://' + val;
+        server = val.replace(/\/$/, '');
+        writeStoredServer(server);
+        renderServerDisplay();
+        closeServerModal();
+        loadChart();
+      }
+
+      renderServerDisplay();
+      renderWindowSwitcher();
+      loadChart();
+    </script>
+  </body>
+</html>
