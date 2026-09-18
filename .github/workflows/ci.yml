@@ -27,7 +27,7 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install dependencies
-        run: npm --prefix dashboard ci
+        run: npm --prefix dashboard ci --ignore-scripts
 
       - name: Build Dashboard
         run: npm --prefix dashboard run build
@@ -49,16 +49,16 @@ jobs:
 
       - name: Build Dashboard for Embedding
         run: |
-          npm --prefix dashboard ci
+          npm --prefix dashboard ci --ignore-scripts
           npm --prefix dashboard run build
 
       - name: Setup Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (stable)
         with:
           components: rustfmt, clippy
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.7.7
 
       - name: Check Formatting
         run: cargo fmt --check
@@ -79,7 +79,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v8.1.0
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

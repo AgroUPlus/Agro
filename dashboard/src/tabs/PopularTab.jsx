@@ -42,6 +42,40 @@ export default function PopularTab({ onUnauthorized }) {
 
   const peak = Math.max(1, ...(tracks || []).map(t => t.count));
 
+  let chartContent;
+  if (tracks === null) {
+    chartContent = <div className="empty-hint">Loading…</div>;
+  } else if (tracks.length === 0) {
+    chartContent = (
+      <div className="empty-hint">
+        <TrendingUp size={15} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
+        Nothing to show yet — either the server has not played enough for anything to clear the
+        exposure floor, or an admin has turned this chart off.
+      </div>
+    );
+  } else {
+    chartContent = (
+      <div className="chart-list">
+        {tracks.map((track, index) => (
+          <div key={`${track.artist}-${track.title}`} className="chart-row">
+            <div
+              className="chart-row-fill"
+              style={{ width: `${(track.count / peak) * 100}%` }}
+            />
+            <span className="chart-rank">{index + 1}</span>
+            <div className="chart-info">
+              <span className="chart-title" title={track.title}>{track.title}</span>
+              <span className="chart-artist" title={track.artist}>
+                {track.artist}{track.album ? ` · ${track.album}` : ''}
+              </span>
+            </div>
+            <span className="chart-count">{track.count} plays</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div className="card">
@@ -70,34 +104,7 @@ export default function PopularTab({ onUnauthorized }) {
       </div>
 
       <div className="card">
-        {tracks === null ? (
-          <div className="empty-hint">Loading…</div>
-        ) : tracks.length === 0 ? (
-          <div className="empty-hint">
-            <TrendingUp size={15} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
-            Nothing to show yet — either the server has not played enough for anything to clear the
-            exposure floor, or an admin has turned this chart off.
-          </div>
-        ) : (
-          <div className="chart-list">
-            {tracks.map((track, index) => (
-              <div key={`${track.artist}-${track.title}`} className="chart-row">
-                <div
-                  className="chart-row-fill"
-                  style={{ width: `${(track.count / peak) * 100}%` }}
-                />
-                <span className="chart-rank">{index + 1}</span>
-                <div className="chart-info">
-                  <span className="chart-title" title={track.title}>{track.title}</span>
-                  <span className="chart-artist" title={track.artist}>
-                    {track.artist}{track.album ? ` · ${track.album}` : ''}
-                  </span>
-                </div>
-                <span className="chart-count">{track.count} plays</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {chartContent}
       </div>
     </div>
   );

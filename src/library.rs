@@ -502,13 +502,12 @@ async fn archive(
     }
 
     // The library is frequently a directory shared with another service — a media scanner, a file
-    // sync daemon — reached through a common group on a setgid directory. A file inheriting the
-    // spool's tighter mode would be one that service cannot manage, so widen it to group-writable.
+    // sync daemon. Ensure standard read permissions for group and others while owner retains write.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(err) =
-            tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o664)).await
+            tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).await
         {
             tracing::warn!("library: could not set mode on {}: {err}", target.display());
         }

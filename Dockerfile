@@ -3,7 +3,7 @@
 FROM node:20-alpine AS dashboard-builder
 WORKDIR /app/dashboard
 COPY dashboard/package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY dashboard/ ./
 RUN npm run build
 
@@ -14,18 +14,16 @@ WORKDIR /app
 COPY --from=dashboard-builder /app/dashboard/dist ./dashboard/dist
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-RUN cargo build --release
+RUN cargo build --release --locked
 
 # Stage 3: Minimal runtime container
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create unprivileged agro service user
-RUN groupadd -r agro --gid 1000 && \
-    useradd -r -g agro --uid 1000 -d /opt/agro -s /sbin/nologin agro
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r agro --gid 1000 \
+    && useradd -r -g agro --uid 1000 -d /opt/agro -s /sbin/nologin agro
 
 WORKDIR /opt/agro
 COPY --from=rust-builder /app/target/release/agro ./agro
