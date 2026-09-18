@@ -185,7 +185,9 @@ fn secret_key() -> Result<Key<Aes256Gcm>, String> {
     if raw.len() < 16 {
         return Err("AGRO_SECRET_KEY is too short; use at least 16 characters".into());
     }
-    Ok(*Key::<Aes256Gcm>::from_slice(&Sha256::digest(raw.as_bytes())))
+    Ok(*Key::<Aes256Gcm>::from_slice(&Sha256::digest(
+        raw.as_bytes(),
+    )))
 }
 
 /// Mints recovery codes: the way back in when the authenticator is gone.
@@ -217,8 +219,7 @@ pub fn hash_recovery_code(code: &str) -> String {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -298,8 +299,7 @@ pub mod tests {
     #[test]
     fn matches_the_rfc_6238_test_vectors() {
         // The RFC's seed is the ASCII "12345678901234567890".
-        let secret = Secret::new(b"12345678901234567890".to_vec().into_boxed_slice())
-            .to_base32();
+        let secret = Secret::new(b"12345678901234567890".to_vec().into_boxed_slice()).to_base32();
         let totp = totp_for(&secret).unwrap();
         for (time, expected) in [
             (59u64, "287082"),
@@ -370,7 +370,11 @@ pub mod tests {
         let previous = now / STEP - 1;
 
         assert_eq!(
-            verify(&e.secret_base32, &totp.generate(previous * STEP).to_string(), now),
+            verify(
+                &e.secret_base32,
+                &totp.generate(previous * STEP).to_string(),
+                now
+            ),
             Some(previous)
         );
     }
@@ -380,7 +384,11 @@ pub mod tests {
         let _env = with_key();
         let e = begin("alpha").unwrap();
         for bad in ["", "12345", "1234567", "abcdef", "12 34 56", "٣٤٥٦٧٨"] {
-            assert_eq!(verify(&e.secret_base32, bad, 1_700_000_000), None, "{bad:?}");
+            assert_eq!(
+                verify(&e.secret_base32, bad, 1_700_000_000),
+                None,
+                "{bad:?}"
+            );
         }
     }
 
@@ -404,7 +412,10 @@ pub mod tests {
     #[test]
     fn sealing_is_randomised() {
         let _env = with_key();
-        assert_ne!(seal("JBSWY3DPEHPK3PXP").unwrap(), seal("JBSWY3DPEHPK3PXP").unwrap());
+        assert_ne!(
+            seal("JBSWY3DPEHPK3PXP").unwrap(),
+            seal("JBSWY3DPEHPK3PXP").unwrap()
+        );
     }
 
     #[test]

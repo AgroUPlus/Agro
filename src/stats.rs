@@ -187,7 +187,7 @@ pub fn compute_wrapped(
     let mut period_rows = Vec::new();
 
     for row in all_rows {
-        if let Some(dt) = chrono::DateTime::parse_from_rfc3339(&row.played_at).ok() {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&row.played_at) {
             let row_year = dt.year();
             let row_month = dt.month() as i32;
 
@@ -286,7 +286,9 @@ mod tests {
             genre: Some("Rock".to_string()),
             duration_secs: secs,
             device_name: device.to_string(),
-            played_at: chrono::DateTime::from_timestamp(at, 0).unwrap().to_rfc3339(),
+            played_at: chrono::DateTime::from_timestamp(at, 0)
+                .unwrap()
+                .to_rfc3339(),
         }
     }
 
@@ -303,12 +305,12 @@ mod tests {
         // about the hour rounding rather than about where a day starts.
         let now = 30 * DAY;
         let offsets = [
-            61,            // a minute into the current hour
-            3599,          // a second before the hour rolls
-            3601,          // a second after it
-            2 * DAY + 59,  // two days back, just past the hour
+            61,           // a minute into the current hour
+            3599,         // a second before the hour rolls
+            3601,         // a second after it
+            2 * DAY + 59, // two days back, just past the hour
             2 * DAY + 3599,
-            7 * DAY + 1800, // mid-hour, a week back
+            7 * DAY + 1800,  // mid-hour, a week back
             29 * DAY + 1800, // near the far edge of the heatmap, but not on it
         ];
 
@@ -322,7 +324,13 @@ mod tests {
             .enumerate()
             .map(|(i, off)| {
                 let at = now - off;
-                row("A", &format!("t{i}"), 240, at - at.rem_euclid(3600), "phone")
+                row(
+                    "A",
+                    &format!("t{i}"),
+                    240,
+                    at - at.rem_euclid(3600),
+                    "phone",
+                )
             })
             .collect();
 
@@ -393,7 +401,10 @@ mod tests {
 
         assert_eq!(stats.secs_total, 900);
         assert_eq!(stats.secs_today, 300, "only the play from a minute ago");
-        assert_eq!(stats.secs_week, 600, "the nine-day-old play is outside the week");
+        assert_eq!(
+            stats.secs_week, 600,
+            "the nine-day-old play is outside the week"
+        );
         assert_eq!(stats.plays_total, 3);
     }
 
@@ -430,10 +441,10 @@ mod tests {
             row("A", "two", 100, now - 60, "laptop"),
         ];
         let stats = compute(&rows, 5, now);
-        assert_eq!(stats.by_device, vec![
-            ("phone".to_string(), 300),
-            ("laptop".to_string(), 100)
-        ]);
+        assert_eq!(
+            stats.by_device,
+            vec![("phone".to_string(), 300), ("laptop".to_string(), 100)]
+        );
     }
 
     #[test]

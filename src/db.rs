@@ -31,7 +31,8 @@ fn restrict_permissions(path: &Path) {
         if !target.exists() {
             continue;
         }
-        if let Err(error) = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
+        if let Err(error) =
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600))
         {
             eprintln!(
                 "agro: could not restrict permissions on {}: {error}",
@@ -1102,7 +1103,8 @@ impl Db {
     pub fn get_cached_proxy(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
-        let mut stmt = conn.prepare("SELECT headers, body FROM proxy_cache WHERE url = ?1 AND expires_at > ?2")?;
+        let mut stmt = conn
+            .prepare("SELECT headers, body FROM proxy_cache WHERE url = ?1 AND expires_at > ?2")?;
         let mut rows = stmt.query(params![url, now])?;
         if let Some(row) = rows.next()? {
             Ok(Some((row.get(0)?, row.get(1)?)))
@@ -1111,7 +1113,13 @@ impl Db {
         }
     }
 
-    pub fn set_cached_proxy(&self, url: &str, headers: &str, body: &[u8], expires_at: i64) -> Result<()> {
+    pub fn set_cached_proxy(
+        &self,
+        url: &str,
+        headers: &str,
+        body: &[u8],
+        expires_at: i64,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO proxy_cache (url, headers, body, expires_at) VALUES (?1, ?2, ?3, ?4)",
@@ -1179,7 +1187,10 @@ impl Db {
     fn migrate_handoff_queue(&self) {
         let conn = self.conn.lock().unwrap();
         let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_json TEXT", []);
-        let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_index INTEGER", []);
+        let _ = conn.execute(
+            "ALTER TABLE handoff_state ADD COLUMN queue_index INTEGER",
+            [],
+        );
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -1299,7 +1310,11 @@ impl Db {
         Ok(user_id)
     }
 
-    pub fn get_or_create_user(&self, username: &str, preferred_passphrase: Option<&str>) -> Result<(String, String)> {
+    pub fn get_or_create_user(
+        &self,
+        username: &str,
+        preferred_passphrase: Option<&str>,
+    ) -> Result<(String, String)> {
         if let Some((id, _, key)) = self.get_user_by_username(username)? {
             return Ok((id, key));
         }
@@ -1335,7 +1350,11 @@ impl Db {
         // Two columns are named differently everywhere, so this is a list rather than a loop: some
         // tables key on `users.id` and most key on the username, and `track_drops`/`friendships`
         // key on *two* user columns each.
-        let by_id: &[&str] = &["app_passwords", "totp_recovery_codes", "federated_identities"];
+        let by_id: &[&str] = &[
+            "app_passwords",
+            "totp_recovery_codes",
+            "federated_identities",
+        ];
         for table in by_id {
             conn.execute(
                 &format!("DELETE FROM {table} WHERE user_id = ?1"),
@@ -1401,10 +1420,22 @@ impl Db {
             "DELETE FROM listen_along WHERE listener_id = ?1 OR host_id = ?1",
             params![username],
         )?;
-        conn.execute("DELETE FROM jam_members WHERE username = ?1", params![username])?;
-        conn.execute("DELETE FROM jam_votes WHERE username = ?1", params![username])?;
-        conn.execute("DELETE FROM jam_skips WHERE username = ?1", params![username])?;
-        conn.execute("DELETE FROM jam_tracks WHERE added_by = ?1", params![username])?;
+        conn.execute(
+            "DELETE FROM jam_members WHERE username = ?1",
+            params![username],
+        )?;
+        conn.execute(
+            "DELETE FROM jam_votes WHERE username = ?1",
+            params![username],
+        )?;
+        conn.execute(
+            "DELETE FROM jam_skips WHERE username = ?1",
+            params![username],
+        )?;
+        conn.execute(
+            "DELETE FROM jam_tracks WHERE added_by = ?1",
+            params![username],
+        )?;
         conn.execute("DELETE FROM jams WHERE host = ?1", params![username])?;
 
         // The audit trail is the one thing kept, and only in a form that names nobody: "an account
@@ -1554,7 +1585,8 @@ impl Db {
 
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<(String, String, String)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, username, api_key FROM users WHERE username = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT id, username, api_key FROM users WHERE username = ?1")?;
         let mut rows = stmt.query(params![username])?;
         if let Some(row) = rows.next()? {
             Ok(Some((row.get(0)?, row.get(1)?, row.get(2)?)))
@@ -1586,6 +1618,9 @@ impl Db {
         Ok(map)
     }
 
+    // One row's worth of handoff state, all decided together by the caller — splitting this into
+    // setters per field would let two concurrent handoffs interleave into a state neither sent.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_handoff(
         &self,
         user_id: &str,
@@ -1857,10 +1892,9 @@ impl Db {
                 "DELETE FROM scrobbles WHERE user_id = ?1 AND played_at < ?2",
                 params![user_id, b],
             )?,
-            (None, None) => conn.execute(
-                "DELETE FROM scrobbles WHERE user_id = ?1",
-                params![user_id],
-            )?,
+            (None, None) => {
+                conn.execute("DELETE FROM scrobbles WHERE user_id = ?1", params![user_id])?
+            }
         };
         Ok(count)
     }
@@ -1927,13 +1961,12 @@ impl Db {
         let now_rfc = now.to_rfc3339();
         let now_unix = now.timestamp();
 
-        let run = |what: &str, sql: &str, args: &[&dyn rusqlite::ToSql]| {
-            match conn.execute(sql, args) {
+        let run =
+            |what: &str, sql: &str, args: &[&dyn rusqlite::ToSql]| match conn.execute(sql, args) {
                 Ok(n) if n > 0 => tracing::debug!("retention sweep: {what} removed {n} rows"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!("retention sweep: {what} failed: {e}"),
-            }
-        };
+            };
 
         run(
             "ephemeral_shares",
@@ -2145,7 +2178,7 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT device_id, user_id, petname, client_type, version, current_track, last_seen_at
-             FROM registered_nodes WHERE user_id = ?1 ORDER BY last_seen_at DESC"
+             FROM registered_nodes WHERE user_id = ?1 ORDER BY last_seen_at DESC",
         )?;
         let rows = stmt.query_map(params![user_id], |row| {
             Ok(NodeRecord {
@@ -2226,7 +2259,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT settings_blob, has_server_url, lyrics_fetch_online, stream_format,
                     share_domain, share_hosts, share_enabled, updated_at
-             FROM synced_settings WHERE user_id = ?1"
+             FROM synced_settings WHERE user_id = ?1",
         )?;
         let mut rows = stmt.query(params![user_id])?;
         if let Some(row) = rows.next()? {
@@ -2385,7 +2418,7 @@ impl Db {
             });
         }
 
-        links.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        links.sort_by_key(|l| std::cmp::Reverse(l.created_at));
         Ok(links)
     }
 
@@ -2640,7 +2673,11 @@ mod settings_vault_tests {
     }
 
     fn share() -> ShareSettingsInput<'static> {
-        ShareSettingsInput { domain: None, hosts: None, enabled: None }
+        ShareSettingsInput {
+            domain: None,
+            hosts: None,
+            enabled: None,
+        }
     }
 
     /// The blob goes in and comes out unchanged, and nothing on the way tries to interpret it.
@@ -2648,8 +2685,15 @@ mod settings_vault_tests {
     fn a_settings_blob_round_trips_untouched() {
         let db = db();
         let sealed = "6e6f742d612d75726c-deadbeef";
-        db.upsert_synced_settings("alpha", Some(sealed), Some(true), Some(true), Some("FLAC"), share())
-            .unwrap();
+        db.upsert_synced_settings(
+            "alpha",
+            Some(sealed),
+            Some(true),
+            Some(true),
+            Some("FLAC"),
+            share(),
+        )
+        .unwrap();
 
         let got = db.get_synced_settings("alpha").unwrap().unwrap();
         assert_eq!(got.settings_blob.as_deref(), Some(sealed));
@@ -2689,8 +2733,15 @@ mod settings_vault_tests {
     #[test]
     fn updating_a_preference_leaves_the_blob_alone() {
         let db = db();
-        db.upsert_synced_settings("alpha", Some("sealed"), Some(true), Some(true), None, share())
-            .unwrap();
+        db.upsert_synced_settings(
+            "alpha",
+            Some("sealed"),
+            Some(true),
+            Some(true),
+            None,
+            share(),
+        )
+        .unwrap();
         db.upsert_synced_settings("alpha", None, None, Some(false), None, share())
             .unwrap();
 
@@ -2710,7 +2761,12 @@ mod settings_vault_tests {
         db.upsert_synced_settings("alpha", Some("resealed"), Some(false), None, None, share())
             .unwrap();
 
-        assert!(!db.get_synced_settings("alpha").unwrap().unwrap().has_server_url);
+        assert!(
+            !db.get_synced_settings("alpha")
+                .unwrap()
+                .unwrap()
+                .has_server_url
+        );
     }
 }
 
@@ -2761,7 +2817,10 @@ mod scrobble_time_tests {
             })
             .collect();
 
-        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 4);
+        assert_eq!(
+            db.record_scrobbles("alpha", "phone", None, &batch).unwrap(),
+            4
+        );
 
         let stored = times(&db);
         assert_eq!(stored.len(), 4, "one row per play");
@@ -2776,9 +2835,16 @@ mod scrobble_time_tests {
     #[test]
     fn a_resent_batch_inserts_nothing() {
         let db = db();
-        let batch = vec![entry("Dayvan Cowboy", "2026-08-29T03:05:11+00:00", Some("uid-a"))];
+        let batch = vec![entry(
+            "Dayvan Cowboy",
+            "2026-08-29T03:05:11+00:00",
+            Some("uid-a"),
+        )];
 
-        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 1);
+        assert_eq!(
+            db.record_scrobbles("alpha", "phone", None, &batch).unwrap(),
+            1
+        );
         assert_eq!(
             db.record_scrobbles("alpha", "phone", None, &batch).unwrap(),
             0,
@@ -2793,7 +2859,10 @@ mod scrobble_time_tests {
         let db = db();
         let batch = vec![entry("Olson", "2026-08-29T03:05:11+00:00", Some("uid-a"))];
         db.record_scrobbles("alpha", "phone", None, &batch).unwrap();
-        assert_eq!(db.record_scrobbles("delta", "phone", None, &batch).unwrap(), 1);
+        assert_eq!(
+            db.record_scrobbles("delta", "phone", None, &batch).unwrap(),
+            1
+        );
     }
 
     /// A client that has not been updated keeps the exact timestamp, because the timestamp is
@@ -2807,7 +2876,10 @@ mod scrobble_time_tests {
         assert_eq!(times(&db), vec!["2026-08-29T03:05:11+00:00"]);
 
         // And it is still deduplicated the old way.
-        assert_eq!(db.record_scrobbles("alpha", "phone", None, &batch).unwrap(), 0);
+        assert_eq!(
+            db.record_scrobbles("alpha", "phone", None, &batch).unwrap(),
+            0
+        );
     }
 
     /// Settled history is rounded by the sweep even when it arrived without an id, which is how
@@ -3035,8 +3107,15 @@ mod node_naming_tests {
     #[test]
     fn a_reconnect_does_not_rename_a_named_device() {
         let db = db();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None)
-            .unwrap();
+        db.upsert_node(
+            "pixel",
+            "alpha",
+            NodeName::Set("Pixel 10"),
+            "wanda",
+            None,
+            None,
+        )
+        .unwrap();
 
         db.upsert_node(
             "pixel",
@@ -3070,10 +3149,24 @@ mod node_naming_tests {
     #[test]
     fn naming_a_device_still_renames_it() {
         let db = db();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Pixel 10"), "wanda", None, None)
-            .unwrap();
-        db.upsert_node("pixel", "alpha", NodeName::Set("Work phone"), "wanda", None, None)
-            .unwrap();
+        db.upsert_node(
+            "pixel",
+            "alpha",
+            NodeName::Set("Pixel 10"),
+            "wanda",
+            None,
+            None,
+        )
+        .unwrap();
+        db.upsert_node(
+            "pixel",
+            "alpha",
+            NodeName::Set("Work phone"),
+            "wanda",
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(petname_of(&db, "alpha", "pixel"), "Work phone");
     }
@@ -3082,10 +3175,24 @@ mod node_naming_tests {
     #[test]
     fn one_account_cannot_rename_another_accounts_device() {
         let db = db();
-        db.upsert_node("laptop", "alpha", NodeName::Set("Cachy"), "wander", None, None)
-            .unwrap();
-        db.upsert_node("laptop", "delta", NodeName::Set("Lenovo"), "wander", None, None)
-            .unwrap();
+        db.upsert_node(
+            "laptop",
+            "alpha",
+            NodeName::Set("Cachy"),
+            "wander",
+            None,
+            None,
+        )
+        .unwrap();
+        db.upsert_node(
+            "laptop",
+            "delta",
+            NodeName::Set("Lenovo"),
+            "wander",
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(petname_of(&db, "alpha", "laptop"), "Cachy");
         assert_eq!(petname_of(&db, "delta", "laptop"), "Lenovo");
@@ -3141,7 +3248,10 @@ mod handoff_tests {
         report(&db, "alpha", "phone", "Phone Song", true);
         report(&db, "alpha", "desktop", "Desktop Song", false);
 
-        let elsewhere = db.get_handoff_excluding("alpha", "desktop").unwrap().unwrap();
+        let elsewhere = db
+            .get_handoff_excluding("alpha", "desktop")
+            .unwrap()
+            .unwrap();
         assert_eq!(elsewhere.track_title, "Phone Song");
         assert!(elsewhere.is_playing);
         assert_eq!(elsewhere.device_id, "phone");
@@ -3154,7 +3264,10 @@ mod handoff_tests {
         report(&db, "alpha", "phone", "Phone Song", true);
         report(&db, "alpha", "desktop", "Desktop Song", true);
 
-        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Desktop Song");
+        assert_eq!(
+            db.get_handoff("alpha").unwrap().unwrap().track_title,
+            "Desktop Song"
+        );
     }
 
     #[test]
@@ -3163,8 +3276,14 @@ mod handoff_tests {
         report(&db, "alpha", "phone", "First", true);
         report(&db, "alpha", "phone", "Second", true);
 
-        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Second");
-        assert!(db.get_handoff_excluding("alpha", "phone").unwrap().is_none());
+        assert_eq!(
+            db.get_handoff("alpha").unwrap().unwrap().track_title,
+            "Second"
+        );
+        assert!(db
+            .get_handoff_excluding("alpha", "phone")
+            .unwrap()
+            .is_none());
     }
 
     /// A position with nothing to measure it against can only ever be an elapsed count. The
@@ -3174,7 +3293,10 @@ mod handoff_tests {
         let db = db();
         report_with_duration(&db, "alpha", "phone", "Song", true, 214_000);
 
-        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().duration_ms, 214_000);
+        assert_eq!(
+            db.get_handoff("alpha").unwrap().unwrap().duration_ms,
+            214_000
+        );
     }
 
     /// Zero is "did not say", which is also what a livestream reports. Neither may overwrite a
@@ -3185,7 +3307,10 @@ mod handoff_tests {
         report_with_duration(&db, "alpha", "phone", "Song", true, 214_000);
         report_with_duration(&db, "alpha", "phone", "Song", true, 0);
 
-        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().duration_ms, 214_000);
+        assert_eq!(
+            db.get_handoff("alpha").unwrap().unwrap().duration_ms,
+            214_000
+        );
     }
 
     #[test]
@@ -3194,16 +3319,30 @@ mod handoff_tests {
         report(&db, "alpha", "phone", "Phone Song", true);
         report(&db, "delta", "phone", "Someone Elses Song", true);
 
-        assert_eq!(db.get_handoff("alpha").unwrap().unwrap().track_title, "Phone Song");
-        assert!(db.get_handoff_excluding("alpha", "phone").unwrap().is_none());
+        assert_eq!(
+            db.get_handoff("alpha").unwrap().unwrap().track_title,
+            "Phone Song"
+        );
+        assert!(db
+            .get_handoff_excluding("alpha", "phone")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
     fn public_key_can_be_set_and_read_on_profile() {
         let db = db();
-        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        db.create_account(
+            "alpha",
+            "pass",
+            crate::db_identity::Role::Admin,
+            crate::db_identity::AccountState::Active,
+        )
+        .unwrap();
         assert_eq!(db.profile("alpha").unwrap().unwrap().public_key, None);
-        assert!(db.set_public_key("alpha", Some("base64-pubkey-xyz")).unwrap());
+        assert!(db
+            .set_public_key("alpha", Some("base64-pubkey-xyz"))
+            .unwrap());
         assert_eq!(
             db.profile("alpha").unwrap().unwrap().public_key.as_deref(),
             Some("base64-pubkey-xyz")
@@ -3216,35 +3355,66 @@ mod handoff_tests {
     #[test]
     fn a_second_device_key_does_not_replace_the_first() {
         let db = db();
-        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        db.create_account(
+            "alpha",
+            "pass",
+            crate::db_identity::Role::Admin,
+            crate::db_identity::AccountState::Active,
+        )
+        .unwrap();
 
-        db.register_device_key("alpha", "phone", "key-phone").unwrap();
-        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+        db.register_device_key("alpha", "phone", "key-phone")
+            .unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop")
+            .unwrap();
 
         let keys = db.device_keys_for("alpha").unwrap();
-        assert_eq!(keys.len(), 2, "signing in on a second device must not evict the first");
-        assert!(keys.iter().any(|k| k.device_id == "phone" && k.public_key == "key-phone"));
-        assert!(keys.iter().any(|k| k.device_id == "laptop" && k.public_key == "key-laptop"));
+        assert_eq!(
+            keys.len(),
+            2,
+            "signing in on a second device must not evict the first"
+        );
+        assert!(keys
+            .iter()
+            .any(|k| k.device_id == "phone" && k.public_key == "key-phone"));
+        assert!(keys
+            .iter()
+            .any(|k| k.device_id == "laptop" && k.public_key == "key-laptop"));
     }
 
     /// A device replaces its own entry — a reinstall regenerates a keypair — and only its own.
     #[test]
     fn re_registering_replaces_only_that_devices_key() {
         let db = db();
-        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        db.create_account(
+            "alpha",
+            "pass",
+            crate::db_identity::Role::Admin,
+            crate::db_identity::AccountState::Active,
+        )
+        .unwrap();
 
-        db.register_device_key("alpha", "phone", "key-phone").unwrap();
-        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
-        db.register_device_key("alpha", "phone", "key-phone-v2").unwrap();
+        db.register_device_key("alpha", "phone", "key-phone")
+            .unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop")
+            .unwrap();
+        db.register_device_key("alpha", "phone", "key-phone-v2")
+            .unwrap();
 
         let keys = db.device_keys_for("alpha").unwrap();
         assert_eq!(keys.len(), 2);
         assert_eq!(
-            keys.iter().find(|k| k.device_id == "phone").unwrap().public_key,
+            keys.iter()
+                .find(|k| k.device_id == "phone")
+                .unwrap()
+                .public_key,
             "key-phone-v2"
         );
         assert_eq!(
-            keys.iter().find(|k| k.device_id == "laptop").unwrap().public_key,
+            keys.iter()
+                .find(|k| k.device_id == "laptop")
+                .unwrap()
+                .public_key,
             "key-laptop",
             "one device re-keying must not touch another's entry"
         );
@@ -3254,16 +3424,27 @@ mod handoff_tests {
     #[test]
     fn forgetting_one_device_leaves_the_others() {
         let db = db();
-        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        db.create_account(
+            "alpha",
+            "pass",
+            crate::db_identity::Role::Admin,
+            crate::db_identity::AccountState::Active,
+        )
+        .unwrap();
 
-        db.register_device_key("alpha", "phone", "key-phone").unwrap();
-        db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+        db.register_device_key("alpha", "phone", "key-phone")
+            .unwrap();
+        db.register_device_key("alpha", "laptop", "key-laptop")
+            .unwrap();
         assert!(db.forget_device_key("alpha", "phone").unwrap());
 
         let keys = db.device_keys_for("alpha").unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].device_id, "laptop");
-        assert!(!db.forget_device_key("alpha", "phone").unwrap(), "forgetting twice is a no-op");
+        assert!(
+            !db.forget_device_key("alpha", "phone").unwrap(),
+            "forgetting twice is a no-op"
+        );
     }
 
     /// The `legacy` row migration 36 carries over is superseded once a real device claims the key,
@@ -3271,13 +3452,24 @@ mod handoff_tests {
     #[test]
     fn claiming_a_legacy_key_retires_the_legacy_row() {
         let db = db();
-        db.create_account("alpha", "pass", crate::db_identity::Role::Admin, crate::db_identity::AccountState::Active).unwrap();
+        db.create_account(
+            "alpha",
+            "pass",
+            crate::db_identity::Role::Admin,
+            crate::db_identity::AccountState::Active,
+        )
+        .unwrap();
 
-        db.register_device_key("alpha", crate::db_social::LEGACY_DEVICE_ID, "key-one").unwrap();
+        db.register_device_key("alpha", crate::db_social::LEGACY_DEVICE_ID, "key-one")
+            .unwrap();
         db.register_device_key("alpha", "phone", "key-one").unwrap();
 
         let keys = db.device_keys_for("alpha").unwrap();
-        assert_eq!(keys.len(), 1, "the same key must not be listed under two device ids");
+        assert_eq!(
+            keys.len(),
+            1,
+            "the same key must not be listed under two device ids"
+        );
         assert_eq!(keys[0].device_id, "phone");
     }
 
@@ -3338,14 +3530,20 @@ mod handoff_tests {
         let outgoing = crate::db_drops::NewDrop {
             track_title: "Mine".to_string(),
             artist_name: "A".to_string(),
-            note_ciphertexts: vec![sealed("alpha-phone", "mine"), sealed("beta-phone", "theirs")],
+            note_ciphertexts: vec![
+                sealed("alpha-phone", "mine"),
+                sealed("beta-phone", "theirs"),
+            ],
             is_encrypted: true,
             ..Default::default()
         };
         let incoming = crate::db_drops::NewDrop {
             track_title: "Theirs".to_string(),
             artist_name: "B".to_string(),
-            note_ciphertexts: vec![sealed("beta-phone", "theirs2"), sealed("alpha-phone", "mine2")],
+            note_ciphertexts: vec![
+                sealed("beta-phone", "theirs2"),
+                sealed("alpha-phone", "mine2"),
+            ],
             is_encrypted: true,
             ..Default::default()
         };
@@ -3356,7 +3554,10 @@ mod handoff_tests {
         assert_eq!(thread.len(), 2);
         for message in &thread {
             assert!(
-                message.note_ciphertexts.iter().any(|c| c.device_id == "alpha-phone"),
+                message
+                    .note_ciphertexts
+                    .iter()
+                    .any(|c| c.device_id == "alpha-phone"),
                 "alpha must hold a copy of every message in their own thread"
             );
         }
@@ -3376,7 +3577,10 @@ mod handoff_tests {
         let drop_id = db.create_drop("alpha", "beta", &new_drop).unwrap();
         let inbox = db.inbox("beta", 10, 0).unwrap();
         let found = inbox.iter().find(|d| d.id == drop_id).unwrap();
-        assert_eq!(found.note_ciphertext.as_deref(), Some("sealed-ciphertext-payload-base64"));
+        assert_eq!(
+            found.note_ciphertext.as_deref(),
+            Some("sealed-ciphertext-payload-base64")
+        );
         assert!(found.is_encrypted);
         assert_eq!(found.note, None);
     }

@@ -135,10 +135,7 @@ pub fn truncate_ip(raw: &str) -> Option<String> {
         }
         IpAddr::V6(v6) => {
             let s = v6.segments();
-            Some(format!(
-                "{:x}:{:x}:{:x}:{:x}::/64",
-                s[0], s[1], s[2], s[3]
-            ))
+            Some(format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]))
         }
     }
 }

@@ -551,7 +551,7 @@ impl Db {
         if term.is_empty() {
             return Ok(Vec::new());
         }
-        let pattern = format!("{}%", term.replace('%', "").replace('_', ""));
+        let pattern = format!("{}%", term.replace(['%', '_'], ""));
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
             "SELECT {PROFILE_COLUMNS} FROM users
@@ -562,7 +562,10 @@ impl Db {
               LIMIT ?3"
         ))?;
         let found = stmt
-            .query_map(params![searcher.trim(), pattern, limit.clamp(1, 20)], profile_from_row)?
+            .query_map(
+                params![searcher.trim(), pattern, limit.clamp(1, 20)],
+                profile_from_row,
+            )?
             .collect::<Result<Vec<_>>>()?;
         Ok(found)
     }
@@ -655,7 +658,10 @@ impl Db {
                 .to_rfc3339(),
         };
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM friend_codes WHERE user_id = ?1", params![owner])?;
+        conn.execute(
+            "DELETE FROM friend_codes WHERE user_id = ?1",
+            params![owner],
+        )?;
         conn.execute(
             "INSERT INTO friend_codes (code, user_id, created_at, expires_at, used_at)
              VALUES (?1, ?2, ?3, ?4, NULL)",
@@ -704,7 +710,12 @@ impl Db {
     }
 
     /// Mints an invite code. Admin-only at the resolver; this does not check.
-    pub fn create_invite(&self, created_by: &str, max_uses: i64, ttl_hours: Option<i64>) -> Result<Invite> {
+    pub fn create_invite(
+        &self,
+        created_by: &str,
+        max_uses: i64,
+        ttl_hours: Option<i64>,
+    ) -> Result<Invite> {
         let invite = Invite {
             code: crate::credentials::mint_token().secret,
             created_by: created_by.trim().to_lowercase(),
@@ -844,7 +855,10 @@ mod popular_opt_in_tests {
         let profile = db.profile("alpha").unwrap().unwrap();
         assert!(!profile.popular_opt_in);
         assert!(!profile.contributes_to_popular());
-        assert!(!profile.incognito, "opting out of the chart must not be incognito");
+        assert!(
+            !profile.incognito,
+            "opting out of the chart must not be incognito"
+        );
     }
 
     /// Incognito is a blanket override, same as it is for now-playing and stats.
@@ -857,7 +871,13 @@ mod popular_opt_in_tests {
         db.set_incognito("alpha", true).unwrap();
 
         let profile = db.profile("alpha").unwrap().unwrap();
-        assert!(profile.popular_opt_in, "the standing consent itself must be untouched");
-        assert!(!profile.contributes_to_popular(), "incognito must still override it");
+        assert!(
+            profile.popular_opt_in,
+            "the standing consent itself must be untouched"
+        );
+        assert!(
+            !profile.contributes_to_popular(),
+            "incognito must still override it"
+        );
     }
 }

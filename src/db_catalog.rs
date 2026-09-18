@@ -216,7 +216,10 @@ impl Db {
                         published.artist,
                         published.album,
                         published.lyrics,
-                        published.lyrics.as_ref().and(published.lyrics_source.as_ref()),
+                        published
+                            .lyrics
+                            .as_ref()
+                            .and(published.lyrics_source.as_ref()),
                         now
                     ],
                 )?;
@@ -391,8 +394,9 @@ impl Db {
     /// The source ids known to hold one recording.
     pub fn sources_for_recording(&self, recording_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT source_uri FROM catalog_sources WHERE recording_id = ?1 ORDER BY source_uri")?;
+        let mut stmt = conn.prepare(
+            "SELECT source_uri FROM catalog_sources WHERE recording_id = ?1 ORDER BY source_uri",
+        )?;
         let rows = stmt.query_map(params![recording_id], |row| row.get(0))?;
         rows.collect()
     }
@@ -525,7 +529,11 @@ mod tests {
             .publish_recording(&published(&original, "Memories", "ytm:aaa"))
             .unwrap();
         let second = db
-            .publish_recording(&published(&degraded(&original), "Memories", "navidrome:bbb"))
+            .publish_recording(&published(
+                &degraded(&original),
+                "Memories",
+                "navidrome:bbb",
+            ))
             .unwrap();
 
         assert_eq!(first, second, "a re-encode became a second recording");
@@ -556,7 +564,9 @@ mod tests {
     fn a_different_model_never_matches() {
         let db = Db::new_in_memory().unwrap();
         let audio = embedding(5);
-        let first = db.publish_recording(&published(&audio, "One", "ytm:a")).unwrap();
+        let first = db
+            .publish_recording(&published(&audio, "One", "ytm:a"))
+            .unwrap();
 
         let mut other = published(&audio, "One", "ytm:b");
         other.model = "some-other-embedder".to_string();
@@ -569,7 +579,9 @@ mod tests {
     fn a_different_duration_never_matches() {
         let db = Db::new_in_memory().unwrap();
         let audio = embedding(6);
-        let first = db.publish_recording(&published(&audio, "One", "ytm:a")).unwrap();
+        let first = db
+            .publish_recording(&published(&audio, "One", "ytm:a"))
+            .unwrap();
 
         let mut longer = published(&audio, "One", "ytm:b");
         longer.duration_ms = 210_000 + 30_000;
@@ -590,16 +602,26 @@ mod tests {
         db.publish_recording(&worse).unwrap();
 
         let entry = &db.catalog_since(0, 10).unwrap()[0];
-        assert_eq!(entry.title.as_deref(), Some("The Real Title"), "title overwritten");
-        assert_eq!(entry.album.as_deref(), Some("An Album"), "album not filled in");
+        assert_eq!(
+            entry.title.as_deref(),
+            Some("The Real Title"),
+            "title overwritten"
+        );
+        assert_eq!(
+            entry.album.as_deref(),
+            Some("An Album"),
+            "album not filled in"
+        );
     }
 
     /// A client asks for what it has not seen, and gets it in an order it can resume from.
     #[test]
     fn the_catalogue_is_readable_from_a_cursor() {
         let db = Db::new_in_memory().unwrap();
-        db.publish_recording(&published(&embedding(8), "One", "ytm:8")).unwrap();
-        db.publish_recording(&published(&embedding(9), "Two", "ytm:9")).unwrap();
+        db.publish_recording(&published(&embedding(8), "One", "ytm:8"))
+            .unwrap();
+        db.publish_recording(&published(&embedding(9), "Two", "ytm:9"))
+            .unwrap();
 
         let all = db.catalog_since(0, 10).unwrap();
         assert_eq!(all.len(), 2);

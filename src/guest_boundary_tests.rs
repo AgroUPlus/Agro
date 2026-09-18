@@ -45,14 +45,23 @@ fn harness() -> Harness {
         .unwrap();
 
     let storage = Storage::for_tests();
-    let schema = Schema::build(Query::default(), Mutation::default(), async_graphql::EmptySubscription)
-        .data(db.clone())
-        .data(Arc::new(WsHub::new()))
-        .data(storage)
-        .data(SetupToken::for_fresh_server(1))
-        .finish();
+    let schema = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        async_graphql::EmptySubscription,
+    )
+    .data(db.clone())
+    .data(Arc::new(WsHub::new()))
+    .data(storage)
+    .data(SetupToken::for_fresh_server(1))
+    .finish();
 
-    Harness { schema, db, admin, guest }
+    Harness {
+        schema,
+        db,
+        admin,
+        guest,
+    }
 }
 
 impl Harness {
@@ -104,7 +113,9 @@ async fn a_guest_cannot_enumerate_the_other_accounts() {
 #[tokio::test]
 async fn a_guest_cannot_read_another_account() {
     let h = harness();
-    let r = h.run_as(&h.guest, r#"{ me(username: "alpha") { id } }"#).await;
+    let r = h
+        .run_as(&h.guest, r#"{ me(username: "alpha") { id } }"#)
+        .await;
     assert_forbidden(&r, "me for another account");
 }
 
@@ -112,14 +123,24 @@ async fn a_guest_cannot_read_another_account() {
 #[tokio::test]
 async fn no_query_returns_a_credential() {
     let h = harness();
-    let r = h.run_as(&h.admin, r#"{ me(username: "alpha") { id username role } }"#).await;
+    let r = h
+        .run_as(
+            &h.admin,
+            r#"{ me(username: "alpha") { id username role } }"#,
+        )
+        .await;
     assert_allowed(&r, "me");
 
     let rendered = format!("{:?}", r.data);
-    assert!(!rendered.contains("admin-pass"), "a passphrase leaked: {rendered}");
+    assert!(
+        !rendered.contains("admin-pass"),
+        "a passphrase leaked: {rendered}"
+    );
 
     // The fields themselves are gone from the schema, so asking for them is an error.
-    let asked = h.run_as(&h.admin, r#"{ me(username: "alpha") { passphrase } }"#).await;
+    let asked = h
+        .run_as(&h.admin, r#"{ me(username: "alpha") { passphrase } }"#)
+        .await;
     assert_forbidden(&asked, "me.passphrase should not exist");
 }
 #[tokio::test]
@@ -171,19 +192,28 @@ async fn an_admin_can_remove_a_guest_and_a_guest_cannot_remove_anyone_else() {
         .unwrap();
 
     let stolen = h
-        .run_as(&h.guest, r#"mutation { deleteAccount(username: "bystander") }"#)
+        .run_as(
+            &h.guest,
+            r#"mutation { deleteAccount(username: "bystander") }"#,
+        )
         .await;
     assert_forbidden(&stolen, "a guest removed another account");
     assert!(h.db.account("bystander").unwrap().is_some());
 
     let own = h
-        .run_as(&h.guest, r#"mutation { deleteAccount(username: "mallory") }"#)
+        .run_as(
+            &h.guest,
+            r#"mutation { deleteAccount(username: "mallory") }"#,
+        )
         .await;
     assert_allowed(&own, "a guest removing itself");
     assert!(h.db.account("mallory").unwrap().is_none());
 
     let by_admin = h
-        .run_as(&h.admin, r#"mutation { deleteAccount(username: "bystander") }"#)
+        .run_as(
+            &h.admin,
+            r#"mutation { deleteAccount(username: "bystander") }"#,
+        )
         .await;
     assert_allowed(&by_admin, "an admin removing a guest");
     assert!(h.db.account("bystander").unwrap().is_none());
@@ -220,7 +250,10 @@ async fn a_guest_cannot_flip_server_wide_plugin_state() {
 #[tokio::test]
 async fn a_guest_cannot_read_the_plugin_registry() {
     let h = harness();
-    assert_forbidden(&h.run_as(&h.guest, "{ plugins { id isConnected } }").await, "plugins");
+    assert_forbidden(
+        &h.run_as(&h.guest, "{ plugins { id isConnected } }").await,
+        "plugins",
+    );
 }
 
 /// The `/listen` allowlist is the only thing between the operator's share domain and an open
@@ -291,7 +324,9 @@ async fn a_guest_cannot_read_or_delete_another_accounts_holdings() {
         .await;
     assert_forbidden(&forget, "forgetHoldings with a smuggled device id");
     assert_eq!(
-        h.db.device_holding_hashes("alpha", "admin-desktop").unwrap().len(),
+        h.db.device_holding_hashes("alpha", "admin-desktop")
+            .unwrap()
+            .len(),
         1,
         "the admin's holding was deleted"
     );
@@ -339,15 +374,27 @@ async fn a_guest_can_still_use_their_own_account() {
     let h = harness();
 
     assert_allowed(
-        &h.run_as(&h.guest, r#"{ me(username: "mallory") { id username role } }"#).await,
+        &h.run_as(
+            &h.guest,
+            r#"{ me(username: "mallory") { id username role } }"#,
+        )
+        .await,
         "own account",
     );
     assert_allowed(
-        &h.run_as(&h.guest, r#"{ listeningStats(userId: "mallory") { playsTotal } }"#).await,
+        &h.run_as(
+            &h.guest,
+            r#"{ listeningStats(userId: "mallory") { playsTotal } }"#,
+        )
+        .await,
         "own stats",
     );
     assert_allowed(
-        &h.run_as(&h.guest, r#"{ activeNodes(userId: "mallory") { deviceId } }"#).await,
+        &h.run_as(
+            &h.guest,
+            r#"{ activeNodes(userId: "mallory") { deviceId } }"#,
+        )
+        .await,
         "own devices",
     );
     assert_allowed(
@@ -414,7 +461,10 @@ async fn pairing_carries_a_device_token_not_a_passphrase() {
 
     assert!(!device_token.is_empty());
     assert_eq!(text("label"), "Living room laptop");
-    assert!(qr.contains(&device_token), "the QR does not carry the device token");
+    assert!(
+        qr.contains(&device_token),
+        "the QR does not carry the device token"
+    );
     assert!(
         !qr.contains("alpha-pass"),
         "the QR still carries the passphrase: {qr}"
@@ -430,7 +480,10 @@ async fn pairing_carries_a_device_token_not_a_passphrase() {
 async fn a_pairing_token_must_be_named() {
     let h = harness();
     let r = h
-        .run_as(&h.admin, r#"mutation { pairDevice(userId: "alpha") { token } }"#)
+        .run_as(
+            &h.admin,
+            r#"mutation { pairDevice(userId: "alpha") { token } }"#,
+        )
         .await;
     assert_forbidden(&r, "pairDevice with no label");
 }
@@ -445,7 +498,10 @@ async fn graphql_cannot_create_an_account_at_all() {
     let h = harness();
     for who in [&h.admin, &h.guest] {
         let r = h
-            .run_as(who, r#"mutation { createAccount(username: "puppet") { passphrase } }"#)
+            .run_as(
+                who,
+                r#"mutation { createAccount(username: "puppet") { passphrase } }"#,
+            )
             .await;
         assert_forbidden(&r, "createAccount");
         assert!(h.db.account("puppet").unwrap().is_none());
@@ -456,8 +512,15 @@ async fn graphql_cannot_create_an_account_at_all() {
 #[tokio::test]
 async fn nobody_can_rename_another_accounts_device() {
     let h = harness();
-    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None)
-        .unwrap();
+    h.db.upsert_node(
+        "alpha-phone",
+        "alpha",
+        crate::db::NodeName::Set("Caffeinated Panda"),
+        "wanda",
+        None,
+        None,
+    )
+    .unwrap();
 
     let refused = h
         .run_as(
@@ -484,8 +547,15 @@ async fn nobody_can_rename_another_accounts_device() {
 #[tokio::test]
 async fn a_device_cannot_be_renamed_to_nothing() {
     let h = harness();
-    h.db.upsert_node("alpha-phone", "alpha", crate::db::NodeName::Set("Caffeinated Panda"), "wanda", None, None)
-        .unwrap();
+    h.db.upsert_node(
+        "alpha-phone",
+        "alpha",
+        crate::db::NodeName::Set("Caffeinated Panda"),
+        "wanda",
+        None,
+        None,
+    )
+    .unwrap();
     let refused = h
         .run_as(
             &h.admin,
@@ -519,10 +589,15 @@ async fn a_guest_can_read_their_own_security_log() {
     let h = harness();
     h.db.record_event(
         crate::audit::Event::LoginSucceeded,
-        crate::audit::Record::new().user("mallory").ip("203.0.113.9"),
+        crate::audit::Record::new()
+            .user("mallory")
+            .ip("203.0.113.9"),
     );
     let allowed = h
-        .run_as(&h.guest, r#"{ securityEvents(userId: "mallory") { kind clientIp } }"#)
+        .run_as(
+            &h.guest,
+            r#"{ securityEvents(userId: "mallory") { kind clientIp } }"#,
+        )
         .await;
     assert_allowed(&allowed, "mallory reading their own security log");
     let rendered = allowed.data.to_string();
@@ -546,9 +621,13 @@ async fn an_admin_can_read_the_server_wide_security_log() {
     let h = harness();
     h.db.record_event(
         crate::audit::Event::LoginFailed,
-        crate::audit::Record::new().ip("198.51.100.7").detail("username=ghost"),
+        crate::audit::Record::new()
+            .ip("198.51.100.7")
+            .detail("username=ghost"),
     );
-    let allowed = h.run_as(&h.admin, r#"{ securityEvents { kind detail } }"#).await;
+    let allowed = h
+        .run_as(&h.admin, r#"{ securityEvents { kind detail } }"#)
+        .await;
     assert_allowed(&allowed, "alpha reading the server-wide security log");
     assert!(allowed.data.to_string().contains("username=ghost"));
 }
@@ -561,7 +640,8 @@ async fn nobody_can_read_the_security_log_without_an_identity() {
         "anonymous server-wide security log",
     );
     assert_forbidden(
-        &h.run_anonymously(r#"{ securityEvents(userId: "alpha") { kind } }"#).await,
+        &h.run_anonymously(r#"{ securityEvents(userId: "alpha") { kind } }"#)
+            .await,
         "anonymous scoped security log",
     );
 }
@@ -573,7 +653,10 @@ async fn a_guest_cannot_revoke_another_accounts_devices() {
     let h = harness();
     let alpha_token = h.db.mint_device_token("alpha", "laptop").unwrap();
     let refused = h
-        .run_as(&h.guest, r#"mutation { revokeAllDevices(userId: "alpha") }"#)
+        .run_as(
+            &h.guest,
+            r#"mutation { revokeAllDevices(userId: "alpha") }"#,
+        )
         .await;
     assert_forbidden(&refused, "mallory revoking alpha's devices");
     assert!(
@@ -595,8 +678,15 @@ async fn deleting_an_account_leaves_nothing_of_it_behind() {
     let username = "mallory";
 
     // A row in every table the account can reach.
-    h.db.upsert_node("m-phone", username, crate::db::NodeName::Set("Phone"), "wanda", None, None)
-        .unwrap();
+    h.db.upsert_node(
+        "m-phone",
+        username,
+        crate::db::NodeName::Set("Phone"),
+        "wanda",
+        None,
+        None,
+    )
+    .unwrap();
     h.db.mint_device_token(username, "laptop").unwrap();
     h.db.link_federated_identity(username, "https://id.example.com", "sub-1", None)
         .unwrap();
@@ -635,7 +725,10 @@ async fn deleting_an_account_leaves_nothing_of_it_behind() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(remaining, 0, "{table} still holds rows for the deleted account");
+        assert_eq!(
+            remaining, 0,
+            "{table} still holds rows for the deleted account"
+        );
     }
 
     // Friendship is two rows. Removing only one leaves alpha friends with a ghost.
@@ -646,7 +739,10 @@ async fn deleting_an_account_leaves_nothing_of_it_behind() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(friendships, 0, "a friendship survived in the other direction");
+    assert_eq!(
+        friendships, 0,
+        "a friendship survived in the other direction"
+    );
 
     let listening: i64 = conn
         .query_row(
@@ -665,14 +761,18 @@ async fn deletion_keeps_the_audit_trail_but_not_the_identity_in_it() {
     let h = harness();
     h.db.record_event(
         crate::audit::Event::LoginSucceeded,
-        crate::audit::Record::new().user("mallory").ip("203.0.113.9"),
+        crate::audit::Record::new()
+            .user("mallory")
+            .ip("203.0.113.9"),
     );
     h.db.delete_user("mallory").unwrap();
 
     let events = h.db.security_events(None, 100).unwrap();
     assert!(!events.is_empty(), "the trail itself should remain");
     assert!(
-        events.iter().all(|e| e.user_id.is_none() && e.client_ip.is_none()),
+        events
+            .iter()
+            .all(|e| e.user_id.is_none() && e.client_ip.is_none()),
         "a deleted account must not still be named in the log"
     );
 }
@@ -683,15 +783,18 @@ async fn deletion_keeps_the_audit_trail_but_not_the_identity_in_it() {
 async fn an_export_is_self_scoped_even_for_an_admin() {
     let h = harness();
     assert_forbidden(
-        &h.run_as(&h.guest, r#"{ exportMyData(userId: "alpha") }"#).await,
+        &h.run_as(&h.guest, r#"{ exportMyData(userId: "alpha") }"#)
+            .await,
         "mallory exporting alpha's data",
     );
     assert_forbidden(
-        &h.run_as(&h.admin, r#"{ exportMyData(userId: "mallory") }"#).await,
+        &h.run_as(&h.admin, r#"{ exportMyData(userId: "mallory") }"#)
+            .await,
         "an admin exporting a member's data",
     );
     assert_allowed(
-        &h.run_as(&h.guest, r#"{ exportMyData(userId: "mallory") }"#).await,
+        &h.run_as(&h.guest, r#"{ exportMyData(userId: "mallory") }"#)
+            .await,
         "mallory exporting their own data",
     );
 }
@@ -708,11 +811,19 @@ async fn an_export_carries_data_but_no_credentials() {
     assert_allowed(&response, "exporting own data");
 
     let rendered = response.data.to_string();
-    for forbidden in ["passphrase_hash", "token_hash", "totp_secret", "vault_key_wrapped"] {
+    for forbidden in [
+        "passphrase_hash",
+        "token_hash",
+        "totp_secret",
+        "vault_key_wrapped",
+    ] {
         assert!(
             !rendered.contains(forbidden),
             "an export must not include {forbidden}"
         );
     }
-    assert!(rendered.contains("listening_history"), "but it must include the data");
+    assert!(
+        rendered.contains("listening_history"),
+        "but it must include the data"
+    );
 }

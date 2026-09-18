@@ -30,21 +30,31 @@ static DEEZER_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static APPLE_MUSIC_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"music\.apple\.com/(?:[a-zA-Z]{2}/)?(album|playlist)/([^/]+)/([a-zA-Z0-9._-]+)").expect("regex")
+    Regex::new(r"music\.apple\.com/(?:[a-zA-Z]{2}/)?(album|playlist)/([^/]+)/([a-zA-Z0-9._-]+)")
+        .expect("regex")
 });
 
 static YT_WATCH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})")
-        .expect("regex")
+    Regex::new(
+        r"(?:youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})",
+    )
+    .expect("regex")
 });
 
 static YT_PLAYLIST_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:youtube\.com/playlist\?list=|music\.youtube\.com/playlist\?list=)([a-zA-Z0-9_-]+)")
-        .expect("regex")
+    Regex::new(
+        r"(?:youtube\.com/playlist\?list=|music\.youtube\.com/playlist\?list=)([a-zA-Z0-9_-]+)",
+    )
+    .expect("regex")
 });
 
 /// Fetches a URL, using Agro's existing `proxy_cache` when available.
-async fn fetch_cached(db: &Db, client: &reqwest::Client, url: &str, ttl_secs: i64) -> Result<String, String> {
+async fn fetch_cached(
+    db: &Db,
+    client: &reqwest::Client,
+    url: &str,
+    ttl_secs: i64,
+) -> Result<String, String> {
     if let Ok(Some((_, body))) = db.get_cached_proxy(url) {
         if let Ok(text) = String::from_utf8(body) {
             return Ok(text);
@@ -53,7 +63,10 @@ async fn fetch_cached(db: &Db, client: &reqwest::Client, url: &str, ttl_secs: i6
 
     let resp = client
         .get(url)
-        .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        )
         .send()
         .await
         .map_err(|e| format!("Failed to fetch URL: {e}"))?;
@@ -62,7 +75,10 @@ async fn fetch_cached(db: &Db, client: &reqwest::Client, url: &str, ttl_secs: i6
         return Err(format!("HTTP error {}", resp.status()));
     }
 
-    let text = resp.text().await.map_err(|e| format!("Read body error: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Read body error: {e}"))?;
     let now = chrono::Utc::now().timestamp();
     let _ = db.set_cached_proxy(url, "{}", text.as_bytes(), now + ttl_secs);
 
@@ -71,7 +87,9 @@ async fn fetch_cached(db: &Db, client: &reqwest::Client, url: &str, ttl_secs: i6
 
 /// Imports an external playlist or album link into an `ImportedPlaylist`.
 pub async fn import_from_url(db: &Db, url: &str) -> Result<ImportedPlaylist, String> {
-    let client = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
 
     if let Some(caps) = SPOTIFY_RE.captures(url) {
         let kind = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -101,7 +119,10 @@ pub async fn import_from_url(db: &Db, url: &str) -> Result<ImportedPlaylist, Str
         return import_youtube_track(db, &client, video_id).await;
     }
 
-    Err("Unsupported URL format. Supported sources: Spotify, Deezer, Apple Music, YouTube.".to_string())
+    Err(
+        "Unsupported URL format. Supported sources: Spotify, Deezer, Apple Music, YouTube."
+            .to_string(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -118,14 +139,20 @@ async fn import_spotify(
     let oembed_url = format!("https://open.spotify.com/oembed?url={target_url}");
     let oembed_json = fetch_cached(db, client, &oembed_url, 86400 * 7).await?;
 
-    let oembed: serde_json::Value =
-        serde_json::from_str(&oembed_json).map_err(|e| format!("Spotify oEmbed parse error: {e}"))?;
+    let oembed: serde_json::Value = serde_json::from_str(&oembed_json)
+        .map_err(|e| format!("Spotify oEmbed parse error: {e}"))?;
 
-    let title = oembed["title"].as_str().unwrap_or("Spotify Import").to_string();
+    let title = oembed["title"]
+        .as_str()
+        .unwrap_or("Spotify Import")
+        .to_string();
     let artwork_url = oembed["thumbnail_url"].as_str().map(|s| s.to_string());
 
     if kind == "track" {
-        let artist = oembed["author_name"].as_str().unwrap_or("Unknown Artist").to_string();
+        let artist = oembed["author_name"]
+            .as_str()
+            .unwrap_or("Unknown Artist")
+            .to_string();
         return Ok(ImportedPlaylist {
             title: title.clone(),
             description: Some(format!("Imported from Spotify track {id}")),
@@ -153,7 +180,9 @@ async fn import_spotify(
         if let Some(end) = sub.find("</script>") {
             let json_str = &sub[..end];
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(json_str) {
-                if let Some(items) = data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"].as_array() {
+                if let Some(items) =
+                    data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"].as_array()
+                {
                     for item in items {
                         let t_title = item["title"].as_str().unwrap_or("").to_string();
                         let t_artist = item["subtitle"].as_str().unwrap_or("").to_string();
@@ -163,7 +192,11 @@ async fn import_spotify(
                         if !t_title.is_empty() {
                             tracks.push(NewPlaylistItem {
                                 title: t_title,
-                                artist: if t_artist.is_empty() { "Unknown Artist".to_string() } else { t_artist },
+                                artist: if t_artist.is_empty() {
+                                    "Unknown Artist".to_string()
+                                } else {
+                                    t_artist
+                                },
                                 album: None,
                                 duration_ms,
                                 artwork_url: artwork_url.clone(),
@@ -178,7 +211,10 @@ async fn import_spotify(
 
     if tracks.is_empty() {
         // Fallback: at least import the album/playlist entity itself
-        let artist = oembed["author_name"].as_str().unwrap_or("Spotify").to_string();
+        let artist = oembed["author_name"]
+            .as_str()
+            .unwrap_or("Spotify")
+            .to_string();
         tracks.push(NewPlaylistItem {
             title: title.clone(),
             artist,
@@ -213,7 +249,10 @@ async fn import_deezer(
     let data: serde_json::Value =
         serde_json::from_str(&json_text).map_err(|e| format!("Deezer API parse error: {e}"))?;
 
-    let title = data["title"].as_str().unwrap_or("Deezer Import").to_string();
+    let title = data["title"]
+        .as_str()
+        .unwrap_or("Deezer Import")
+        .to_string();
     let description = data["description"].as_str().map(|s| s.to_string());
     let artwork_url = data["picture_big"]
         .as_str()
@@ -223,7 +262,10 @@ async fn import_deezer(
     let mut tracks = Vec::new();
 
     if kind == "track" {
-        let artist = data["artist"]["name"].as_str().unwrap_or("Unknown Artist").to_string();
+        let artist = data["artist"]["name"]
+            .as_str()
+            .unwrap_or("Unknown Artist")
+            .to_string();
         let album = data["album"]["title"].as_str().map(|s| s.to_string());
         let duration_ms = data["duration"].as_i64().map(|d| d * 1000);
         let link = data["link"].as_str().map(|s| s.to_string());
@@ -239,7 +281,10 @@ async fn import_deezer(
     } else if let Some(items) = data["tracks"]["data"].as_array() {
         for item in items {
             let t_title = item["title"].as_str().unwrap_or("").to_string();
-            let t_artist = item["artist"]["name"].as_str().unwrap_or("Unknown Artist").to_string();
+            let t_artist = item["artist"]["name"]
+                .as_str()
+                .unwrap_or("Unknown Artist")
+                .to_string();
             let t_album = item["album"]["title"].as_str().map(|s| s.to_string());
             let duration_ms = item["duration"].as_i64().map(|d| d * 1000);
             let link = item["link"].as_str().map(|s| s.to_string());
@@ -295,8 +340,12 @@ async fn import_apple_music(
                 if let Some(track_array) = data["tracks"].as_array() {
                     for item in track_array {
                         let t_title = item["name"].as_str().unwrap_or("").to_string();
-                        let t_artist = item["byArtist"]["name"].as_str().unwrap_or("Unknown Artist").to_string();
-                        let duration_ms = item["duration"].as_str().and_then(parse_iso8601_duration);
+                        let t_artist = item["byArtist"]["name"]
+                            .as_str()
+                            .unwrap_or("Unknown Artist")
+                            .to_string();
+                        let duration_ms =
+                            item["duration"].as_str().and_then(parse_iso8601_duration);
 
                         if !t_title.is_empty() {
                             tracks.push(NewPlaylistItem {
@@ -320,7 +369,7 @@ async fn import_apple_music(
 
     Ok(ImportedPlaylist {
         title,
-        description: Some(format!("Imported from Apple Music")),
+        description: Some("Imported from Apple Music".to_string()),
         artwork_url: None,
         tracks,
     })
@@ -335,14 +384,22 @@ async fn import_youtube_track(
     client: &reqwest::Client,
     video_id: &str,
 ) -> Result<ImportedPlaylist, String> {
-    let oembed_url = format!("https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json");
+    let oembed_url = format!(
+        "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+    );
     let json_text = fetch_cached(db, client, &oembed_url, 86400 * 14).await?;
 
     let oembed: serde_json::Value =
         serde_json::from_str(&json_text).map_err(|e| format!("YouTube oEmbed parse error: {e}"))?;
 
-    let raw_title = oembed["title"].as_str().unwrap_or("YouTube Track").to_string();
-    let author = oembed["author_name"].as_str().unwrap_or("YouTube").to_string();
+    let raw_title = oembed["title"]
+        .as_str()
+        .unwrap_or("YouTube Track")
+        .to_string();
+    let author = oembed["author_name"]
+        .as_str()
+        .unwrap_or("YouTube")
+        .to_string();
     let artwork_url = oembed["thumbnail_url"].as_str().map(|s| s.to_string());
 
     // Split "Artist - Title" if formatted with dash
@@ -394,8 +451,14 @@ async fn import_youtube_playlist(
 fn parse_iso8601_duration(s: &str) -> Option<i64> {
     let re = Regex::new(r"PT(?:(\d+)M)?(?:(\d+)S)?").ok()?;
     let caps = re.captures(s)?;
-    let mins: i64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let secs: i64 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let mins: i64 = caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let secs: i64 = caps
+        .get(2)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
     Some((mins * 60 + secs) * 1000)
 }
 
@@ -414,13 +477,17 @@ mod tests {
         assert!(DEEZER_RE.is_match("https://deezer.com/track/3135556"));
 
         assert!(APPLE_MUSIC_RE.is_match("https://music.apple.com/us/album/discovery/697194953"));
-        assert!(APPLE_MUSIC_RE.is_match("https://music.apple.com/playlist/today-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"));
+        assert!(APPLE_MUSIC_RE.is_match(
+            "https://music.apple.com/playlist/today-hits/pl.f4d106fed2bd41149aaacabb233eb5eb"
+        ));
 
         assert!(YT_WATCH_RE.is_match("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
         assert!(YT_WATCH_RE.is_match("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
         assert!(YT_WATCH_RE.is_match("https://youtu.be/dQw4w9WgXcQ"));
 
-        assert!(YT_PLAYLIST_RE.is_match("https://music.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_PEO37J1NUEn3Z11dO"));
+        assert!(YT_PLAYLIST_RE.is_match(
+            "https://music.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_PEO37J1NUEn3Z11dO"
+        ));
     }
 
     #[test]

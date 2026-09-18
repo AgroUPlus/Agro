@@ -17,7 +17,9 @@
 //! database — a backup, a stray log line — disclosed every credential on the server, and there was
 //! nothing to rotate to, because the passphrase and the token were the same string.
 
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
+};
 use argon2::Argon2;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -69,7 +71,11 @@ pub fn mint_token() -> MintedToken {
     let secret = base64url(&bytes);
     let prefix = secret.chars().take(TOKEN_PREFIX_LEN).collect::<String>();
     let hash = hash_token(&secret);
-    MintedToken { secret, prefix, hash }
+    MintedToken {
+        secret,
+        prefix,
+        hash,
+    }
 }
 
 /// The stored form of a token. Deterministic, so a presented token can be matched against it.
@@ -97,8 +103,7 @@ pub fn secure_eq(a: &str, b: &str) -> bool {
 
 /// URL-safe base64 without padding, so a token survives a query string and a QR payload unescaped.
 fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -174,7 +179,9 @@ mod tests {
     fn base64url_is_url_safe() {
         let t = mint_token();
         assert!(
-            t.secret.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            t.secret
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
             "token is not URL-safe: {}",
             t.secret
         );

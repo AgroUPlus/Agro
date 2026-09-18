@@ -129,15 +129,18 @@ fn load_note_ciphertexts(conn: &rusqlite::Connection, drops: &mut [Drop]) -> Res
           ORDER BY device_id ASC"
     ))?;
     let sealed = stmt
-        .query_map(params_from_iter(drops.iter().map(|d| d.id.clone())), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                DeviceCiphertext {
-                    device_id: row.get(1)?,
-                    ciphertext: row.get(2)?,
-                },
-            ))
-        })?
+        .query_map(
+            params_from_iter(drops.iter().map(|d| d.id.clone())),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    DeviceCiphertext {
+                        device_id: row.get(1)?,
+                        ciphertext: row.get(2)?,
+                    },
+                ))
+            },
+        )?
         .collect::<Result<Vec<_>>>()?;
 
     for (drop_id, copy) in sealed {
@@ -203,7 +206,8 @@ impl Db {
               ORDER BY created_at DESC
               LIMIT ?2 OFFSET ?3"
         ))?;
-        let mut drops = stmt.query_map(params![user.trim(), limit, offset], drop_from_row)?
+        let mut drops = stmt
+            .query_map(params![user.trim(), limit, offset], drop_from_row)?
             .collect::<Result<Vec<_>>>()?;
         load_note_ciphertexts(&conn, &mut drops)?;
         Ok(drops)
@@ -218,7 +222,8 @@ impl Db {
               ORDER BY created_at DESC
               LIMIT ?2 OFFSET ?3"
         ))?;
-        let mut drops = stmt.query_map(params![user.trim(), limit, offset], drop_from_row)?
+        let mut drops = stmt
+            .query_map(params![user.trim(), limit, offset], drop_from_row)?
             .collect::<Result<Vec<_>>>()?;
         load_note_ciphertexts(&conn, &mut drops)?;
         Ok(drops)

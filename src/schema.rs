@@ -1,11 +1,10 @@
-use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject};
 use crate::auth::AuthedUser;
 use crate::db::{Db, LinkKind};
 use crate::db_identity::{AccountState, Role};
 use crate::db_library::BrowseKind;
-use crate::passphrase::generate_passphrase;
 use crate::plugins::AgroPlugin;
 use crate::ws::WsHub;
+use async_graphql::{Context, Enum, InputObject, Object, Schema, SimpleObject};
 use std::sync::Arc;
 
 /// The schema roots, each merged from a core half and a social half.
@@ -59,7 +58,9 @@ pub(crate) fn authorize(ctx: &Context<'_>, user_id: &str) -> async_graphql::Resu
     } else {
         // Deliberately does not name the account that *was* authenticated — an error message is
         // not the place to disclose it.
-        Err(forbidden("that token does not belong to the requested account"))
+        Err(forbidden(
+            "that token does not belong to the requested account",
+        ))
     }
 }
 
@@ -170,12 +171,14 @@ pub(crate) fn normalise_username(raw: &str) -> async_graphql::Result<String> {
     if clean.chars().count() > MAX_USERNAME_LEN {
         return Err(format!("A username may be at most {MAX_USERNAME_LEN} characters").into());
     }
-    if !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+    if !clean
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
         return Err("A username may only contain letters, digits, dot, dash and underscore".into());
     }
     Ok(clean)
 }
-
 
 #[derive(SimpleObject, Clone)]
 /// What one call to `reindexNormalisation` rewrote.
@@ -336,9 +339,6 @@ pub struct HandoffTrackInput {
     pub artwork_url: Option<String>,
 }
 
-
-
-
 #[derive(SimpleObject, Clone)]
 pub struct SharePayload {
     pub token: String,
@@ -457,15 +457,12 @@ pub struct DeleteLinkPayload {
     pub navidrome_cleanup_required: bool,
 }
 
-
 #[derive(SimpleObject, Clone)]
 pub struct LyricsAndCoverPayload {
     pub synced_lrc: String,
     pub cover_art_url: String,
     pub is_synced: bool,
 }
-
-
 
 #[derive(InputObject)]
 pub struct HandoffInput {
@@ -556,8 +553,14 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
     let settings = db.get_synced_settings(caller).ok().flatten();
 
     crate::plugins::PluginContext {
-        online_wander: nodes.iter().filter(|n| is_wander(n) && online(&n.last_seen_at)).count(),
-        online_wanda: nodes.iter().filter(|n| !is_wander(n) && online(&n.last_seen_at)).count(),
+        online_wander: nodes
+            .iter()
+            .filter(|n| is_wander(n) && online(&n.last_seen_at))
+            .count(),
+        online_wanda: nodes
+            .iter()
+            .filter(|n| !is_wander(n) && online(&n.last_seen_at))
+            .count(),
         known_wander: nodes.iter().filter(|n| is_wander(n)).count(),
         known_wanda: nodes.iter().filter(|n| !is_wander(n)).count(),
         navidrome_configured: settings.as_ref().is_some_and(|s| s.has_server_url),
@@ -569,7 +572,6 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
         has_handoff: db.get_handoff(caller).ok().flatten().is_some(),
     }
 }
-
 
 /// An app password as it is listed back. The token itself is deliberately absent: a credential is
 /// shown once, when it is created, and is not recoverable afterwards.
@@ -634,7 +636,11 @@ impl QueryRoot {
     /// Authenticated: the public half of this lives at `/listen`, which is the capability URL
     /// people without an account open. This resolver is the dashboard's, and took no token, so any
     /// caller could walk other accounts' links.
-    async fn resolve_short_link(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<String>> {
+    async fn resolve_short_link(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<Option<String>> {
         caller(ctx)?;
         let db = ctx.data::<Db>()?;
         let target = db.get_short_link(&id)?;
@@ -646,6 +652,7 @@ impl QueryRoot {
     /// `deviceId` picks whose shelf is being compared against: every item comes back with
     /// `presentOnDevice`, which is what lets the view grey out what that device is missing. Omit it
     /// and everything reads as present, because there is nothing to be missing from.
+    #[allow(clippy::too_many_arguments)]
     async fn library_browse(
         &self,
         ctx: &Context<'_>,
@@ -670,7 +677,9 @@ impl QueryRoot {
         // a request to load somebody's whole library into memory.
         let limit = limit.unwrap_or(120).clamp(1, 500);
         let offset = offset.unwrap_or(0).max(0);
-        let search = search.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let search = search
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         Ok(db
             .library_browse(
@@ -699,7 +708,11 @@ impl QueryRoot {
     ///
     /// Both mechanisms in one list: the user made "a link", and which table it landed in is an
     /// implementation detail they should not have to know to find it again.
-    async fn links(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<ShareLink>> {
+    async fn links(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<Vec<ShareLink>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let base = public_url();
@@ -751,7 +764,9 @@ impl QueryRoot {
         ctx: &Context<'_>,
         username: Option<String>,
     ) -> async_graphql::Result<Option<AccountPayload>> {
-        let caller = ctx.data::<AuthedUser>().map_err(|_| forbidden("Unauthorized"))?;
+        let caller = ctx
+            .data::<AuthedUser>()
+            .map_err(|_| forbidden("Unauthorized"))?;
         let subject = username
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
@@ -791,7 +806,11 @@ impl QueryRoot {
     ) -> async_graphql::Result<Option<HandoffState>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
-        let rec = match exclude_device.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        let rec = match exclude_device
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+        {
             Some(device_id) => db.get_handoff_excluding(&user_id, device_id)?,
             None => db.get_handoff(&user_id)?,
         };
@@ -831,11 +850,7 @@ impl QueryRoot {
         // Your own always; a friend's only when they have opened their statistics. This used to be
         // `authorize`, which is self-only — so `showStats` was a switch with nothing on the other
         // side of it and a friend's listening could never be read however open they set it.
-        crate::schema_social::require_visible(
-            ctx,
-            &user_id,
-            crate::schema_social::Surface::Stats,
-        )?;
+        crate::schema_social::require_visible(ctx, &user_id, crate::schema_social::Surface::Stats)?;
         let db = ctx.data::<Db>()?;
         let now = chrono::Utc::now().timestamp();
         let since = crate::stats::period_start(period.as_deref().unwrap_or("ALL"), now);
@@ -856,11 +871,7 @@ impl QueryRoot {
         year: i32,
         month: Option<i32>,
     ) -> async_graphql::Result<AgroWrappedPayload> {
-        crate::schema_social::require_visible(
-            ctx,
-            &user_id,
-            crate::schema_social::Surface::Stats,
-        )?;
+        crate::schema_social::require_visible(ctx, &user_id, crate::schema_social::Surface::Stats)?;
         let db = ctx.data::<Db>()?;
         let rows = db.scrobble_rows(&user_id, None, None)?;
         let wrapped = crate::stats::compute_wrapped(&rows, year, month, 10);
@@ -879,33 +890,43 @@ impl QueryRoot {
         })
     }
 
-    async fn active_nodes(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<NodePayload>> {
+    async fn active_nodes(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<Vec<NodePayload>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let ws_hub = ctx.data::<Arc<WsHub>>().ok();
         let nodes = db.get_active_nodes(&user_id)?;
         let now = chrono::Utc::now();
-        let payload = nodes.into_iter().map(|n| {
-            let is_online = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&n.last_seen_at) {
-                (now - dt.with_timezone(&chrono::Utc)).num_seconds() < NODE_ONLINE_SECONDS
-            } else {
-                false
-            };
-            let lan_address = ws_hub.as_ref().and_then(|hub| hub.get_lan_address(&user_id, &n.device_id));
-            NodePayload {
-                device_id: n.device_id,
-                user_id: n.user_id,
-                petname: n.petname,
-                client_type: n.client_type,
-                lan_address,
-                version: n.version,
-                current_track: n.current_track,
-                last_seen_at: n.last_seen_at,
-                is_online,
-                server_version: env!("CARGO_PKG_VERSION").to_string(),
-                capabilities: server_capabilities(),
-            }
-        }).collect();
+        let payload = nodes
+            .into_iter()
+            .map(|n| {
+                let is_online =
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&n.last_seen_at) {
+                        (now - dt.with_timezone(&chrono::Utc)).num_seconds() < NODE_ONLINE_SECONDS
+                    } else {
+                        false
+                    };
+                let lan_address = ws_hub
+                    .as_ref()
+                    .and_then(|hub| hub.get_lan_address(&user_id, &n.device_id));
+                NodePayload {
+                    device_id: n.device_id,
+                    user_id: n.user_id,
+                    petname: n.petname,
+                    client_type: n.client_type,
+                    lan_address,
+                    version: n.version,
+                    current_track: n.current_track,
+                    last_seen_at: n.last_seen_at,
+                    is_online,
+                    server_version: env!("CARGO_PKG_VERSION").to_string(),
+                    capabilities: server_capabilities(),
+                }
+            })
+            .collect();
         Ok(payload)
     }
 
@@ -914,7 +935,11 @@ impl QueryRoot {
     /// Self-scoped like everything else — an administrator cannot use this to read someone's
     /// listening history, because `authorize` compares the caller to the named account and an admin
     /// is not exempt from it.
-    async fn export_my_data(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<String> {
+    async fn export_my_data(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<String> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let export = db.export_account_data(&user_id)?;
@@ -978,7 +1003,11 @@ impl QueryRoot {
             .collect())
     }
 
-    async fn app_passwords(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Vec<AppPassword>> {
+    async fn app_passwords(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<Vec<AppPassword>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         Ok(db
@@ -992,7 +1021,6 @@ impl QueryRoot {
             })
             .collect())
     }
-
 
     // ── Library ─────────────────────────────────────────────────────────────────────────────
 
@@ -1042,7 +1070,9 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<String>> {
         authorize(ctx, &user_id)?;
         require_own_device(ctx, &device_id)?;
-        Ok(ctx.data::<Db>()?.device_holding_hashes(&user_id, &device_id)?)
+        Ok(ctx
+            .data::<Db>()?
+            .device_holding_hashes(&user_id, &device_id)?)
     }
 
     /// Tracks another of this account's devices holds that this one does not.
@@ -1063,7 +1093,7 @@ impl QueryRoot {
         let tracks = db.missing_on_device(&user_id, &device_id, limit)?;
         Ok(tracks
             .into_iter()
-            .map(|t| to_library_payload_with_sources(db, ws_hub.as_deref().map(|a| a.as_ref()), &user_id, t))
+            .map(|t| to_library_payload_with_sources(db, ws_hub.map(|a| a.as_ref()), &user_id, t))
             .collect())
     }
 
@@ -1072,7 +1102,11 @@ impl QueryRoot {
     /// Derived rather than configured: a deployment that archives and has a Navidrome address on
     /// file is a streaming setup whether or not anyone said so, and a deployment with no library
     /// root cannot be anything but index-only.
-    async fn sync_mode(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<SyncMode> {
+    async fn sync_mode(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<SyncMode> {
         authorize(ctx, &user_id)?;
         if !ctx.data::<crate::storage::Storage>()?.archives() {
             return Ok(SyncMode::IndexOnly);
@@ -1134,7 +1168,11 @@ impl QueryRoot {
             .collect())
     }
 
-    async fn synced_settings(&self, ctx: &Context<'_>, user_id: String) -> async_graphql::Result<Option<SyncedSettingsPayload>> {
+    async fn synced_settings(
+        &self,
+        ctx: &Context<'_>,
+        user_id: String,
+    ) -> async_graphql::Result<Option<SyncedSettingsPayload>> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let settings = db.get_synced_settings(&user_id)?;
@@ -1201,7 +1239,6 @@ pub struct AgroWrappedPayload {
     pub new_artists_count: i64,
 }
 
-
 /// A very stale client outbox should arrive in batches rather than in one request the server has
 /// to hold in memory whole.
 const MAX_SCROBBLE_BATCH: usize = 500;
@@ -1247,7 +1284,9 @@ fn account_payload(account: &crate::db_identity::Account) -> AccountPayload {
 /// the server is a reason to see the server's own archive, not a reason to read the collections of
 /// the people using it.
 fn authorize_library(ctx: &Context<'_>, subject: &str) -> async_graphql::Result<bool> {
-    let caller = ctx.data::<AuthedUser>().map_err(|_| forbidden("Unauthorized"))?;
+    let caller = ctx
+        .data::<AuthedUser>()
+        .map_err(|_| forbidden("Unauthorized"))?;
     let db = ctx.data::<Db>()?;
     let subject = subject.trim();
 
@@ -1412,7 +1451,9 @@ fn to_library_payload_with_sources(
     if let Ok(sources) = db.peer_sources_for_track(user_id, &t.content_hash) {
         for s in sources {
             let is_online = chrono::DateTime::parse_from_rfc3339(&s.last_seen_at)
-                .map(|seen| (chrono::Utc::now() - seen.with_timezone(&chrono::Utc)).num_seconds() < 60)
+                .map(|seen| {
+                    (chrono::Utc::now() - seen.with_timezone(&chrono::Utc)).num_seconds() < 60
+                })
                 .unwrap_or(false);
             let lan_address = ws_hub.and_then(|hub| hub.get_lan_address(user_id, &s.device_id));
             peer_sources.push(PeerSourcePayload {
@@ -1464,7 +1505,7 @@ impl MutationRoot {
     async fn delete_library_item(
         &self,
         ctx: &Context<'_>,
-        user_id: String,
+        _user_id: String,
         kind: LibraryBrowseKind,
         id: String,
     ) -> async_graphql::Result<bool> {
@@ -1478,6 +1519,7 @@ impl MutationRoot {
         Ok(db.delete_library_item(db_kind, &id)?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn register_node(
         &self,
         ctx: &Context<'_>,
@@ -1599,14 +1641,19 @@ impl MutationRoot {
         authorize(ctx, &user_id)?;
         // Bounded so the column cannot be used as free storage. A salt and a sealed 32-byte key
         // are both far smaller than this; the limit only has to be obviously sufficient.
-        for (name, value) in [("vaultSalt", &vault_salt), ("vaultKeyWrapped", &vault_key_wrapped)] {
+        for (name, value) in [
+            ("vaultSalt", &vault_salt),
+            ("vaultKeyWrapped", &vault_key_wrapped),
+        ] {
             if value.trim().is_empty() || value.len() > 512 {
                 return Err(format!("{name} is missing or too long").into());
             }
         }
-        Ok(ctx
-            .data::<Db>()?
-            .enrol_vault_key(&user_id, vault_salt.trim(), vault_key_wrapped.trim())?)
+        Ok(ctx.data::<Db>()?.enrol_vault_key(
+            &user_id,
+            vault_salt.trim(),
+            vault_key_wrapped.trim(),
+        )?)
     }
 
     async fn update_synced_settings(
@@ -1715,7 +1762,13 @@ impl MutationRoot {
             })
             .collect();
 
-        db.create_short_link(&uid, target_url, Some(user_id.as_str()), source.as_deref(), expires_at)?;
+        db.create_short_link(
+            &uid,
+            target_url,
+            Some(user_id.as_str()),
+            source.as_deref(),
+            expires_at,
+        )?;
         Ok(uid)
     }
 
@@ -1755,7 +1808,8 @@ impl MutationRoot {
             .collect();
 
         let db = ctx.data::<Db>()?;
-        let inserted = db.record_scrobbles(&user_id, &device_name, client_type.as_deref(), &rows)?;
+        let inserted =
+            db.record_scrobbles(&user_id, &device_name, client_type.as_deref(), &rows)?;
         Ok(inserted as i32)
     }
 
@@ -1831,18 +1885,26 @@ impl MutationRoot {
         // An admin who suspends themselves locks the deployment out of its own controls, and
         // nothing else can restore them.
         if target.eq_ignore_ascii_case(admin.username()) && !next.is_active() {
-            return Err(forbidden("an administrator cannot deactivate their own account"));
+            return Err(forbidden(
+                "an administrator cannot deactivate their own account",
+            ));
         }
         if !db.set_account_state(&target, next)? {
             return Err("No such account".into());
         }
         db.record_event(
             crate::audit::Event::AccountStateChanged,
-            crate::audit::Record::new()
-                .user(&target)
-                .detail(format!("set to {} by {}", next.as_str(), admin.username())),
+            crate::audit::Record::new().user(&target).detail(format!(
+                "set to {} by {}",
+                next.as_str(),
+                admin.username()
+            )),
         );
-        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+        Ok(db
+            .account(&target)?
+            .as_ref()
+            .map(account_payload)
+            .expect("just updated"))
     }
 
     /// Sets how much spool a guest may occupy, in bytes. `0` means unlimited.
@@ -1858,7 +1920,11 @@ impl MutationRoot {
         if !db.set_account_quota(&target, quota_bytes)? {
             return Err("No such account".into());
         }
-        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+        Ok(db
+            .account(&target)?
+            .as_ref()
+            .map(account_payload)
+            .expect("just updated"))
     }
 
     /// Recomputes the normalised matching columns from the metadata already stored.
@@ -1901,7 +1967,11 @@ impl MutationRoot {
         if !db.set_can_archive(&target, can_archive)? {
             return Err("No such account".into());
         }
-        Ok(db.account(&target)?.as_ref().map(account_payload).expect("just updated"))
+        Ok(db
+            .account(&target)?
+            .as_ref()
+            .map(account_payload)
+            .expect("just updated"))
     }
 
     /// Mints a device token and returns it as a scannable pairing payload.
@@ -1983,7 +2053,9 @@ impl MutationRoot {
         let token = db.mint_device_token(&user_id, &label)?;
         db.record_event(
             crate::audit::Event::TokenMinted,
-            crate::audit::Record::new().user(&user_id).device(label.clone()),
+            crate::audit::Record::new()
+                .user(&user_id)
+                .device(label.clone()),
         );
         Ok(AppPasswordCreated { label, token })
     }
@@ -2006,7 +2078,9 @@ impl MutationRoot {
         if revoked {
             db.record_event(
                 crate::audit::Event::TokenRevoked,
-                crate::audit::Record::new().user(&user_id).detail(format!("credential {id}")),
+                crate::audit::Record::new()
+                    .user(&user_id)
+                    .detail(format!("credential {id}")),
             );
         }
         Ok(revoked)
@@ -2065,11 +2139,7 @@ impl MutationRoot {
         let vault = match (new_vault_salt.as_deref(), new_vault_key_wrapped.as_deref()) {
             (Some(salt), Some(wrapped)) => Some((salt, wrapped)),
             (None, None) => None,
-            _ => {
-                return Err(
-                    "Send both newVaultSalt and newVaultKeyWrapped, or neither".into()
-                )
-            }
+            _ => return Err("Send both newVaultSalt and newVaultKeyWrapped, or neither".into()),
         };
 
         let changed = db
@@ -2130,13 +2200,19 @@ impl MutationRoot {
     /// The last administrator is protected. Deleting them would leave a server whose accounts
     /// nobody can administer, and which no setup token can recover: one is only minted for a
     /// database with *no* accounts, and the guests would still be there.
-    async fn delete_account(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<bool> {
+    async fn delete_account(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+    ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let target = normalise_username(&username)?;
         let is_self = authed.username().eq_ignore_ascii_case(&target);
 
         if !is_self && !authed.is_admin() {
-            return Err(forbidden("only an administrator can remove another account"));
+            return Err(forbidden(
+                "only an administrator can remove another account",
+            ));
         }
 
         let db = ctx.data::<Db>()?;
@@ -2164,14 +2240,23 @@ impl MutationRoot {
 
     /// Enables or disables a plugin. Administrators only: `plugins_state` has no user column, so
     /// this writes server-global configuration and every account sees the result.
-    async fn toggle_plugin(&self, ctx: &Context<'_>, plugin_id: String, is_enabled: bool) -> async_graphql::Result<bool> {
+    async fn toggle_plugin(
+        &self,
+        ctx: &Context<'_>,
+        plugin_id: String,
+        is_enabled: bool,
+    ) -> async_graphql::Result<bool> {
         require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
         db.set_plugin_enabled(&plugin_id, is_enabled)?;
         Ok(true)
     }
 
-    async fn update_handoff(&self, ctx: &Context<'_>, input: HandoffInput) -> async_graphql::Result<bool> {
+    async fn update_handoff(
+        &self,
+        ctx: &Context<'_>,
+        input: HandoffInput,
+    ) -> async_graphql::Result<bool> {
         authorize(ctx, &input.user_id)?;
         let db = ctx.data::<Db>()?;
         // A queue is capped rather than rejected: an endless-radio client can hold hundreds of
@@ -2241,7 +2326,9 @@ impl MutationRoot {
         // A handoff reports what is playing, not what the device is called: the name it already
         // has stands, and the invented one is only for a device seen here first.
         let petname = crate::passphrase::generate_random_petname();
-        let client_type = if input.device_id.to_lowercase().contains("android") || input.device_id.to_lowercase().contains("wanda") {
+        let client_type = if input.device_id.to_lowercase().contains("android")
+            || input.device_id.to_lowercase().contains("wanda")
+        {
             "wanda"
         } else {
             "wander"
@@ -2275,7 +2362,6 @@ impl MutationRoot {
 
         Ok(true)
     }
-
 
     // ── Library ─────────────────────────────────────────────────────────────────────────────
 
@@ -2357,7 +2443,9 @@ impl MutationRoot {
     ) -> async_graphql::Result<i32> {
         authorize(ctx, &user_id)?;
         require_own_device(ctx, &device_id)?;
-        Ok(ctx.data::<Db>()?.forget_holdings(&user_id, &device_id, &hashes)? as i32)
+        Ok(ctx
+            .data::<Db>()?
+            .forget_holdings(&user_id, &device_id, &hashes)? as i32)
     }
 
     /// Nudges one device to look at what it is missing.
@@ -2393,6 +2481,7 @@ impl MutationRoot {
         Ok(missing.len() as i32)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_ephemeral_share(
         &self,
         ctx: &Context<'_>,
@@ -2406,7 +2495,14 @@ impl MutationRoot {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
         let ttl = ttl_hours.unwrap_or(24);
-        let token = db.create_ephemeral_share(&user_id, &track_title, &artist_name, album_name.as_deref(), &audio_url, ttl)?;
+        let token = db.create_ephemeral_share(
+            &user_id,
+            &track_title,
+            &artist_name,
+            album_name.as_deref(),
+            &audio_url,
+            ttl,
+        )?;
         // Was hardcoded to localhost, which made every ephemeral share unopenable from any device
         // but the server itself.
         let share_url = format!("{}/share/{}", public_url().trim_end_matches('/'), token);
@@ -2426,16 +2522,28 @@ impl MutationRoot {
     /// Authenticated, and the inputs are bounded. This took no token at all and made an outbound
     /// HTTP request per call with strings the caller chose — an unauthenticated amplification
     /// primitive pointed at someone else's server.
-    async fn fetch_lyrics_and_cover(&self, ctx: &Context<'_>, artist: String, title: String) -> async_graphql::Result<LyricsAndCoverPayload> {
+    async fn fetch_lyrics_and_cover(
+        &self,
+        ctx: &Context<'_>,
+        artist: String,
+        title: String,
+    ) -> async_graphql::Result<LyricsAndCoverPayload> {
         caller(ctx)?;
         let artist = bounded(&artist, MAX_TAG_LEN, "artist")?;
         let title = bounded(&title, MAX_TAG_LEN, "title")?;
         let client = reqwest::Client::new();
-        let url = format!("https://lrclib.net/api/get?artist_name={}&track_name={}", urlencoding::encode(&artist), urlencoding::encode(&title));
-        
+        let url = format!(
+            "https://lrclib.net/api/get?artist_name={}&track_name={}",
+            urlencoding::encode(&artist),
+            urlencoding::encode(&title)
+        );
+
         let synced_lrc = if let Ok(resp) = client.get(&url).send().await {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                json["syncedLyrics"].as_str().unwrap_or("[00:00.00] Synchronized lyrics not found").to_string()
+                json["syncedLyrics"]
+                    .as_str()
+                    .unwrap_or("[00:00.00] Synchronized lyrics not found")
+                    .to_string()
             } else {
                 "[00:00.00] Synchronized lyrics unavailable".to_string()
             }
@@ -2445,7 +2553,8 @@ impl MutationRoot {
 
         Ok(LyricsAndCoverPayload {
             synced_lrc,
-            cover_art_url: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500".to_string(),
+            cover_art_url: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500"
+                .to_string(),
             is_synced: true,
         })
     }

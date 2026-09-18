@@ -9,6 +9,7 @@
 //! them in real time via `GET /api/v1/relay/{id}/receive`. The server keeps only small in-flight
 //! buffers (64 KB) in memory, writes zero bytes to disk, and updates device holdings upon completion.
 
+use axum::body::Bytes;
 use axum::{
     body::Body,
     extract::{Path as AxumPath, State},
@@ -16,7 +17,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use axum::body::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -237,7 +237,12 @@ pub async fn open_relay(
     // A fanout is opened by the host, for its own jam, and is authorised entirely differently:
     // there is no single receiving device to check, and the sender is by definition the caller.
     // Listeners are authorised when they attach, against the jam's membership at that moment.
-    if let Some(jam_id) = body.jam_id.as_deref().map(str::trim).filter(|j| !j.is_empty()) {
+    if let Some(jam_id) = body
+        .jam_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|j| !j.is_empty())
+    {
         if !state
             .db
             .device_belongs_to(user_id, body.from_device.trim())
@@ -279,11 +284,7 @@ pub async fn open_relay(
     let sender_user = match state.db.owner_of_device(body.from_device.trim()) {
         Ok(Some(owner)) => owner,
         _ => {
-            return (
-                StatusCode::FORBIDDEN,
-                "unknown source device",
-            )
-                .into_response();
+            return (StatusCode::FORBIDDEN, "unknown source device").into_response();
         }
     };
 
@@ -370,7 +371,11 @@ pub async fn send_relay(
     };
 
     if !session.sender_user.eq_ignore_ascii_case(user.username()) {
-        return (StatusCode::FORBIDDEN, "not the sender of this relay session").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "not the sender of this relay session",
+        )
+            .into_response();
     }
 
     // Capture encryption headers if present for E2EE relaying
@@ -494,7 +499,11 @@ pub async fn receive_relay(
             return (StatusCode::FORBIDDEN, "not a member of this jam").into_response();
         }
     } else if !session.receiver_user.eq_ignore_ascii_case(user.username()) {
-        return (StatusCode::FORBIDDEN, "not the receiver of this relay session").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "not the receiver of this relay session",
+        )
+            .into_response();
     }
 
     if let RelayPipe::Fanout { tx, .. } = &session.pipe {
@@ -649,7 +658,8 @@ mod tests {
         let mut first = tx.subscribe();
         let mut second = tx.subscribe();
 
-        tx.send(Bytes::from_static(b"chunk")).expect("listeners attached");
+        tx.send(Bytes::from_static(b"chunk"))
+            .expect("listeners attached");
 
         assert_eq!(first.recv().await.unwrap(), Bytes::from_static(b"chunk"));
         assert_eq!(second.recv().await.unwrap(), Bytes::from_static(b"chunk"));
@@ -668,7 +678,8 @@ mod tests {
         // Nobody attached yet: the send fails and the chunk is gone, which is intended.
         let _ = tx.send(Bytes::from_static(b"early"));
         let mut late = tx.subscribe();
-        tx.send(Bytes::from_static(b"later")).expect("listener attached");
+        tx.send(Bytes::from_static(b"later"))
+            .expect("listener attached");
 
         assert_eq!(late.recv().await.unwrap(), Bytes::from_static(b"later"));
     }
@@ -680,12 +691,21 @@ mod tests {
         use std::sync::atomic::Ordering;
         let hub = RelayHub::new();
         let (_, session) = hub.create_jam_session("jam-1", "host", "host-phone", "hash-1");
-        let RelayPipe::Fanout { sender_attached, .. } = &session.pipe else {
+        let RelayPipe::Fanout {
+            sender_attached, ..
+        } = &session.pipe
+        else {
             panic!("fanout");
         };
 
-        assert!(!sender_attached.swap(true, Ordering::SeqCst), "first upload attaches");
-        assert!(sender_attached.swap(true, Ordering::SeqCst), "second is refused");
+        assert!(
+            !sender_attached.swap(true, Ordering::SeqCst),
+            "first upload attaches"
+        );
+        assert!(
+            sender_attached.swap(true, Ordering::SeqCst),
+            "second is refused"
+        );
     }
 
     /// A fanout carries the jam it belongs to, because that is what every attach is checked
@@ -700,6 +720,7 @@ mod tests {
         assert!(hub.get_session(&id).is_some());
     }
 
+    #[tokio::test]
     async fn pipes_bytes_between_sender_and_receiver() {
         let hub = RelayHub::new();
         let (id, session) = hub.create_session("alpha", "phone", "alpha", "pc", "hash123");
@@ -710,8 +731,12 @@ mod tests {
         let mut rx = rx.lock().unwrap().take().unwrap();
 
         tokio::spawn(async move {
-            tx.send(Ok(Bytes::from_static(b"audio stream chunk 1"))).await.unwrap();
-            tx.send(Ok(Bytes::from_static(b"audio stream chunk 2"))).await.unwrap();
+            tx.send(Ok(Bytes::from_static(b"audio stream chunk 1")))
+                .await
+                .unwrap();
+            tx.send(Ok(Bytes::from_static(b"audio stream chunk 2")))
+                .await
+                .unwrap();
         });
 
         let chunk1 = rx.recv().await.unwrap().unwrap();
@@ -731,7 +756,11 @@ mod tests {
         /// Two accounts, each with one registered device.
         fn two_accounts() -> (AppState, AuthedUser) {
             let db = Db::new_in_memory().unwrap();
-            for (user, device) in [("alpha", "alpha-pc"), ("mallory", "mallory-pc"), ("friend", "friend-phone")] {
+            for (user, device) in [
+                ("alpha", "alpha-pc"),
+                ("mallory", "mallory-pc"),
+                ("friend", "friend-phone"),
+            ] {
                 db.create_account(user, "passphrase", Role::Member, AccountState::Active)
                     .unwrap();
                 db.upsert_node(device, user, NodeName::Set(device), "wander", None, None)
@@ -770,7 +799,14 @@ mod tests {
             let (state, alpha) = two_accounts();
             state
                 .db
-                .upsert_node("alpha-phone", "alpha", NodeName::Set("phone"), "wanda", None, None)
+                .upsert_node(
+                    "alpha-phone",
+                    "alpha",
+                    NodeName::Set("phone"),
+                    "wanda",
+                    None,
+                    None,
+                )
                 .unwrap();
             assert_eq!(
                 open(state, alpha, "alpha-pc", "alpha-phone").await,

@@ -41,15 +41,23 @@ fn harness() -> Harness {
         .create_account("beta", "beta-pass", Role::Member, AccountState::Active)
         .unwrap();
 
-    let schema = Schema::build(Query::default(), Mutation::default(), async_graphql::EmptySubscription)
-        .data(db)
-        .data(Arc::new(WsHub::new()))
-        .data(Storage::for_tests())
-        .data(SetupToken::for_fresh_server(1))
-        .data(crate::schema_catalog::PublishQuota::default())
-        .finish();
+    let schema = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        async_graphql::EmptySubscription,
+    )
+    .data(db)
+    .data(Arc::new(WsHub::new()))
+    .data(Storage::for_tests())
+    .data(SetupToken::for_fresh_server(1))
+    .data(crate::schema_catalog::PublishQuota::default())
+    .finish();
 
-    Harness { schema, alpha, beta }
+    Harness {
+        schema,
+        alpha,
+        beta,
+    }
 }
 
 impl Harness {
@@ -114,8 +122,14 @@ async fn what_one_account_publishes_another_can_read() {
         .run_as(&h.beta, "{ catalogSince(since: 0) { title sources } }")
         .await;
     let body = response.data.to_string();
-    assert!(body.contains("Memories"), "beta could not read alpha's entry: {body}");
-    assert!(body.contains("ytm:aaa"), "the source was not shared: {body}");
+    assert!(
+        body.contains("Memories"),
+        "beta could not read alpha's entry: {body}"
+    );
+    assert!(
+        body.contains("ytm:aaa"),
+        "the source was not shared: {body}"
+    );
 }
 
 #[tokio::test]
@@ -143,7 +157,11 @@ async fn a_local_source_id_is_never_published() {
     // the client not to send one — an older or modified client would.
     h.run_as(
         &h.alpha,
-        &publish(&embedding_hex(3), "Memories", "local:/storage/emulated/0/Music/x.flac"),
+        &publish(
+            &embedding_hex(3),
+            "Memories",
+            "local:/storage/emulated/0/Music/x.flac",
+        ),
     )
     .await;
 
@@ -151,7 +169,10 @@ async fn a_local_source_id_is_never_published() {
         .run_as(&h.beta, "{ catalogSince(since: 0) { title sources } }")
         .await;
     let body = response.data.to_string();
-    assert!(body.contains("Memories"), "the recording itself should be shared: {body}");
+    assert!(
+        body.contains("Memories"),
+        "the recording itself should be shared: {body}"
+    );
     assert!(
         !body.contains("storage/emulated"),
         "a filesystem path reached another account: {body}"
@@ -179,7 +200,9 @@ async fn a_blob_that_is_not_whole_vectors_is_refused() {
     // One byte short of a whole vector: a client that changed `dim` without changing its packing.
     let mut truncated = embedding_hex(5);
     truncated.truncate(truncated.len() - 2);
-    let response = h.run_as(&h.alpha, &publish(&truncated, "Broken", "ytm:x")).await;
+    let response = h
+        .run_as(&h.alpha, &publish(&truncated, "Broken", "ytm:x"))
+        .await;
     assert!(!response.errors.is_empty(), "a partial vector was accepted");
 }
 
@@ -188,8 +211,13 @@ async fn an_oversized_embedding_is_refused() {
     let h = harness();
     // Longer than any recording: 128 bytes per vector, past the twenty-minute cap.
     let huge = "00".repeat(128 * 2 * 60 * 21);
-    let response = h.run_as(&h.alpha, &publish(&huge, "Too long", "ytm:y")).await;
-    assert!(!response.errors.is_empty(), "an oversized embedding was accepted");
+    let response = h
+        .run_as(&h.alpha, &publish(&huge, "Too long", "ytm:y"))
+        .await;
+    assert!(
+        !response.errors.is_empty(),
+        "an oversized embedding was accepted"
+    );
 }
 
 #[tokio::test]
@@ -221,9 +249,18 @@ async fn two_accounts_publishing_one_recording_produce_one_entry() {
         .await;
     let body = response.data.to_string();
     assert_eq!(body.matches("recordingId").count(), 0);
-    assert!(body.contains("The Real Title"), "the first title should stand: {body}");
-    assert!(!body.contains("track01"), "a worse title overwrote a better one: {body}");
-    assert!(body.contains("ytm:aaa") && body.contains("navidrome:bbb"), "sources did not merge: {body}");
+    assert!(
+        body.contains("The Real Title"),
+        "the first title should stand: {body}"
+    );
+    assert!(
+        !body.contains("track01"),
+        "a worse title overwrote a better one: {body}"
+    );
+    assert!(
+        body.contains("ytm:aaa") && body.contains("navidrome:bbb"),
+        "sources did not merge: {body}"
+    );
 }
 
 // ── Publishing a batch ──────────────────────────────────────────────────────────────────────
@@ -245,11 +282,23 @@ async fn a_batch_files_every_entry_it_carries() {
         entry(&embedding_hex(21), "Second", "ytm:two")
     );
     let response = h.run_as(&h.alpha, &query).await;
-    assert!(response.errors.is_empty(), "the batch failed: {:?}", response.errors);
+    assert!(
+        response.errors.is_empty(),
+        "the batch failed: {:?}",
+        response.errors
+    );
 
     let body = response.data.to_string();
-    assert_eq!(body.matches("recordingId").count(), 2, "not one result per entry: {body}");
-    assert_eq!(body.matches("error: null").count(), 2, "an entry reported a failure: {body}");
+    assert_eq!(
+        body.matches("recordingId").count(),
+        2,
+        "not one result per entry: {body}"
+    );
+    assert_eq!(
+        body.matches("error: null").count(),
+        2,
+        "an entry reported a failure: {body}"
+    );
 
     // Both are in the catalogue, and readable by the other account like anything else published.
     let read = h
@@ -257,7 +306,10 @@ async fn a_batch_files_every_entry_it_carries() {
         .await
         .data
         .to_string();
-    assert!(read.contains("First") && read.contains("Second"), "the batch did not land: {read}");
+    assert!(
+        read.contains("First") && read.contains("Second"),
+        "the batch did not land: {read}"
+    );
 }
 
 #[tokio::test]
@@ -266,13 +318,14 @@ async fn one_bad_entry_does_not_cost_the_good_ones() {
     // The middle entry names no model, which `publishRecording` refuses outright. In a batch that
     // must cost the client that entry alone — losing the other two would mean one malformed row
     // could stop a whole library from ever syncing.
+    let malformed_entry = format!(
+        r#"{{ embedding: "{}", dim: 128, model: "", version: 1, durationMs: 210000 }}"#,
+        embedding_hex(23)
+    );
     let query = format!(
         "mutation {{ publishRecordings(entries: [{}, {}, {}]) {{ recordingId error }} }}",
         entry(&embedding_hex(22), "Good", "ytm:good"),
-        format!(
-            r#"{{ embedding: "{}", dim: 128, model: "", version: 1, durationMs: 210000 }}"#,
-            embedding_hex(23)
-        ),
+        malformed_entry,
         entry(&embedding_hex(24), "Also good", "ytm:alsogood")
     );
     let response = h.run_as(&h.alpha, &query).await;
@@ -287,8 +340,14 @@ async fn one_bad_entry_does_not_cost_the_good_ones() {
         .await
         .data
         .to_string();
-    assert!(read.contains("Good"), "the first good entry was lost: {read}");
-    assert!(read.contains("Also good"), "the entry after the bad one was lost: {read}");
+    assert!(
+        read.contains("Good"),
+        "the first good entry was lost: {read}"
+    );
+    assert!(
+        read.contains("Also good"),
+        "the entry after the bad one was lost: {read}"
+    );
 }
 
 #[tokio::test]
@@ -302,7 +361,10 @@ async fn a_batch_larger_than_the_cap_is_refused() {
         entries.join(", ")
     );
     let response = h.run_as(&h.alpha, &query).await;
-    assert!(!response.errors.is_empty(), "a batch past the cap was accepted");
+    assert!(
+        !response.errors.is_empty(),
+        "a batch past the cap was accepted"
+    );
 }
 
 #[tokio::test]
@@ -318,12 +380,18 @@ async fn lyrics_carry_the_source_that_supplied_them() {
     h.run_as(&h.alpha, &query).await;
 
     let body = h
-        .run_as(&h.beta, "{ catalogSince(since: 0) { lyrics lyricsSource } }")
+        .run_as(
+            &h.beta,
+            "{ catalogSince(since: 0) { lyrics lyricsSource } }",
+        )
         .await
         .data
         .to_string();
     assert!(body.contains("a line"), "the lyrics did not trade: {body}");
-    assert!(body.contains("LRCLIB"), "the attribution did not trade with them: {body}");
+    assert!(
+        body.contains("LRCLIB"),
+        "the attribution did not trade with them: {body}"
+    );
 }
 
 #[tokio::test]
@@ -345,7 +413,10 @@ async fn attribution_without_lyrics_is_dropped() {
         .await
         .data
         .to_string();
-    assert!(!body.contains("LRCLIB"), "attribution was kept without any lyrics: {body}");
+    assert!(
+        !body.contains("LRCLIB"),
+        "attribution was kept without any lyrics: {body}"
+    );
 }
 
 // ── Artist subscriptions ────────────────────────────────────────────────────────────────────
@@ -366,7 +437,10 @@ async fn one_account_cannot_read_or_change_anothers_subscriptions() {
     .await;
 
     let readable = h
-        .run_as(&h.beta, r#"{ subscribedArtists(userId: "alpha") { displayName } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ subscribedArtists(userId: "alpha") { displayName } }"#,
+        )
         .await;
     assert!(
         !readable.errors.is_empty(),
@@ -380,15 +454,24 @@ async fn one_account_cannot_read_or_change_anothers_subscriptions() {
             r#"mutation { subscribeArtist(userId: "alpha", artist: "Autechre") { artistId } }"#,
         )
         .await;
-    assert!(!writable.errors.is_empty(), "beta subscribed on alpha's behalf");
+    assert!(
+        !writable.errors.is_empty(),
+        "beta subscribed on alpha's behalf"
+    );
 
     // And alpha still has exactly what alpha asked for.
     let own = h
-        .run_as(&h.alpha, r#"{ subscribedArtists(userId: "alpha") { displayName } }"#)
+        .run_as(
+            &h.alpha,
+            r#"{ subscribedArtists(userId: "alpha") { displayName } }"#,
+        )
         .await;
     let body = own.data.to_string();
     assert!(body.contains("Boards of Canada"), "{body}");
-    assert!(!body.contains("Autechre"), "beta's write landed anyway: {body}");
+    assert!(
+        !body.contains("Autechre"),
+        "beta's write landed anyway: {body}"
+    );
 }
 
 /// Publishing joins a recording to an artist, so a subscriber sees it without anything else running.
@@ -403,11 +486,17 @@ async fn a_published_recording_reaches_a_subscriber_of_its_artist() {
 
     // The shared `publish` helper above files everything under "An Artist" — a different spelling
     // of what beta subscribed to, which is the case the normalisation exists for.
-    h.run_as(&h.alpha, &publish(&embedding_hex(7), "Something New", "ytm:new"))
-        .await;
+    h.run_as(
+        &h.alpha,
+        &publish(&embedding_hex(7), "Something New", "ytm:new"),
+    )
+    .await;
 
     let response = h
-        .run_as(&h.beta, r#"{ newReleases(userId: "beta", since: 0) { title artist } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ newReleases(userId: "beta", since: 0) { title artist } }"#,
+        )
         .await;
     let body = response.data.to_string();
     assert!(

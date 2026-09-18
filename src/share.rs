@@ -1,9 +1,9 @@
+use crate::listen::escape_html;
+use crate::AppState;
 use axum::{
     extract::{Path, State},
     response::Html,
 };
-use crate::listen::escape_html;
-use crate::AppState;
 
 /// Public, unauthenticated. Renders a small HTML player page for a capability-URL share link, or
 /// an "expired" page once the 24-hour ephemeral share is gone.

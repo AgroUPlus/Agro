@@ -39,7 +39,11 @@ const DEFAULT_TOKEN_IDLE_DAYS: i64 = 180;
 /// Unparseable timestamps are treated as *not* expired. A corrupt column must not silently log
 /// everybody out, and the sweep will not remove the row either — the mismatch stays visible rather
 /// than becoming a fleet-wide outage.
-fn token_has_expired(expires_at: Option<&str>, last_used_at: Option<&str>, created_at: &str) -> bool {
+fn token_has_expired(
+    expires_at: Option<&str>,
+    last_used_at: Option<&str>,
+    created_at: &str,
+) -> bool {
     let now = chrono::Utc::now();
 
     if let Some(parsed) = expires_at.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()) {
@@ -104,7 +108,10 @@ pub enum TotpOutcome {
 
 impl TotpOutcome {
     pub fn is_satisfied(self) -> bool {
-        matches!(self, TotpOutcome::Accepted | TotpOutcome::AcceptedRecoveryCode)
+        matches!(
+            self,
+            TotpOutcome::Accepted | TotpOutcome::AcceptedRecoveryCode
+        )
     }
 }
 
@@ -319,8 +326,9 @@ impl Db {
 
     pub fn list_accounts(&self) -> Result<Vec<Account>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare(&format!("SELECT {ACCOUNT_COLUMNS} FROM users ORDER BY created_at ASC"))?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {ACCOUNT_COLUMNS} FROM users ORDER BY created_at ASC"
+        ))?;
         let rows = stmt.query_map([], account_from_row)?;
         rows.collect()
     }
@@ -344,7 +352,11 @@ impl Db {
         })?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        let quota = if role.is_admin() { 0 } else { DEFAULT_GUEST_QUOTA };
+        let quota = if role.is_admin() {
+            0
+        } else {
+            DEFAULT_GUEST_QUOTA
+        };
 
         {
             let conn = self.conn.lock().unwrap();
@@ -448,7 +460,14 @@ impl Db {
         let prefix = credentials::token_prefix(token);
         let presented = credentials::hash_token(token);
 
-        type Candidate = (String, String, Option<String>, String, Option<String>, String);
+        type Candidate = (
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+        );
         let candidates: Vec<Candidate> = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
@@ -513,7 +532,11 @@ impl Db {
         next: &str,
         vault: Option<(&str, &str)>,
     ) -> Result<bool, String> {
-        if self.verify_login(username, current).map_err(|e| e.to_string())?.is_none() {
+        if self
+            .verify_login(username, current)
+            .map_err(|e| e.to_string())?
+            .is_none()
+        {
             return Ok(false);
         }
         if next.trim().len() < 12 {
@@ -620,7 +643,11 @@ impl Db {
             tx.execute(
                 "UPDATE users SET totp_confirmed_at = ?2, totp_last_step = ?3
                   WHERE username = ?1 COLLATE NOCASE",
-                params![username.trim(), chrono::Utc::now().to_rfc3339(), step as i64],
+                params![
+                    username.trim(),
+                    chrono::Utc::now().to_rfc3339(),
+                    step as i64
+                ],
             )
             .map_err(|e| format!("could not confirm the enrolment: {e}"))?;
             // Replaces any codes from an earlier enrolment, so a set someone wrote down two years
@@ -997,8 +1024,11 @@ impl Db {
 
         let mut dump = |label: &str, sql: &str| -> Result<()> {
             let mut stmt = conn.prepare(sql)?;
-            let columns: Vec<String> =
-                stmt.column_names().into_iter().map(str::to_string).collect();
+            let columns: Vec<String> = stmt
+                .column_names()
+                .into_iter()
+                .map(str::to_string)
+                .collect();
             let rows = stmt
                 .query_map(params![username.trim()], |row| {
                     let mut object = serde_json::Map::new();
@@ -1030,8 +1060,14 @@ impl Db {
             "SELECT username, role, state, created_at, quota_bytes FROM users
               WHERE username = ?1 COLLATE NOCASE",
         )?;
-        dump("devices", "SELECT * FROM registered_nodes WHERE user_id = ?1")?;
-        dump("listening_history", "SELECT * FROM scrobbles WHERE user_id = ?1")?;
+        dump(
+            "devices",
+            "SELECT * FROM registered_nodes WHERE user_id = ?1",
+        )?;
+        dump(
+            "listening_history",
+            "SELECT * FROM scrobbles WHERE user_id = ?1",
+        )?;
         dump(
             "friendships",
             "SELECT * FROM friendships WHERE user_id = ?1 OR friend_id = ?1",
@@ -1040,8 +1076,14 @@ impl Db {
             "track_drops",
             "SELECT * FROM track_drops WHERE from_user = ?1 OR to_user = ?1",
         )?;
-        dump("share_links", "SELECT * FROM short_links WHERE user_id = ?1")?;
-        dump("library_holdings", "SELECT * FROM device_holdings WHERE user_id = ?1")?;
+        dump(
+            "share_links",
+            "SELECT * FROM short_links WHERE user_id = ?1",
+        )?;
+        dump(
+            "library_holdings",
+            "SELECT * FROM device_holdings WHERE user_id = ?1",
+        )?;
         dump("handoff", "SELECT * FROM handoff_state WHERE user_id = ?1")?;
         dump(
             "security_log",
@@ -1055,7 +1097,10 @@ impl Db {
         )?;
         // The settings blob is included as stored — sealed. The server cannot open it, and the
         // client that exported it holds the key.
-        dump("settings_vault", "SELECT * FROM synced_settings WHERE user_id = ?1")?;
+        dump(
+            "settings_vault",
+            "SELECT * FROM synced_settings WHERE user_id = ?1",
+        )?;
 
         Ok(serde_json::Value::Object(export))
     }
@@ -1143,10 +1188,7 @@ impl Db {
             .unwrap_or(180);
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
         let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "DELETE FROM security_events WHERE at < ?1",
-            params![cutoff],
-        )?)
+        conn.execute("DELETE FROM security_events WHERE at < ?1", params![cutoff])
     }
 
     /// Revokes every token on an account, optionally sparing one.
@@ -1207,8 +1249,9 @@ impl Db {
     fn touch_token_if_stale(&self, token_hash: &str, last_used: Option<&str>) {
         let now = chrono::Utc::now();
         let stale = match last_used.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()) {
-            Some(seen) => (now - seen.with_timezone(&chrono::Utc)).num_seconds()
-                >= LAST_USED_REFRESH_SECS,
+            Some(seen) => {
+                (now - seen.with_timezone(&chrono::Utc)).num_seconds() >= LAST_USED_REFRESH_SECS
+            }
             None => true,
         };
         if !stale {
@@ -1329,7 +1372,6 @@ impl Db {
             |row| row.get(0),
         )
     }
-
 }
 
 #[cfg(test)]
@@ -1370,9 +1412,12 @@ mod tests {
         db.create_account("alpha", "open sesame", Role::Admin, AccountState::Active)
             .unwrap();
 
-        assert!(db.enrol_vault_key("alpha", "first-salt", "first-key").unwrap());
+        assert!(db
+            .enrol_vault_key("alpha", "first-salt", "first-key")
+            .unwrap());
         assert!(
-            !db.enrol_vault_key("alpha", "second-salt", "second-key").unwrap(),
+            !db.enrol_vault_key("alpha", "second-salt", "second-key")
+                .unwrap(),
             "the second enrolment should report that it did not land"
         );
         assert_eq!(
@@ -1388,8 +1433,13 @@ mod tests {
     #[test]
     fn the_server_stores_nothing_that_unwraps_the_vault() {
         let db = db();
-        db.create_account("alpha", "correct horse battery staple", Role::Admin, AccountState::Active)
-            .unwrap();
+        db.create_account(
+            "alpha",
+            "correct horse battery staple",
+            Role::Admin,
+            AccountState::Active,
+        )
+        .unwrap();
         db.enrol_vault_key("alpha", "s4lt", "sealed-key").unwrap();
 
         let conn = db.conn.lock().unwrap();
@@ -1521,7 +1571,10 @@ mod tests {
         }
 
         assert_eq!(db.migrate_credentials().unwrap(), 1);
-        assert!(db.verify_login("legacy", "old-passphrase").unwrap().is_some());
+        assert!(db
+            .verify_login("legacy", "old-passphrase")
+            .unwrap()
+            .is_some());
         // ...but it is no longer a token.
         assert!(db.account_for_token("old-passphrase").unwrap().is_none());
         // Running twice must not re-hash what is already done.
@@ -1757,15 +1810,24 @@ mod tests {
         fn a_username_that_collides_never_resolves_to_the_existing_account() {
             let db = db_with_alpha();
             let derived = db.available_username_like("alpha").unwrap();
-            assert_ne!(derived, "alpha", "an SSO login must never land on an existing account");
+            assert_ne!(
+                derived, "alpha",
+                "an SSO login must never land on an existing account"
+            );
             assert_eq!(derived, "alpha2");
-            assert!(db.account(&derived).unwrap().is_none(), "and it must be free");
+            assert!(
+                db.account(&derived).unwrap().is_none(),
+                "and it must be free"
+            );
         }
 
         #[test]
         fn a_free_username_is_used_as_is() {
             let db = db_with_alpha();
-            assert_eq!(db.available_username_like("brand-new").unwrap(), "brand-new");
+            assert_eq!(
+                db.available_username_like("brand-new").unwrap(),
+                "brand-new"
+            );
         }
 
         #[test]
@@ -1956,7 +2018,10 @@ mod tests {
                 .unwrap());
 
             assert!(db.verify_login("alpha", "open sesame").unwrap().is_none());
-            assert!(db.verify_login("alpha", "a much longer new one").unwrap().is_some());
+            assert!(db
+                .verify_login("alpha", "a much longer new one")
+                .unwrap()
+                .is_some());
             assert_eq!(
                 db.vault_envelope("alpha").unwrap(),
                 (Some("salt-two".into()), Some("wrapped-under-two".into()))
@@ -1979,7 +2044,8 @@ mod tests {
             let db = db();
             account(&db);
             assert!(
-                !db.enrol_vault_key("alpha", "salt-two", "wrapped-under-two").unwrap(),
+                !db.enrol_vault_key("alpha", "salt-two", "wrapped-under-two")
+                    .unwrap(),
                 "enrol_vault_key must still refuse to replace a live key"
             );
         }
@@ -1988,7 +2054,9 @@ mod tests {
         fn a_short_passphrase_is_refused() {
             let db = db();
             account(&db);
-            assert!(db.change_passphrase("alpha", "open sesame", "short", None).is_err());
+            assert!(db
+                .change_passphrase("alpha", "open sesame", "short", None)
+                .is_err());
             assert!(db.verify_login("alpha", "open sesame").unwrap().is_some());
         }
     }

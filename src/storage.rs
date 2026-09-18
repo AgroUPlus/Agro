@@ -134,7 +134,10 @@ pub struct Filing<'a> {
 /// Relative on purpose — it is stored in `library_tracks.archived_path` and joined onto the root
 /// at read time, so moving the library later does not invalidate the index.
 pub fn relative_path(filing: &Filing<'_>) -> PathBuf {
-    let artist = segment(filing.album_artist.unwrap_or(filing.artist), "Unknown Artist");
+    let artist = segment(
+        filing.album_artist.unwrap_or(filing.artist),
+        "Unknown Artist",
+    );
     let album = segment(filing.album.unwrap_or(""), "Unknown Album");
     let title = segment(filing.title, "Untitled");
     let extension = extension(filing.extension);
@@ -217,7 +220,10 @@ pub fn resolve_within(root: &Path, relative: &Path) -> Result<PathBuf, String> {
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
     {
-        return Err(format!("refusing a path with traversal: {}", relative.display()));
+        return Err(format!(
+            "refusing a path with traversal: {}",
+            relative.display()
+        ));
     }
     Ok(root.join(relative))
 }
@@ -231,7 +237,10 @@ pub fn unique_path(candidate: PathBuf) -> PathBuf {
     if !candidate.exists() {
         return candidate;
     }
-    let parent = candidate.parent().map(Path::to_path_buf).unwrap_or_default();
+    let parent = candidate
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let stem = candidate
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -271,7 +280,11 @@ mod tests {
     #[test]
     fn archive_hook_is_absent_unless_it_says_something() {
         std::env::remove_var("AGRO_ARCHIVE_HOOK");
-        assert_eq!(Storage::from_env().archive_hook, None, "unset means no hook");
+        assert_eq!(
+            Storage::from_env().archive_hook,
+            None,
+            "unset means no hook"
+        );
 
         std::env::set_var("AGRO_ARCHIVE_HOOK", "   ");
         assert_eq!(

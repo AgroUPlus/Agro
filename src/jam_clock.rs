@@ -99,7 +99,7 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
     match next {
         Some(track) => {
             db.set_jam_now_playing(&jam.id, &track.id)?;
-            let now = db.jam_now_playing(&jam)?;
+            let now = db.jam_now_playing(jam)?;
             let (holder, holder_device, content_hash) = now
                 .as_ref()
                 .map(|n| {
@@ -119,8 +119,7 @@ fn advance(db: &Db, hub: &Arc<WsHub>, jam: &Jam) -> rusqlite::Result<()> {
                 let (peer_lan_address, peer_lan_token) = match holder_device.as_deref() {
                     Some(device) if !holder.eq_ignore_ascii_case(member) => {
                         if hub.shares_network_with_user(&holder, device, member) {
-                            let member_keys =
-                                crate::schema_social::published_keys(db, member);
+                            let member_keys = crate::schema_social::published_keys(db, member);
                             match (
                                 hub.get_lan_address(&holder, device),
                                 hub.grant_p2p_token(&holder, device, member, &member_keys),

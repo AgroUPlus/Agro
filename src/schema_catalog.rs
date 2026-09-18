@@ -8,10 +8,10 @@
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 
 use crate::auth::AuthedUser;
+use crate::db::Db;
 use crate::db_catalog::PublishedRecording;
 use crate::rate_limit::FixedWindow;
 use crate::schema::bounded;
-use crate::db::Db;
 use std::time::Duration;
 
 /// One recording as the catalogue knows it, on its way to a client.
@@ -123,7 +123,11 @@ impl CatalogQuery {
     }
 
     /// The recording a source id is known to hold, for a client resolving a shared link.
-    async fn recording_for_source(&self, ctx: &Context<'_>, source_uri: String) -> Result<Option<String>> {
+    async fn recording_for_source(
+        &self,
+        ctx: &Context<'_>,
+        source_uri: String,
+    ) -> Result<Option<String>> {
         let db = ctx.data::<Db>()?;
         ctx.data::<AuthedUser>()?;
         Ok(db.recording_for_source(source_uri.trim())?)
@@ -245,7 +249,10 @@ fn spend_publish_quota(ctx: &Context<'_>, user: &AuthedUser, units: usize) -> Re
     let Ok(limiter) = ctx.data::<PublishQuota>() else {
         return Ok(());
     };
-    if limiter.0.charge(user.username(), units, MAX_PUBLISHES, PUBLISH_WINDOW) {
+    if limiter
+        .0
+        .charge(user.username(), units, MAX_PUBLISHES, PUBLISH_WINDOW)
+    {
         return Ok(());
     }
     Err(async_graphql::Error::new(
@@ -328,9 +335,18 @@ fn validate(input: PublishRecordingInput) -> std::result::Result<PublishedRecord
         model,
         version: input.version,
         duration_ms: input.duration_ms,
-        title: input.title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
-        artist: input.artist.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()),
-        album: input.album.map(|a| a.trim().to_string()).filter(|a| !a.is_empty()),
+        title: input
+            .title
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty()),
+        artist: input
+            .artist
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty()),
+        album: input
+            .album
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty()),
         lyrics,
         lyrics_source,
         source_uri,
