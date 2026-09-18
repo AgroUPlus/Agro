@@ -118,7 +118,7 @@
       </div>
     </div>
 
-    <script type="module">
+    <script>
       const DEFAULT_SERVER = 'https://agro.kolbxyz.xyz';
       const STORAGE_KEY = 'agro_charts_server';
       const WINDOWS = [
@@ -269,35 +269,31 @@
         chartCard.appendChild(list);
       }
 
-      async function loadChart() {
+      function loadChart() {
         setHint('Loading…');
-        let response;
-        try {
-          response = await fetch(`${server}/api/v1/popular?days=${days}&limit=25`);
-        } catch (e) {
-          setHint("Couldn't reach that server. Check the address and try again.");
-          return;
-        }
-        if (!response.ok) {
-          setHint("Couldn't reach that server. Check the address and try again.");
-          return;
-        }
-        let body;
-        try {
-          body = await response.json();
-        } catch (e) {
-          setHint("That server did not answer with a chart.");
-          return;
-        }
-        if (!body.enabled) {
-          setHint('Charts are turned off on this server.');
-          return;
-        }
-        if (!body.tracks || body.tracks.length === 0) {
-          setHint('Nothing charted yet.');
-          return;
-        }
-        renderTracks(body.tracks);
+        fetch(`${server}/api/v1/popular?days=${days}&limit=25`)
+          .then((response) => {
+            if (!response.ok) {
+              setHint("Couldn't reach that server. Check the address and try again.");
+              return null;
+            }
+            return response.json();
+          })
+          .then((body) => {
+            if (!body) return;
+            if (!body.enabled) {
+              setHint('Charts are turned off on this server.');
+              return;
+            }
+            if (!body.tracks || body.tracks.length === 0) {
+              setHint('Nothing charted yet.');
+              return;
+            }
+            renderTracks(body.tracks);
+          })
+          .catch(() => {
+            setHint("Couldn't reach that server. Check the address and try again.");
+          });
       }
 
       function openServerModal() {
@@ -319,7 +315,7 @@
         writeStoredServer(server);
         renderServerDisplay();
         closeServerModal();
-        await loadChart();
+        loadChart();
       }
 
       serverBackdrop.addEventListener('click', handleServerBackdropClick);
@@ -327,14 +323,9 @@
         if (e.key === 'Escape') closeServerModal();
       });
 
-      window.openServerModal = openServerModal;
-      window.closeServerModal = closeServerModal;
-      window.saveServer = saveServer;
-      window.handleServerBackdropClick = handleServerBackdropClick;
-
       renderServerDisplay();
       renderWindowSwitcher();
-      await loadChart();
+      loadChart();
     </script>
   </body>
 </html>
