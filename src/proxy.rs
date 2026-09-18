@@ -1,11 +1,11 @@
+use crate::auth::AuthedUser;
+use crate::AppState;
 use axum::{
     body::Body,
     extract::{Extension, Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use crate::auth::AuthedUser;
-use crate::AppState;
 
 /// Whitelisted external domains allowed through the privacy relay.
 const ALLOWED_PROXY_DOMAINS: &[&str] = &["archive.org", "lrclib.net", "nyaa.si"];
@@ -52,7 +52,11 @@ pub async fn proxy_handler(
     let db = &state.db;
     let saved_states = db.get_plugin_states().unwrap_or_default();
     if !saved_states.get("privacy-relay").copied().unwrap_or(true) {
-        return (StatusCode::FORBIDDEN, "Privacy relay is disabled by the administrator").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "Privacy relay is disabled by the administrator",
+        )
+            .into_response();
     }
 
     let target_url = match headers.get("X-Agro-Proxy-Url") {
@@ -78,26 +82,34 @@ pub async fn proxy_handler(
     if is_get {
         if let Ok(Some((cached_headers_json, cached_body))) = db.get_cached_proxy(target_url) {
             let mut response_builder = axum::http::Response::builder().status(StatusCode::OK);
-            if let Ok(headers_map) = serde_json::from_str::<std::collections::HashMap<String, String>>(&cached_headers_json) {
+            if let Ok(headers_map) = serde_json::from_str::<std::collections::HashMap<String, String>>(
+                &cached_headers_json,
+            ) {
                 for (k, v) in headers_map {
                     response_builder = response_builder.header(&k, &v);
                 }
             }
-            return response_builder.body(Body::from(cached_body)).unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Cache rebuild failed").into_response());
+            return response_builder
+                .body(Body::from(cached_body))
+                .unwrap_or_else(|_| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "Cache rebuild failed").into_response()
+                });
         }
     }
 
     let method = req.method().clone();
-    
+
     // Read the body fully (preventing media streams from being sent here anyway)
     let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "Payload too large").into_response(),
     };
 
-    let mut proxy_req = state.http_client.request(method.clone(), target_url)
+    let mut proxy_req = state
+        .http_client
+        .request(method.clone(), target_url)
         .body(body_bytes);
-        
+
     for (k, v) in headers.iter() {
         if k != "host" && k != "x-agro-proxy-url" && k != "authorization" && k != "content-length" {
             proxy_req = proxy_req.header(k.clone(), v.clone());
@@ -112,7 +124,7 @@ pub async fn proxy_handler(
     let status = res.status();
     let mut response_headers = std::collections::HashMap::new();
     let mut builder = axum::http::Response::builder().status(status);
-    
+
     for (k, v) in res.headers().iter() {
         builder = builder.header(k, v);
         if let Ok(val_str) = v.to_str() {
@@ -124,7 +136,7 @@ pub async fn proxy_handler(
         Ok(b) => b,
         Err(_) => return (StatusCode::BAD_GATEWAY, "Failed to read response").into_response(),
     };
-    
+
     if is_get && status.is_success() {
         if let Ok(headers_json) = serde_json::to_string(&response_headers) {
             let expires_at = chrono::Utc::now().timestamp() + (24 * 60 * 60);
@@ -132,7 +144,9 @@ pub async fn proxy_handler(
         }
     }
 
-    builder.body(Body::from(response_body)).unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Response build failed").into_response())
+    builder.body(Body::from(response_body)).unwrap_or_else(|_| {
+        (StatusCode::INTERNAL_SERVER_ERROR, "Response build failed").into_response()
+    })
 }
 
 #[cfg(test)]

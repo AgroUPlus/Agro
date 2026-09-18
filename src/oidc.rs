@@ -276,12 +276,7 @@ pub async fn callback(
 }
 
 /// Attaches the identity to the account that started the flow.
-fn finish_link(
-    state: &AppState,
-    config: &Config,
-    username: &str,
-    claims: &Claims,
-) -> Response {
+fn finish_link(state: &AppState, config: &Config, username: &str, claims: &Claims) -> Response {
     match state.db.link_federated_identity(
         username,
         &config.issuer,
@@ -330,7 +325,10 @@ fn finish_sign_in(state: &AppState, config: &Config, claims: &Claims) -> Respons
         return fail("this account is waiting for an administrator to approve it");
     }
 
-    let Ok(token) = state.db.mint_device_token(&account.username, "browser via SSO") else {
+    let Ok(token) = state
+        .db
+        .mint_device_token(&account.username, "browser via SSO")
+    else {
         return fail("could not issue a token");
     };
     state.db.record_event(
@@ -453,7 +451,10 @@ async fn exchange_and_verify(
         .map_err(|e| e.to_string())?;
 
     let discovery: Discovery = http
-        .get(format!("{}/.well-known/openid-configuration", config.issuer))
+        .get(format!(
+            "{}/.well-known/openid-configuration",
+            config.issuer
+        ))
         .send()
         .await
         .map_err(|e| format!("could not reach the provider: {e}"))?
@@ -476,7 +477,10 @@ async fn exchange_and_verify(
         .map_err(|e| format!("the token exchange failed: {e}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("the token exchange was refused ({})", response.status()));
+        return Err(format!(
+            "the token exchange was refused ({})",
+            response.status()
+        ));
     }
     let tokens: TokenResponse = response
         .json()
@@ -492,7 +496,12 @@ async fn exchange_and_verify(
         .await
         .map_err(|e| format!("the provider's keys did not parse: {e}"))?;
 
-    let claims = verify_id_token(&tokens.id_token, &jwks, &discovery.issuer, &config.client_id)?;
+    let claims = verify_id_token(
+        &tokens.id_token,
+        &jwks,
+        &discovery.issuer,
+        &config.client_id,
+    )?;
 
     // Binds this token to the flow this server started. Without it, an ID token obtained for
     // another session could be replayed into this callback.
@@ -550,8 +559,7 @@ fn random_token() -> String {
 }
 
 fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -661,7 +669,9 @@ mod tests {
         let a = random_token();
         let b = random_token();
         assert_ne!(a, b);
-        assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(a
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
     }
 
     /// A provider's error text must not be able to carry markup into the page.

@@ -303,6 +303,9 @@ pub async fn put_upload(
     let mut file = match tokio::fs::OpenOptions::new()
         .create(true)
         .write(true)
+        // Never truncate on open: a resumed upload's whole point is the bytes already on disk.
+        // The explicit `set_len` below is the only truncation this path does.
+        .truncate(false)
         .open(&part_path)
         .await
     {
@@ -499,13 +502,12 @@ async fn archive(
     }
 
     // The library is frequently a directory shared with another service — a media scanner, a file
-    // sync daemon — reached through a common group on a setgid directory. A file inheriting the
-    // spool's tighter mode would be one that service cannot manage, so widen it to group-writable.
+    // sync daemon. Ensure standard read permissions for group and others while owner retains write.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(err) = tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o664))
-            .await
+        if let Err(err) =
+            tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).await
         {
             tracing::warn!("library: could not set mode on {}: {err}", target.display());
         }
@@ -759,7 +761,11 @@ pub async fn cover(
         return (StatusCode::NOT_FOUND, "no cover for that album").into_response();
     };
 
-    let content_type = if extension == "png" { "image/png" } else { "image/jpeg" };
+    let content_type = if extension == "png" {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
     (
         StatusCode::OK,
         [
@@ -824,8 +830,8 @@ struct FileTags {
 }
 
 /// Reads tags off the received file. Blocking, so it runs on the blocking pool.
-async fn read_tags(path: &PathBuf) -> FileTags {
-    let path = path.clone();
+async fn read_tags(path: &Path) -> FileTags {
+    let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         use lofty::file::TaggedFileExt;
         use lofty::tag::Accessor;
@@ -972,7 +978,10 @@ async fn hash_file(path: &PathBuf) -> std::io::Result<String> {
 }
 
 fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 fn bad_request(message: &str) -> Response {

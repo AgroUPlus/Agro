@@ -90,6 +90,14 @@ export default function ProfileSection({
             />
             <span>Discoverable in User Search</span>
           </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={visibility.popularOptIn}
+              onChange={(e) => onVisibilityChange({ ...visibility, popularOptIn: e.target.checked })}
+            />
+            <span>Include My Plays in Popular on Agro</span>
+          </label>
         </div>
       </div>
     </form>

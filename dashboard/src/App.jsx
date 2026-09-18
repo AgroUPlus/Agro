@@ -15,6 +15,7 @@ import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 import SocialTab from './tabs/SocialTab.jsx';
 import DevicesTab from './tabs/DevicesTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
+import PopularTab from './tabs/PopularTab.jsx';
 import LibraryBrowser from './tabs/LibraryBrowser.jsx';
 import LinksTab from './tabs/LinksTab.jsx';
 import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
@@ -246,6 +247,10 @@ export default function App() {
 
           {activeTab === 'stats' && (
             <StatsTab username={username} nodes={nodes} onUnauthorized={() => setLocked(true)} />
+          )}
+
+          {activeTab === 'popular' && (
+            <PopularTab onUnauthorized={() => setLocked(true)} />
           )}
 
           {activeTab === 'library' && (

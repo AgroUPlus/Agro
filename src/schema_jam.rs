@@ -243,7 +243,11 @@ fn announce(ctx: &Context<'_>, db: &Db, jam: &Jam) {
         return;
     };
     if let Ok(members) = db.jam_members(&jam.id) {
-        hub.notify_users(&members, "JAM_UPDATED", serde_json::json!({ "jamId": jam.id }));
+        hub.notify_users(
+            &members,
+            "JAM_UPDATED",
+            serde_json::json!({ "jamId": jam.id }),
+        );
     }
 }
 
@@ -278,7 +282,12 @@ impl JamQuery {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
         match db.jam_for_member(authed.username())? {
-            Some(jam) => Ok(Some(describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())?)),
+            Some(jam) => Ok(Some(describe(
+                db,
+                ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                &jam,
+                authed.username(),
+            )?)),
             None => Ok(None),
         }
     }
@@ -305,10 +314,18 @@ impl JamMutation {
             db.leave_jam(&existing.id, authed.username())?;
         }
 
-        let mode = mode.as_deref().map(JamMode::parse).unwrap_or(JamMode::Democracy);
+        let mode = mode
+            .as_deref()
+            .map(JamMode::parse)
+            .unwrap_or(JamMode::Democracy);
         let jam = db.create_jam(authed.username(), mode)?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            authed.username(),
+        )
     }
 
     /// Joins a jam by its code.
@@ -329,7 +346,12 @@ impl JamMutation {
         }
         db.join_jam(&jam.id, authed.username())?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            authed.username(),
+        )
     }
 
     /// Joins a friend's jam by its id, with no code.
@@ -358,7 +380,12 @@ impl JamMutation {
         }
         db.join_jam(&jam.id, authed.username())?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, authed.username())
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            authed.username(),
+        )
     }
 
     /// Opens the jam to friends, or shuts it back to code-only. The creator decides.
@@ -375,7 +402,12 @@ impl JamMutation {
         db.set_jam_visibility(&jam.id, JamVisibility::parse(&visibility))?;
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &updated,
+            &me,
+        )
     }
 
     /// Votes to skip whatever is playing.
@@ -400,7 +432,12 @@ impl JamMutation {
         }
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &updated,
+            &me,
+        )
     }
 
     /// Leaves the jam, and deletes it once nobody is left.
@@ -433,6 +470,7 @@ impl JamMutation {
     ///
     /// `durationMs` matters more than it looks: the server advances the room on that number, so a
     /// track without one would be skipped past the moment it started.
+    #[allow(clippy::too_many_arguments)]
     async fn add_jam_track(
         &self,
         ctx: &Context<'_>,
@@ -471,7 +509,12 @@ impl JamMutation {
             content_hash.as_deref(),
         )?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            &me,
+        )
     }
 
     /// Accepts somebody's suggestion.
@@ -495,7 +538,12 @@ impl JamMutation {
         }
         db.approve_jam_track(&jam.id, &track_id, &me)?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            &me,
+        )
     }
 
     /// Removes a track. Your own, or anyone's if you are the host.
@@ -516,7 +564,12 @@ impl JamMutation {
         }
         db.remove_jam_track(&jam.id, &track_id)?;
         announce(ctx, db, &jam);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &jam, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &jam,
+            &me,
+        )
     }
 
     // `advanceJam` used to live here. It is gone: the server advances the room on its own clock
@@ -525,7 +578,11 @@ impl JamMutation {
     // client comparing the wrong two ids once drained an entire queue in a single pass.
 
     /// Switches between `open` and `democracy`. Host only — it is the rule everyone else plays by.
-    async fn set_jam_mode(&self, ctx: &Context<'_>, mode: String) -> async_graphql::Result<JamPayload> {
+    async fn set_jam_mode(
+        &self,
+        ctx: &Context<'_>,
+        mode: String,
+    ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
         if !jam.host.eq_ignore_ascii_case(&me) {
@@ -534,6 +591,11 @@ impl JamMutation {
         db.set_jam_mode(&jam.id, JamMode::parse(&mode))?;
         let updated = db.jam_by_id(&jam.id)?.unwrap_or(jam);
         announce(ctx, db, &updated);
-        describe(db, ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?, &updated, &me)
+        describe(
+            db,
+            ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+            &updated,
+            &me,
+        )
     }
 }

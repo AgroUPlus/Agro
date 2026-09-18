@@ -202,7 +202,11 @@ fn to_feed_payload(item: crate::db_feed::FeedItem) -> FeedItemPayload {
             None,
             *plays,
         ),
-        FeedEvent::OnRepeat { title, artist, plays } => (
+        FeedEvent::OnRepeat {
+            title,
+            artist,
+            plays,
+        } => (
             "ON_REPEAT",
             format!(
                 "{} has played {title} by {artist} {plays} times today",
@@ -214,7 +218,10 @@ fn to_feed_payload(item: crate::db_feed::FeedItem) -> FeedItemPayload {
         ),
         FeedEvent::NewFavourite { artist, tracks } => (
             "NEW_FAVOURITE",
-            format!("{} is getting into {artist} — {tracks} tracks so far", item.username),
+            format!(
+                "{} is getting into {artist} — {tracks} tracks so far",
+                item.username
+            ),
             artist.clone(),
             None,
             *tracks,

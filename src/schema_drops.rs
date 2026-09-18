@@ -257,8 +257,8 @@ impl DropsMutation {
 
         // Checked after the friendship, so the limit cannot be used to probe for accounts: a
         // stranger is refused before this ever runs.
-        let window_start = (chrono::Utc::now() - chrono::Duration::seconds(RATE_WINDOW_SECS))
-            .to_rfc3339();
+        let window_start =
+            (chrono::Utc::now() - chrono::Duration::seconds(RATE_WINDOW_SECS)).to_rfc3339();
         if db.drops_sent_since(authed.username(), &to, &window_start)? >= MAX_DROPS_PER_WINDOW {
             return Err(format!(
                 "You have sent {to} rather a lot of music in the last hour. Give them a moment."
@@ -278,7 +278,11 @@ impl DropsMutation {
             content_hash: optional(content_hash.as_deref(), MAX_FIELD_LEN, "contentHash")?,
             track_uri: optional(track_uri.as_deref(), MAX_FIELD_LEN, "trackUri")?,
             note: optional(note.as_deref(), MAX_NOTE_LEN, "note")?,
-            note_ciphertext: optional(note_ciphertext.as_deref(), MAX_CIPHERTEXT_LEN, "noteCiphertext")?,
+            note_ciphertext: optional(
+                note_ciphertext.as_deref(),
+                MAX_CIPHERTEXT_LEN,
+                "noteCiphertext",
+            )?,
             note_ciphertexts: sealed_copies(note_ciphertexts)?,
             is_encrypted: is_encrypted.unwrap_or(false),
         };
@@ -341,7 +345,12 @@ impl DropsMutation {
     ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let reaction = emoji
-            .map(|e| e.trim().chars().take(MAX_REACTION_CHARS).collect::<String>())
+            .map(|e| {
+                e.trim()
+                    .chars()
+                    .take(MAX_REACTION_CHARS)
+                    .collect::<String>()
+            })
             .filter(|e| !e.is_empty());
         Ok(ctx
             .data::<Db>()?

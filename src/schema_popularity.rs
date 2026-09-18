@@ -56,6 +56,12 @@ impl PopularityQuery {
         let state = ctx.data::<AppState>()?;
         ctx.data::<AuthedUser>()?;
 
+        // Disabled fleet-wide: an empty chart rather than an error, so the dashboard can render its
+        // ordinary "nothing to show" state instead of special-casing this query.
+        if !crate::plugins::is_enabled(&state.db, "popular-charts") {
+            return Ok(Vec::new());
+        }
+
         let days = days.clamp(1, crate::db_popularity::RETENTION_DAYS);
         let limit = limit.clamp(1, 100) as usize;
         Ok(state
@@ -95,8 +101,24 @@ impl PopularityMutation {
         entries: Vec<PlayCountInput>,
     ) -> Result<i32> {
         let state = ctx.data::<AppState>()?;
-        // The last point at which anyone knows who is speaking. Nothing below this line does.
-        ctx.data::<AuthedUser>()?;
+        // The last point at which anyone knows who is speaking. It is used only to check consent —
+        // whether the plugin is on and whether this account opted in — and is never carried past
+        // this block, for the same reason nothing below it takes an account id at all.
+        let authed = ctx.data::<AuthedUser>()?;
+
+        if !crate::plugins::is_enabled(&state.db, "popular-charts") {
+            return Ok(0);
+        }
+        let contributes = state
+            .db
+            .profile(authed.username())?
+            .map(|profile| profile.contributes_to_popular())
+            .unwrap_or(false);
+        if !contributes {
+            // Silent no-op, not an error: a caller must not be able to tell "opted out" apart from
+            // "counted but below the exposure floor" by watching how this call behaves.
+            return Ok(0);
+        }
 
         if entries.is_empty() {
             return Ok(0);

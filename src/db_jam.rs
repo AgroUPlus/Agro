@@ -230,7 +230,11 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO jam_members (jam_id, username, joined_at) VALUES (?1, ?2, ?3)",
-            params![jam_id, username.trim().to_lowercase(), chrono::Utc::now().to_rfc3339()],
+            params![
+                jam_id,
+                username.trim().to_lowercase(),
+                chrono::Utc::now().to_rfc3339()
+            ],
         )?;
         Ok(())
     }
@@ -256,8 +260,8 @@ impl Db {
 
     pub fn jam_members(&self, jam_id: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT username FROM jam_members WHERE jam_id = ?1 ORDER BY joined_at")?;
+        let mut stmt =
+            conn.prepare("SELECT username FROM jam_members WHERE jam_id = ?1 ORDER BY joined_at")?;
         let rows = stmt.query_map(params![jam_id], |row| row.get(0))?;
         rows.collect()
     }
@@ -296,6 +300,7 @@ impl Db {
     ///
     /// Returns the id and the state it landed in, so the caller can say which happened without
     /// reading it back.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_jam_track(
         &self,
         jam_id: &str,
@@ -349,8 +354,8 @@ impl Db {
     /// Who added a track, so "your own, or you run the room" can be applied.
     pub fn jam_track_owner(&self, jam_id: &str, track_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT added_by FROM jam_tracks WHERE id = ?1 AND jam_id = ?2")?;
+        let mut stmt =
+            conn.prepare("SELECT added_by FROM jam_tracks WHERE id = ?1 AND jam_id = ?2")?;
         let mut rows = stmt.query_map(params![track_id, jam_id], |row| row.get(0))?;
         rows.next().transpose()
     }
@@ -358,7 +363,10 @@ impl Db {
     pub fn remove_jam_track(&self, jam_id: &str, track_id: &str) -> Result<bool> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM jam_votes WHERE track_id = ?1", params![track_id])?;
+        tx.execute(
+            "DELETE FROM jam_votes WHERE track_id = ?1",
+            params![track_id],
+        )?;
         let removed = tx.execute(
             "DELETE FROM jam_tracks WHERE id = ?1 AND jam_id = ?2",
             params![track_id, jam_id],
@@ -653,7 +661,9 @@ fn generate_jam_code() -> String {
 fn elapsed_ms(started_at: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(started_at)
         .map(|start| {
-            (chrono::Utc::now() - start.with_timezone(&chrono::Utc)).num_milliseconds().max(0)
+            (chrono::Utc::now() - start.with_timezone(&chrono::Utc))
+                .num_milliseconds()
+                .max(0)
         })
         .unwrap_or(0)
 }

@@ -47,6 +47,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
         crate::proxy::proxy_handler,
         crate::share::share_handler,
         crate::listen::listen_handler,
+        crate::popular::popular_handler,
     ),
     components(schemas(
         crate::login::LoginBody,
@@ -59,6 +60,8 @@ use utoipa::{Modify, OpenApi, ToSchema};
         crate::library::BeginUploadResponse,
         crate::relay::OpenRelayRequest,
         crate::relay::OpenRelayResponse,
+        crate::popular::PopularResponse,
+        crate::popular::PopularTrackJson,
         ApiError,
     )),
     tags(
@@ -74,6 +77,9 @@ use utoipa::{Modify, OpenApi, ToSchema};
                                            parameters are specified in SHARE_LINKS.md and shared \
                                            with external Kotlin/JS clients — treat the wire shape \
                                            as frozen."),
+        (name = "popular", description = "Public, unauthenticated fleet-wide chart data — the same \
+                                           no-auth precedent as \"sharing\", for a logged-out \
+                                           caller such as the docs site's Charts page."),
         (name = "proxy", description = "Outbound passthrough proxy to a small allow-list of \
                                          metadata/lyrics hosts, so the browser never talks to them \
                                          directly."),

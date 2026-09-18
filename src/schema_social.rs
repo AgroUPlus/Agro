@@ -34,7 +34,11 @@ pub(crate) enum Surface {
 /// Every refusal is the same refusal. "Not your friend", "they have that switched off" and "no such
 /// account" must be indistinguishable, or the error message becomes the very directory that
 /// `discoverable` exists to let people stay out of.
-pub(crate) fn require_visible(ctx: &Context<'_>, subject: &str, surface: Surface) -> async_graphql::Result<Profile> {
+pub(crate) fn require_visible(
+    ctx: &Context<'_>,
+    subject: &str,
+    surface: Surface,
+) -> async_graphql::Result<Profile> {
     let authed = caller(ctx)?;
     let db = ctx.data::<Db>()?;
     let subject = normalise_username(subject)?;
@@ -88,6 +92,8 @@ pub struct ProfilePayload {
     pub incognito: bool,
     /// Public identity key for E2EE track drops and communications.
     pub public_key: Option<String>,
+    /// Whether this account's plays count toward the fleet-wide Popular on Agro chart.
+    pub popular_opt_in: bool,
 }
 
 /// What a client needs to finish enrolling a second factor. Shown once and never again.
@@ -221,7 +227,11 @@ pub struct InvitePayload {
     pub revoked: bool,
 }
 
-pub fn profile_payload(profile: &Profile, state: Option<FriendState>, outgoing: bool) -> ProfilePayload {
+pub fn profile_payload(
+    profile: &Profile,
+    state: Option<FriendState>,
+    outgoing: bool,
+) -> ProfilePayload {
     ProfilePayload {
         username: profile.username.clone(),
         display_name: profile.display_name.clone(),
@@ -244,6 +254,7 @@ pub fn profile_payload(profile: &Profile, state: Option<FriendState>, outgoing: 
         show_activity: profile.show_activity,
         incognito: profile.incognito,
         public_key: profile.public_key.clone(),
+        popular_opt_in: profile.popular_opt_in,
     }
 }
 
@@ -361,8 +372,7 @@ fn now_playing_for_viewer(
     if ws_hub.shares_network_with_user(host, &now.device_id, viewer) {
         if let Some(lan) = ws_hub.get_lan_address(host, &now.device_id) {
             let viewer_keys = published_keys(db, viewer);
-            now.peer_lan_token =
-                ws_hub.grant_p2p_token(host, &now.device_id, viewer, &viewer_keys);
+            now.peer_lan_token = ws_hub.grant_p2p_token(host, &now.device_id, viewer, &viewer_keys);
             // The address is only worth handing over alongside a token to use it with.
             if now.peer_lan_token.is_some() {
                 now.peer_lan_address = Some(lan);
@@ -411,7 +421,8 @@ impl SocialQuery {
     async fn has_totp(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
-        let has = db.totp_is_confirmed(authed.username())
+        let has = db
+            .totp_is_confirmed(authed.username())
             .map_err(|e| async_graphql::Error::new(format!("Failed to check TOTP: {e}")))?;
         Ok(has)
     }
@@ -439,7 +450,10 @@ impl SocialQuery {
         // Someone who is neither discoverable nor connected to the caller is not theirs to look up.
         let reachable = authed.username().eq_ignore_ascii_case(&subject)
             || profile.discoverable
-            || matches!(state, Some(FriendState::Accepted) | Some(FriendState::Pending));
+            || matches!(
+                state,
+                Some(FriendState::Accepted) | Some(FriendState::Pending)
+            );
         if !reachable || state == Some(FriendState::Blocked) {
             return Ok(None);
         }
@@ -559,7 +573,10 @@ impl SocialQuery {
     }
 
     /// Requests in both directions: ones to answer, and ones already sent.
-    async fn friend_requests(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<ProfilePayload>> {
+    async fn friend_requests(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<ProfilePayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
 
@@ -628,7 +645,8 @@ impl SocialQuery {
         let db = ctx.data::<Db>()?;
         let now = chrono::Utc::now().timestamp();
 
-        let mine = crate::stats::compute(&db.scrobble_rows(authed.username(), None, None)?, 50, now);
+        let mine =
+            crate::stats::compute(&db.scrobble_rows(authed.username(), None, None)?, 50, now);
         let theirs =
             crate::stats::compute(&db.scrobble_rows(&subject.username, None, None)?, 50, now);
 
@@ -675,7 +693,10 @@ impl SocialQuery {
     }
 
     /// Accounts waiting to be let in. The approval queue, for the dashboard.
-    async fn pending_accounts(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<ProfilePayload>> {
+    async fn pending_accounts(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<ProfilePayload>> {
         require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
         Ok(db
@@ -763,7 +784,9 @@ impl SocialMutation {
         let db = ctx.data::<Db>()?;
 
         // Every one of these is stored and rendered on someone else's screen.
-        let display_name = display_name.map(|v| bounded(&v, 64, "Display name")).transpose()?;
+        let display_name = display_name
+            .map(|v| bounded(&v, 64, "Display name"))
+            .transpose()?;
         let bio = bio.map(|v| bounded(&v, 280, "Bio")).transpose()?;
         let avatar_url = avatar_url.map(|v| validated_avatar(&v)).transpose()?;
 
@@ -797,14 +820,21 @@ impl SocialMutation {
     ) -> async_graphql::Result<ProfilePayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
-        let key = public_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let key = public_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         if let Some(k) = key {
             if k.len() > 512 {
                 return Err("Public key is too long (max 512 bytes)".into());
             }
         }
 
-        let device = match device_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let device = match device_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(id) => bounded(id, 128, "deviceId")?,
             None => LEGACY_DEVICE_ID.to_string(),
         };
@@ -934,16 +964,18 @@ impl SocialMutation {
         Ok(codes)
     }
 
-    /// The three switches that decide what a friend can see, and whether strangers can find you.
+    /// The switches that decide what a friend can see, whether strangers can find you, and whether
+    /// your plays feed the fleet-wide Popular on Agro chart.
     ///
-    /// One mutation rather than three, so the privacy screen writes what the user sees in a single
-    /// round trip and cannot land half-applied.
-    /// Each switch is optional and one left out is left alone.
+    /// One mutation rather than one per switch, so the privacy screen writes what the user sees in
+    /// a single round trip and cannot land half-applied. Each switch is optional and one left out is
+    /// left alone.
     ///
-    /// This matters more than it looks: the flags are three independent decisions, and requiring
-    /// all three on every call means a client flipping one has to resend its idea of the other two.
-    /// Two devices doing that concurrently silently undo each other — a switch turned on over here
-    /// gets reverted by a stale copy sent from over there.
+    /// This matters more than it looks: the flags are independent decisions, and requiring all of
+    /// them on every call means a client flipping one has to resend its idea of the rest. Two
+    /// devices doing that concurrently silently undo each other — a switch turned on over here gets
+    /// reverted by a stale copy sent from over there.
+    #[allow(clippy::too_many_arguments)]
     async fn set_visibility(
         &self,
         ctx: &Context<'_>,
@@ -952,6 +984,7 @@ impl SocialMutation {
         discoverable: Option<bool>,
         share_library: Option<bool>,
         show_activity: Option<bool>,
+        popular_opt_in: Option<bool>,
     ) -> async_graphql::Result<ProfilePayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -970,6 +1003,9 @@ impl SocialMutation {
         }
         if let Some(show) = show_activity {
             db.set_show_activity(authed.username(), show)?;
+        }
+        if let Some(opt_in) = popular_opt_in {
+            db.set_popular_opt_in(authed.username(), opt_in)?;
         }
 
         // Turning now-playing off ends every session following it. Leaving them attached would mean
@@ -1102,7 +1138,10 @@ impl SocialMutation {
     /// Any previous code for this account is dropped when a new one is minted, so only the code
     /// currently on screen works. Clients are expected to re-mint every few minutes while the
     /// panel is open and to call `revokeFriendCode` when it closes.
-    async fn create_friend_code(&self, ctx: &Context<'_>) -> async_graphql::Result<FriendCodePayload> {
+    async fn create_friend_code(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<FriendCodePayload> {
         let authed = caller(ctx)?;
         let code = ctx
             .data::<Db>()?
@@ -1202,14 +1241,20 @@ impl SocialMutation {
 
         db.clear_listen_along(authed.username())?;
         db.clear_listen_along(&subject)?;
-        db.block_user(authed.username(), &subject).map_err(Into::into)
+        db.block_user(authed.username(), &subject)
+            .map_err(Into::into)
     }
 
-    async fn unblock_user(&self, ctx: &Context<'_>, username: String) -> async_graphql::Result<bool> {
+    async fn unblock_user(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+    ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
         let subject = normalise_username(&username)?;
-        db.unblock_user(authed.username(), &subject).map_err(Into::into)
+        db.unblock_user(authed.username(), &subject)
+            .map_err(Into::into)
     }
 
     /// Tunes the caller in to a friend's playback.
@@ -1342,7 +1387,12 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
 
     // The subject's own flag decides. A friend who has not opted in is not merely omitted from a
     // list here — nothing about them is sent at all.
-    if db.profile(user).ok().flatten().is_some_and(|p| p.shows_now_playing()) {
+    if db
+        .profile(user)
+        .ok()
+        .flatten()
+        .is_some_and(|p| p.shows_now_playing())
+    {
         if let Ok(friends) = db.friends(user) {
             // One frame per friend rather than one broadcast, for the same reason the listener
             // loop below sends one at a time: a sealed copy is addressed to a single device's key.

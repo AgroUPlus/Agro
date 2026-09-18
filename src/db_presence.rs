@@ -171,5 +171,4 @@ impl Db {
             params![user_id.trim(), device_id.trim()],
         )
     }
-
 }

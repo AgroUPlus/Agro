@@ -4,6 +4,7 @@ import {
   Server,
   Library,
   BarChart3,
+  TrendingUp,
   Link2 as LinkIcon,
   Settings,
   ShieldCheck,
@@ -17,6 +18,7 @@ export const NAV_ITEMS = [
   { id: 'social', label: 'Social', icon: Activity },
   { id: 'devices', label: 'Devices & Sign-ins', icon: Server },
   { id: 'stats', label: 'Stats', icon: BarChart3 },
+  { id: 'popular', label: 'Popular on Agro', icon: TrendingUp },
   { id: 'library', label: 'Library', icon: Library },
   { id: 'links', label: 'Links', icon: LinkIcon },
   { id: 'management', label: 'Management', icon: ShieldCheck, adminOnly: true }

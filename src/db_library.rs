@@ -263,9 +263,8 @@ impl Db {
     /// Looks up the username that registered a device.
     pub fn owner_of_device(&self, device_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT user_id FROM registered_nodes WHERE device_id = ?1 LIMIT 1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT user_id FROM registered_nodes WHERE device_id = ?1 LIMIT 1")?;
         let mut rows = stmt.query(params![device_id])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row.get(0)?))
@@ -435,6 +434,7 @@ impl Db {
     /// in [`crate::norm`] exists for deciding what to *offer* a device, where a different rip of
     /// the same recording counts as already having it; for "is this file here", that would report a
     /// library as complete when the files are not the ones listed.
+    #[allow(clippy::too_many_arguments)]
     pub fn library_browse(
         &self,
         user_id: &str,
@@ -474,9 +474,9 @@ impl Db {
 
         // Present when *this* device holds it. With no device selected nothing is greyed out, so
         // the expression is a constant rather than a join that would always be false.
-        
+
         let source_count = "(SELECT COUNT(DISTINCT h.device_id) FROM device_holdings h JOIN registered_nodes rn ON rn.device_id = h.device_id AND rn.user_id = h.user_id WHERE h.content_hash = t.content_hash AND h.user_id = :user) + (CASE WHEN t.archived_path IS NOT NULL THEN 1 ELSE 0 END)";
-let present = match device_id {
+        let present = match device_id {
             Some(_) => {
                 "EXISTS (SELECT 1 FROM device_holdings h
                          WHERE h.content_hash = t.content_hash AND h.device_id = :device)"
@@ -530,7 +530,9 @@ let present = match device_id {
         let like = search.map(|term| {
             format!(
                 "%{}%",
-                term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+                term.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
             )
         });
         // Built rather than declared, because `:device` only appears in the statement when a
@@ -628,6 +630,7 @@ let present = match device_id {
 
     // ── Upload sessions ─────────────────────────────────────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_upload(
         &self,
         upload_id: &str,
@@ -758,9 +761,11 @@ let present = match device_id {
 
     pub fn spool_total_bytes(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
-        conn.query_row("SELECT COALESCE(SUM(size_bytes),0) FROM spool_items", [], |r| {
-            r.get(0)
-        })
+        conn.query_row(
+            "SELECT COALESCE(SUM(size_bytes),0) FROM spool_items",
+            [],
+            |r| r.get(0),
+        )
     }
 
     pub fn spool_contains(&self, content_hash: &str) -> Result<bool> {
@@ -837,13 +842,18 @@ let present = match device_id {
     }
 
     /// Removes a track from the library index entirely.
-    
     pub fn delete_library_item(&self, kind: BrowseKind, id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         match kind {
             BrowseKind::Track => {
-                conn.execute("DELETE FROM device_holdings WHERE content_hash = ?1", rusqlite::params![id])?;
-                let deleted = conn.execute("DELETE FROM library_tracks WHERE content_hash = ?1", rusqlite::params![id])?;
+                conn.execute(
+                    "DELETE FROM device_holdings WHERE content_hash = ?1",
+                    rusqlite::params![id],
+                )?;
+                let deleted = conn.execute(
+                    "DELETE FROM library_tracks WHERE content_hash = ?1",
+                    rusqlite::params![id],
+                )?;
                 Ok(deleted > 0)
             }
             BrowseKind::Album => {
@@ -867,13 +877,13 @@ let present = match device_id {
                 )?;
                 let deleted = conn.execute(
                     "DELETE FROM library_tracks WHERE COALESCE(album_artist, artist) = ?1",
-                    rusqlite::params![id]
+                    rusqlite::params![id],
                 )?;
                 Ok(deleted > 0)
             }
         }
     }
-pub fn delete_library_track(&self, content_hash: &str) -> Result<bool> {
+    pub fn delete_library_track(&self, content_hash: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM device_holdings WHERE content_hash = ?1",
@@ -959,7 +969,9 @@ impl Db {
             for row in rows {
                 let (hash, artist, title, was_artist, was_title, was_variants) = row?;
                 let key = recording_key(&artist, &title);
-                if key.artist != was_artist || key.title != was_title || key.variants != was_variants
+                if key.artist != was_artist
+                    || key.title != was_title
+                    || key.variants != was_variants
                 {
                     stale.push((hash, artist, title));
                 }
@@ -968,9 +980,8 @@ impl Db {
         };
 
         let stale_items: Vec<(String, String, String)> = {
-            let mut stmt = conn.prepare(
-                "SELECT id, artist, title, norm_artist, norm_title FROM playlist_items",
-            )?;
+            let mut stmt = conn
+                .prepare("SELECT id, artist, title, norm_artist, norm_title FROM playlist_items")?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1064,7 +1075,6 @@ mod tests {
         }
     }
 
-
     /// A normalisation change leaves every existing row behind, and only Rust can catch them up.
     ///
     /// Simulated the way it actually happens: the row was written under an older `norm.rs` whose
@@ -1074,7 +1084,12 @@ mod tests {
     #[test]
     fn reindex_catches_up_rows_normalised_by_an_older_convention() {
         let db = db_with(&[(
-            track("h1", "Boards of Canada", "Roygbiv (Remastered 2011)", 200_000),
+            track(
+                "h1",
+                "Boards of Canada",
+                "Roygbiv (Remastered 2011)",
+                200_000,
+            ),
             "laptop",
         )]);
 
@@ -1222,7 +1237,11 @@ mod tests {
             .filter(|item| !item.present_on_device)
             .map(|item| item.title.as_str())
             .collect();
-        assert_eq!(missing, vec!["Come As You Are"], "only the laptop has that one");
+        assert_eq!(
+            missing,
+            vec!["Come As You Are"],
+            "only the laptop has that one"
+        );
     }
 
     #[test]
@@ -1232,7 +1251,10 @@ mod tests {
             .library_browse("alpha", None, BrowseKind::Artist, None, 50, 0, true)
             .unwrap();
         assert_eq!(items.len(), 1);
-        assert!(items[0].cover_key.is_none(), "an artist has no one album to borrow art from");
+        assert!(
+            items[0].cover_key.is_none(),
+            "an artist has no one album to borrow art from"
+        );
     }
 
     #[test]
@@ -1244,7 +1266,11 @@ mod tests {
         let items = db
             .library_browse("alpha", None, BrowseKind::Track, Some("%"), 50, 0, true)
             .unwrap();
-        assert_eq!(items.len(), 1, "`%` must match the track with a percent sign, not everything");
+        assert_eq!(
+            items.len(),
+            1,
+            "`%` must match the track with a percent sign, not everything"
+        );
         assert_eq!(items[0].title, "100% Real");
     }
 
@@ -1264,18 +1290,26 @@ mod tests {
             (track("h1", "Nirvana", "Come As You Are", 219_000), "laptop"),
             (track("h1", "Nirvana", "Come As You Are", 219_000), "phone"),
         ]);
-        assert!(db.missing_on_device("alpha", "phone", 10).unwrap().is_empty());
+        assert!(db
+            .missing_on_device("alpha", "phone", 10)
+            .unwrap()
+            .is_empty());
     }
 
     /// The point of the fuzzy layer: different bytes, same recording.
     #[test]
     fn a_different_rip_of_the_same_recording_is_not_missing() {
         let db = db_with(&[
-            (track("flac", "Nirvana", "Come As You Are", 219_000), "laptop"),
+            (
+                track("flac", "Nirvana", "Come As You Are", 219_000),
+                "laptop",
+            ),
             (track("mp3", "Nirvana", "Come As You Are", 220_500), "phone"),
         ]);
         assert!(
-            db.missing_on_device("alpha", "phone", 10).unwrap().is_empty(),
+            db.missing_on_device("alpha", "phone", 10)
+                .unwrap()
+                .is_empty(),
             "a 1.5s-different encode of the same song must not be offered"
         );
     }
@@ -1288,7 +1322,10 @@ mod tests {
                 track("live", "Nirvana", "Come As You Are (Live)", 219_000),
                 "laptop",
             ),
-            (track("studio", "Nirvana", "Come As You Are", 219_000), "phone"),
+            (
+                track("studio", "Nirvana", "Come As You Are", 219_000),
+                "phone",
+            ),
         ]);
         let missing = db.missing_on_device("alpha", "phone", 10).unwrap();
         assert_eq!(missing.len(), 1);
@@ -1300,9 +1337,13 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
         let t = track("h1", "Nirvana", "Come As You Are", 219_000);
         db.upsert_library_track(&t).unwrap();
-        db.upsert_holding("beta", "beta-laptop", "h1", None).unwrap();
+        db.upsert_holding("beta", "beta-laptop", "h1", None)
+            .unwrap();
 
-        assert!(db.missing_on_device("alpha", "phone", 10).unwrap().is_empty());
+        assert!(db
+            .missing_on_device("alpha", "phone", 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1311,9 +1352,13 @@ mod tests {
             (track("h1", "A", "B", 100_000), "laptop"),
             (track("h1", "A", "B", 100_000), "phone"),
         ]);
-        assert!(db.missing_on_device("alpha", "phone", 10).unwrap().is_empty());
+        assert!(db
+            .missing_on_device("alpha", "phone", 10)
+            .unwrap()
+            .is_empty());
 
-        db.forget_holdings("alpha", "phone", &["h1".to_string()]).unwrap();
+        db.forget_holdings("alpha", "phone", &["h1".to_string()])
+            .unwrap();
         assert_eq!(db.missing_on_device("alpha", "phone", 10).unwrap().len(), 1);
     }
 
@@ -1324,14 +1369,17 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
         let t = track("h1", "A", "B", 100_000);
         db.upsert_library_track(&t).unwrap();
-        db.upsert_holding("alpha", "admin-desktop", "h1", None).unwrap();
+        db.upsert_holding("alpha", "admin-desktop", "h1", None)
+            .unwrap();
 
         let removed = db
             .forget_holdings("guest", "admin-desktop", &["h1".to_string()])
             .unwrap();
         assert_eq!(removed, 0, "a guest deleted the admin's holding");
         assert_eq!(
-            db.device_holding_hashes("alpha", "admin-desktop").unwrap().len(),
+            db.device_holding_hashes("alpha", "admin-desktop")
+                .unwrap()
+                .len(),
             1
         );
     }
@@ -1342,7 +1390,8 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
         let t = track("h1", "A", "B", 100_000);
         db.upsert_library_track(&t).unwrap();
-        db.upsert_holding("alpha", "admin-desktop", "h1", None).unwrap();
+        db.upsert_holding("alpha", "admin-desktop", "h1", None)
+            .unwrap();
 
         assert!(db
             .device_holding_hashes("guest", "admin-desktop")
@@ -1361,7 +1410,11 @@ mod tests {
         db.upsert_library_track(&t).unwrap();
 
         assert_eq!(
-            db.library_track("h1").unwrap().unwrap().archived_path.as_deref(),
+            db.library_track("h1")
+                .unwrap()
+                .unwrap()
+                .archived_path
+                .as_deref(),
             Some("A/Album/01 - B.flac")
         );
     }
@@ -1386,7 +1439,8 @@ mod tests {
     #[test]
     fn spool_eviction_never_reaches_another_account() {
         let db = Db::new_in_memory().unwrap();
-        db.spool_insert("admin-file", 100, "desktop", "alpha", 72).unwrap();
+        db.spool_insert("admin-file", 100, "desktop", "alpha", 72)
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         for (hash, size) in [("guest-1", 100), ("guest-2", 100)] {
             db.spool_insert(hash, size, "phone", "guest", 72).unwrap();

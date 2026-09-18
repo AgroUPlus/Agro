@@ -46,7 +46,11 @@ pub enum FeedEvent {
     /// Crossed a round number of plays of one artist.
     Milestone { artist: String, plays: i64 },
     /// Played the same track several times inside a day.
-    OnRepeat { title: String, artist: String, plays: i64 },
+    OnRepeat {
+        title: String,
+        artist: String,
+        plays: i64,
+    },
     /// Took to an artist they had not been listening to before.
     NewFavourite { artist: String, tracks: i64 },
 }
@@ -163,7 +167,10 @@ fn new_favourites(ordered: &[(&ScrobbleRow, i64)], since: i64, now: i64) -> Vec<
             continue;
         }
         first_heard.entry(artist).or_insert(*at);
-        tracks.entry(artist).or_default().insert(row.track_title.trim());
+        tracks
+            .entry(artist)
+            .or_default()
+            .insert(row.track_title.trim());
         latest.insert(artist, &row.played_at);
     }
 
@@ -219,7 +226,11 @@ mod tests {
             .iter()
             .filter(|item| matches!(item.event, FeedEvent::Milestone { .. }))
             .collect();
-        assert_eq!(milestones.len(), 1, "one crossing, not one per play after it");
+        assert_eq!(
+            milestones.len(),
+            1,
+            "one crossing, not one per play after it"
+        );
         assert!(matches!(
             milestones[0].event,
             FeedEvent::Milestone { plays: 10, .. }
@@ -242,8 +253,12 @@ mod tests {
 
     #[test]
     fn four_plays_in_a_day_is_on_repeat_and_three_is_not() {
-        let three: Vec<ScrobbleRow> = (0..3).map(|i| row("Windowlicker", "Aphex Twin", NOW - 100 + i)).collect();
-        let four: Vec<ScrobbleRow> = (0..4).map(|i| row("Windowlicker", "Aphex Twin", NOW - 100 + i)).collect();
+        let three: Vec<ScrobbleRow> = (0..3)
+            .map(|i| row("Windowlicker", "Aphex Twin", NOW - 100 + i))
+            .collect();
+        let four: Vec<ScrobbleRow> = (0..4)
+            .map(|i| row("Windowlicker", "Aphex Twin", NOW - 100 + i))
+            .collect();
 
         let repeats = |rows: &[ScrobbleRow]| {
             events_for(rows, NOW - DAY, NOW)
@@ -269,7 +284,9 @@ mod tests {
     #[test]
     fn a_new_favourite_needs_several_distinct_tracks() {
         // Five plays, but all of the same song: enthusiasm for a track, not for an artist.
-        let same: Vec<ScrobbleRow> = (0..5).map(|i| row("one", "Burial", NOW - 500 + i)).collect();
+        let same: Vec<ScrobbleRow> = (0..5)
+            .map(|i| row("one", "Burial", NOW - 500 + i))
+            .collect();
         // Five different songs.
         let spread: Vec<ScrobbleRow> = (0..5)
             .map(|i| row(&format!("t{i}"), "Burial", NOW - 500 + i))
@@ -317,6 +334,8 @@ mod tests {
             ..row("t", "A", NOW)
         });
         let items = events_for(&rows, NOW - DAY, NOW);
-        assert!(items.iter().any(|item| matches!(item.event, FeedEvent::Milestone { .. })));
+        assert!(items
+            .iter()
+            .any(|item| matches!(item.event, FeedEvent::Milestone { .. })));
     }
 }

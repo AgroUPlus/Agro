@@ -188,7 +188,11 @@ impl Db {
     }
 
     /// Adds a track to the end of a playlist.
-    pub fn add_playlist_item(&self, playlist_id: &str, item: NewPlaylistItem) -> Result<PlaylistItem> {
+    pub fn add_playlist_item(
+        &self,
+        playlist_id: &str,
+        item: NewPlaylistItem,
+    ) -> Result<PlaylistItem> {
         let conn = self.conn.lock().unwrap();
         let item_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -243,22 +247,27 @@ impl Db {
     }
 
     /// Batch inserts tracks into a playlist (useful for importers).
-    pub fn add_playlist_items(&self, playlist_id: &str, items: &[NewPlaylistItem]) -> Result<usize> {
+    pub fn add_playlist_items(
+        &self,
+        playlist_id: &str,
+        items: &[NewPlaylistItem],
+    ) -> Result<usize> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let now = chrono::Utc::now().to_rfc3339();
 
-        let mut next_pos: i32 = tx.query_row(
+        let start_pos: i32 = tx.query_row(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?1",
             params![playlist_id],
             |r| r.get(0),
         )?;
 
         let mut inserted = 0;
-        for item in items {
+        for (i, item) in items.iter().enumerate() {
             let item_id = uuid::Uuid::new_v4().to_string();
             let norm_artist = norm::normalize_artist(&item.artist);
             let norm_title = norm::normalize_title(&item.title);
+            let position = start_pos + i as i32;
 
             tx.execute(
                 "INSERT INTO playlist_items (
@@ -268,7 +277,7 @@ impl Db {
                 params![
                     item_id,
                     playlist_id,
-                    next_pos,
+                    position,
                     item.title,
                     item.artist,
                     item.album,
@@ -280,7 +289,6 @@ impl Db {
                 ],
             )?;
 
-            next_pos += 1;
             inserted += 1;
         }
 
@@ -331,7 +339,12 @@ impl Db {
     }
 
     /// Updates the public/private visibility of a playlist.
-    pub fn update_playlist_visibility(&self, playlist_id: &str, user_id: &str, is_public: bool) -> Result<bool> {
+    pub fn update_playlist_visibility(
+        &self,
+        playlist_id: &str,
+        user_id: &str,
+        is_public: bool,
+    ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         let count = conn.execute(
@@ -410,7 +423,9 @@ mod tests {
         assert_eq!(items_after[0].position, 0);
 
         // Visibility toggle
-        assert!(db.update_playlist_visibility(&pl.id, "alpha", true).unwrap());
+        assert!(db
+            .update_playlist_visibility(&pl.id, "alpha", true)
+            .unwrap());
         let public_lists = db.list_public_playlists().unwrap();
         assert_eq!(public_lists.len(), 1);
         assert_eq!(public_lists[0].id, pl.id);

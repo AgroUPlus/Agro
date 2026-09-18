@@ -5,7 +5,6 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::auth::AuthedUser;
@@ -73,10 +72,8 @@ struct PeerNetwork {
 /// The value is the bearer token, the listener device keys it was minted against, and when it
 /// expires. The key set is part of the value rather than of the key because a grant is looked up
 /// by *who* is listening and only then checked against *what* they can be sealed to.
-type P2pGrants = std::collections::HashMap<
-    (String, String, String),
-    (String, Vec<String>, std::time::Instant),
->;
+type P2pGrants =
+    std::collections::HashMap<(String, String, String), (String, Vec<String>, std::time::Instant)>;
 
 const P2P_GRANT_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -224,7 +221,10 @@ impl WsHub {
         self.live_peers
             .read()
             .ok()
-            .and_then(|map| map.get(&(user_id.to_string(), device_id.to_string())).cloned())
+            .and_then(|map| {
+                map.get(&(user_id.to_string(), device_id.to_string()))
+                    .cloned()
+            })
             .and_then(|peer| peer.lan)
     }
 
@@ -244,13 +244,7 @@ impl WsHub {
     /// behind, so every device on a LAN has a distinct global address but shares the prefix its
     /// router advertises — which makes it a stronger signal here than the IPv4 case, not a weaker
     /// one.
-    pub fn same_network(
-        &self,
-        a_user: &str,
-        a_device: &str,
-        b_user: &str,
-        b_device: &str,
-    ) -> bool {
+    pub fn same_network(&self, a_user: &str, a_device: &str, b_user: &str, b_device: &str) -> bool {
         let Ok(map) = self.live_peers.read() else {
             return false;
         };
@@ -518,11 +512,12 @@ pub async fn ws_handler(
         // that has never been seen, or the socket would rename it on every reconnect — which is
         // every time the server is redeployed.
         let petname = crate::passphrase::generate_random_petname();
-        let client_type = if d.to_lowercase().contains("android") || d.to_lowercase().contains("wanda") {
-            "wanda"
-        } else {
-            "wander"
-        };
+        let client_type =
+            if d.to_lowercase().contains("android") || d.to_lowercase().contains("wanda") {
+                "wanda"
+            } else {
+                "wander"
+            };
         let _ = state.db.upsert_node(
             d,
             u,
@@ -557,7 +552,9 @@ async fn handle_socket(
                 if let Message::Text(text) = msg {
                     if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
                         if ws_msg.msg_type.eq_ignore_ascii_case("AUTH") {
-                            if let Some(token) = ws_msg.payload.get("token").and_then(|t| t.as_str()) {
+                            if let Some(token) =
+                                ws_msg.payload.get("token").and_then(|t| t.as_str())
+                            {
                                 if let Ok(Some((account, _))) = state.db.account_for_token(token) {
                                     if account.state.is_active() {
                                         let u = account.username.to_string();
@@ -566,10 +563,8 @@ async fn handle_socket(
                                             .get("device")
                                             .and_then(|dev| dev.as_str())
                                             .map(str::to_string);
-                                        let lan = ws_msg
-                                            .payload
-                                            .get("lan")
-                                            .and_then(|l| l.as_str());
+                                        let lan =
+                                            ws_msg.payload.get("lan").and_then(|l| l.as_str());
 
                                         if let (Some(dev_id), Some(lan_addr)) = (&d, lan) {
                                             let lan_addr = lan_addr.trim();
@@ -582,14 +577,16 @@ async fn handle_socket(
                                         }
 
                                         if let Some(dev_id) = &d {
-                                            let petname = crate::passphrase::generate_random_petname();
-                                            let client_type = if dev_id.to_lowercase().contains("android")
-                                                || dev_id.to_lowercase().contains("wanda")
-                                            {
-                                                "wanda"
-                                            } else {
-                                                "wander"
-                                            };
+                                            let petname =
+                                                crate::passphrase::generate_random_petname();
+                                            let client_type =
+                                                if dev_id.to_lowercase().contains("android")
+                                                    || dev_id.to_lowercase().contains("wanda")
+                                                {
+                                                    "wanda"
+                                                } else {
+                                                    "wander"
+                                                };
                                             let _ = state.db.upsert_node(
                                                 dev_id,
                                                 &u,
@@ -728,11 +725,14 @@ fn is_plausible_host_port(value: &str) -> bool {
         return false;
     }
     // An IPv6 literal is bracketed; anything else is a bare host or IPv4.
-    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     !host.is_empty()
-        && host.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':' || b == b'_'
-        })
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':' || b == b'_')
 }
 
 /// Whether a socket for [`username`]/[`device`] should see [`msg`].
@@ -777,8 +777,16 @@ mod tests {
 
     #[test]
     fn another_account_never_sees_it() {
-        assert!(!is_for(&msg(Some("alpha"), None), Some("beta"), Some("phone")));
-        assert!(is_for(&msg(Some("alpha"), None), Some("alpha"), Some("phone")));
+        assert!(!is_for(
+            &msg(Some("alpha"), None),
+            Some("beta"),
+            Some("phone")
+        ));
+        assert!(is_for(
+            &msg(Some("alpha"), None),
+            Some("alpha"),
+            Some("phone")
+        ));
     }
 
     #[test]
@@ -837,10 +845,7 @@ mod tests {
         /// real pair.
         #[test]
         fn ipv6_is_compared_on_the_routed_prefix() {
-            assert!(same_egress(
-                "2001:db8:1:2::1000",
-                "2001:db8:1:2::abcd"
-            ));
+            assert!(same_egress("2001:db8:1:2::1000", "2001:db8:1:2::abcd"));
             assert!(!same_egress("2001:db8:1:2::1", "2001:db8:9:9::1"));
         }
 
@@ -943,15 +948,15 @@ mod tests {
     fn a_malformed_or_dangerous_address_is_refused() {
         for bad in [
             "",
-            "192.168.1.50",              // no port
-            "192.168.1.50:",             // empty port
-            "192.168.1.50:0",            // port zero
+            "192.168.1.50",   // no port
+            "192.168.1.50:",  // empty port
+            "192.168.1.50:0", // port zero
             "192.168.1.50:notaport",
-            "192.168.1.50:99999",        // will not fit a u16
-            ":8702",                     // no host
-            "http://192.168.1.50:8702",  // a scheme
-            "192.168.1.50:8702/steal",   // a path
-            "user:pass@10.0.0.1:8702",   // a credential
+            "192.168.1.50:99999",       // will not fit a u16
+            ":8702",                    // no host
+            "http://192.168.1.50:8702", // a scheme
+            "192.168.1.50:8702/steal",  // a path
+            "user:pass@10.0.0.1:8702",  // a credential
             // A zone id names an interface on the *sender's* machine, so it means nothing to the
             // peer being told to connect there.
             "[fe80::1%eth0]:8702",
@@ -1021,7 +1026,12 @@ mod tests {
         let laptop = hub.replay_after(0, Some("alice"), Some("laptop")).unwrap();
         assert_eq!(laptop.len(), 1);
         assert_eq!(laptop[0].msg_type, "FRIEND_PRESENCE");
-        assert_eq!(hub.replay_after(0, Some("alice"), Some("phone")).unwrap().len(), 2);
+        assert_eq!(
+            hub.replay_after(0, Some("alice"), Some("phone"))
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     /// Gone too long is answered with "resynchronise", never with a prefix missing its front.

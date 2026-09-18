@@ -174,8 +174,11 @@ mod tests {
     #[test]
     fn only_recordings_above_the_exposure_floor_are_named() {
         let db = Db::new_in_memory().unwrap();
-        db.add_play_counts(100, &[increment("Radiohead", "All I Need", MIN_EXPOSURE_COUNT)])
-            .unwrap();
+        db.add_play_counts(
+            100,
+            &[increment("Radiohead", "All I Need", MIN_EXPOSURE_COUNT)],
+        )
+        .unwrap();
         db.add_play_counts(100, &[increment("Radiohead", "Weird Fishes", 1)])
             .unwrap();
 
@@ -192,7 +195,11 @@ mod tests {
             .unwrap();
         db.add_play_counts(
             100,
-            &[increment("radiohead", "All I Need (Official Video) [HQ]", 3)],
+            &[increment(
+                "radiohead",
+                "All I Need (Official Video) [HQ]",
+                3,
+            )],
         )
         .unwrap();
 
@@ -232,7 +239,10 @@ mod tests {
         db.add_play_counts(100, &[increment("Radiohead", "All I Need", 1_000_000)])
             .unwrap();
 
-        assert_eq!(db.popular_tracks(100, 7, 10).unwrap()[0].count, MAX_INCREMENT);
+        assert_eq!(
+            db.popular_tracks(100, 7, 10).unwrap()[0].count,
+            MAX_INCREMENT
+        );
     }
 
     /// Retention is enforced by the write path, so the table cannot quietly grow a history.
@@ -241,13 +251,21 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
         db.add_play_counts(10, &[increment("Radiohead", "All I Need", 10)])
             .unwrap();
-        db.add_play_counts(10 + RETENTION_DAYS + 1, &[increment("Radiohead", "Weird Fishes", 10)])
-            .unwrap();
+        db.add_play_counts(
+            10 + RETENTION_DAYS + 1,
+            &[increment("Radiohead", "Weird Fishes", 10)],
+        )
+        .unwrap();
 
         let conn = db.conn.lock().unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM popularity_counters", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM popularity_counters", [], |row| {
+                row.get(0)
+            })
             .unwrap();
-        assert_eq!(remaining, 1, "the old bucket must be gone, not merely unread");
+        assert_eq!(
+            remaining, 1,
+            "the old bucket must be gone, not merely unread"
+        );
     }
 }

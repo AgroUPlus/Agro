@@ -265,7 +265,10 @@ pub async fn listen_handler(
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
             (header::REFERRER_POLICY, "no-referrer".to_string()),
-            (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, max-age=0".to_string()),
+            (
+                header::CACHE_CONTROL,
+                "no-store, no-cache, must-revalidate, max-age=0".to_string(),
+            ),
             (header::PRAGMA, "no-cache".to_string()),
         ],
         Html(html),
@@ -282,8 +285,7 @@ fn resolve(params: &ListenParams, state: &AppState) -> Option<String> {
                     .db
                     .allowed_share_hosts()
                     .unwrap_or_default()
-                    .iter()
-                    .any(|host| *host == url.host);
+                    .contains(&url.host);
             if allowed {
                 // Aggregate only: the owner learns the link is being used, and nothing is recorded
                 // about who used it. See migration 6 in `db.rs`.
@@ -308,10 +310,9 @@ fn resolve(params: &ListenParams, state: &AppState) -> Option<String> {
             .db
             .allowed_share_hosts()
             .unwrap_or_default()
-            .iter()
-            .any(|host| *host == url.host);
+            .contains(&url.host);
 
-    allowed.then(|| url.full)
+    allowed.then_some(url.full)
 }
 
 struct TargetUrl {
@@ -418,16 +419,33 @@ mod tests {
     #[test]
     fn resolves_short_link_uid_when_allowed() {
         let db = crate::db::Db::new(":memory:").unwrap();
-        db.create_short_link("testUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None, None).unwrap();
+        db.create_short_link(
+            "testUid",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let retrieved = db.get_short_link("testUid").unwrap();
-        assert_eq!(retrieved.as_deref(), Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
+        assert_eq!(
+            retrieved.as_deref(),
+            Some("https://music.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
     }
 
     #[test]
     fn expired_short_link_is_not_resolved() {
         let db = crate::db::Db::new(":memory:").unwrap();
         let past = chrono::Utc::now().timestamp() - 100;
-        db.create_short_link("expiredUid", "https://music.youtube.com/watch?v=dQw4w9WgXcQ", None, None, Some(past)).unwrap();
+        db.create_short_link(
+            "expiredUid",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            None,
+            None,
+            Some(past),
+        )
+        .unwrap();
         let retrieved = db.get_short_link("expiredUid").unwrap();
         assert_eq!(retrieved, None);
     }

@@ -978,6 +978,89 @@ input:checked + .slider:before {
   transition: height 0.45s cubic-bezier(0.16, 1, 0.3, 1), filter 0.15s ease;
 }
 
+/* ── Popular on Agro — a ranked chart, one bar per row ───────────────────────────────────────
+   Scaled to the leader like `.bar-row` above, but horizontal: rank and title need to stay
+   legible at any bar length, so the fill sits behind them as a track rather than being the row. */
+
+.chart-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chart-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-surface-elevated);
+}
+
+.chart-row-fill {
+  position: absolute;
+  inset: 0;
+  left: 0;
+  width: 0%;
+  background: var(--status-active-bg);
+  border-right: 2px solid var(--status-active-border);
+  transition: width 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chart-rank {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.chart-row:nth-child(-n+3) .chart-rank {
+  color: var(--status-active);
+  font-weight: 700;
+}
+
+.chart-info {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.chart-title {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-artist {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-count {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
 /* ── Signed-out auth screen ──────────────────────────────────────────────────────────────────
    The only screen a stranger sees, so it is laid out as a page in its own right rather than as a
    panel dropped into the dashboard chrome. */

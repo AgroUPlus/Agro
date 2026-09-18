@@ -2,6 +2,11 @@
 name = "agro"
 version = "0.2.0"
 edition = "2021"
+license = "AGPL-3.0-only"
+description = "Self-hosted music sync daemon, social graph, and web dashboard for Wanda and Wander"
+repository = "https://github.com/AgroUPlus/Agro"
+homepage = "https://agrouplus.github.io/Agro"
+readme = "README.md"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws", "multipart"] }

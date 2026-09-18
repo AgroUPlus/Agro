@@ -32,9 +32,29 @@ contribution merged without one, which is why this is asked for up front rather 
   `social_boundary_tests.rs`). They assert what one account can and cannot see of another. A
   change that makes them pass by loosening an assertion is the one change to explain in detail.
 
+`AGENTS.md` holds the rules of the road — the 300-line file cap, privacy boundaries, no speculative fallbacks. Read it first.
+
+## AI tools and authorship
+
+AI coding assistants may be used as development aids, but they are not contributors.
+Do not include `Co-Authored-By` trailers or metadata for AI models (e.g. Claude, ChatGPT).
+All contributions must be attributed solely to human developers adhering to [`CLA.md`](CLA.md).
+
+## Development setup & git hooks
+
+To enforce Conventional Commits and ensure no AI co-authorship trailers are committed locally:
+
+```bash
+./scripts/setup-hooks.sh
+# or manually:
+git config core.hooksPath .githooks
+```
+
 ## `src/norm.rs` is a port, and must stay one
+
 
 It is ported from Wanda's `TrackDeduplicator`, deliberately. Both projects are AGPL-3.0, so the
 port is licence-clean. Keep them in step: if the two ends normalise a title even slightly
 differently, the shared index holds two conventions and the library diff quietly produces
 nonsense. Change it in both places or in neither.
+

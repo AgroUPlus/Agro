@@ -7,7 +7,7 @@ import DataRetentionSection from './settings/DataRetentionSection.jsx';
 
 const PROFILE_SETTINGS_QUERY = `query AccountSettings($username: String!) {
   profile(username: $username) {
-    username displayName bio avatarUrl showNowPlaying showStats discoverable showActivity
+    username displayName bio avatarUrl showNowPlaying showStats discoverable showActivity popularOptIn
   }
   hasTotp
   syncedSettings(userId: $username) {
@@ -23,8 +23,8 @@ const UPDATE_PROFILE = `mutation UpdateProfile($displayName: String, $bio: Strin
   updateProfile(displayName: $displayName, bio: $bio, avatarUrl: $avatarUrl) { username }
 }`;
 
-const SET_VISIBILITY = `mutation SetVisibility($showNowPlaying: Boolean, $showStats: Boolean, $discoverable: Boolean, $showActivity: Boolean) {
-  setVisibility(showNowPlaying: $showNowPlaying, showStats: $showStats, discoverable: $discoverable, showActivity: $showActivity) { username }
+const SET_VISIBILITY = `mutation SetVisibility($showNowPlaying: Boolean, $showStats: Boolean, $discoverable: Boolean, $showActivity: Boolean, $popularOptIn: Boolean) {
+  setVisibility(showNowPlaying: $showNowPlaying, showStats: $showStats, discoverable: $discoverable, showActivity: $showActivity, popularOptIn: $popularOptIn) { username }
 }`;
 
 const UPDATE_SYNCED_SETTINGS = `mutation UpdateSynced($input: SyncedSettingsInput!) {
@@ -55,7 +55,7 @@ const REGENERATE_RECOVERY = `mutation Regenerate($code: String!) {
 
 export default function AccountSettingsTab({ username, onUnauthorized }) {
   const [profile, setProfile] = useState({ displayName: '', bio: '', avatarUrl: '' });
-  const [visibility, setVisibility] = useState({ showNowPlaying: true, showStats: true, discoverable: true, showActivity: true });
+  const [visibility, setVisibility] = useState({ showNowPlaying: true, showStats: true, discoverable: true, showActivity: true, popularOptIn: true });
   const [synced, setSynced] = useState({ streamFormat: 'FLAC', shareDomain: '', shareHosts: '', shareEnabled: true, lyricsFetchOnline: true, hasServerUrl: false });
 
   const [hasTotp, setHasTotp] = useState(false);
@@ -85,7 +85,8 @@ export default function AccountSettingsTab({ username, onUnauthorized }) {
           showNowPlaying: !!data.profile.showNowPlaying,
           showStats: !!data.profile.showStats,
           discoverable: !!data.profile.discoverable,
-          showActivity: !!data.profile.showActivity
+          showActivity: !!data.profile.showActivity,
+          popularOptIn: !!data.profile.popularOptIn
         });
       }
       if (data?.hasTotp !== undefined) setHasTotp(data.hasTotp);

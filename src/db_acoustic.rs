@@ -95,7 +95,7 @@ impl StoredVector {
             + BRIGHTNESS_WEIGHT * sq(self.brightness, other.brightness)
             + DANCE_WEIGHT * sq(self.danceability, other.danceability)
             + KEY_WEIGHT * (sq(self.key_x, other.key_x) + sq(self.key_y, other.key_y)))
-            .sqrt()
+        .sqrt()
     }
 }
 
@@ -271,8 +271,14 @@ mod tests {
         ])
         .unwrap();
 
-        let near = db.similar_recordings("Radiohead", "All I Need", 10).unwrap();
-        assert_eq!(near.len(), 2, "the seed must not be returned as its own neighbour");
+        let near = db
+            .similar_recordings("Radiohead", "All I Need", 10)
+            .unwrap();
+        assert_eq!(
+            near.len(),
+            2,
+            "the seed must not be returned as its own neighbour"
+        );
         assert_eq!(near[0].title, "Roads");
     }
 
@@ -286,16 +292,23 @@ mod tests {
         ])
         .unwrap();
 
-        let near = db.similar_recordings("Nobody", "Never Measured", 10).unwrap();
-        assert!(near.is_empty(), "an unknown seed must not be answered with the well-measured");
+        let near = db
+            .similar_recordings("Nobody", "Never Measured", 10)
+            .unwrap();
+        assert!(
+            near.is_empty(),
+            "an unknown seed must not be answered with the well-measured"
+        );
     }
 
     /// Two clients measuring their own copies must converge, not overwrite one another.
     #[test]
     fn repeated_submissions_average_rather_than_replace() {
         let db = Db::new_in_memory().unwrap();
-        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.4, 0.5)]).unwrap();
-        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.6, 0.5)]).unwrap();
+        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.4, 0.5)])
+            .unwrap();
+        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.6, 0.5)])
+            .unwrap();
 
         let conn = db.conn.lock().unwrap();
         let (tempo, observations): (f64, i64) = conn
@@ -305,7 +318,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert!((tempo - 0.5).abs() < 1e-9, "expected the mean of the two, got {tempo}");
+        assert!(
+            (tempo - 0.5).abs() < 1e-9,
+            "expected the mean of the two, got {tempo}"
+        );
         assert_eq!(observations, 2);
     }
 
@@ -314,13 +330,17 @@ mod tests {
     fn a_settled_average_stops_moving_past_the_observation_cap() {
         let db = Db::new_in_memory().unwrap();
         for _ in 0..(MAX_OBSERVATIONS + 20) {
-            db.submit_vectors(&[vector("Radiohead", "All I Need", 0.5, 0.5)]).unwrap();
+            db.submit_vectors(&[vector("Radiohead", "All I Need", 0.5, 0.5)])
+                .unwrap();
         }
-        db.submit_vectors(&[vector("Radiohead", "All I Need", 1.0, 1.0)]).unwrap();
+        db.submit_vectors(&[vector("Radiohead", "All I Need", 1.0, 1.0)])
+            .unwrap();
 
         let conn = db.conn.lock().unwrap();
         let observations: i64 = conn
-            .query_row("SELECT observations FROM acoustic_vectors", [], |row| row.get(0))
+            .query_row("SELECT observations FROM acoustic_vectors", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(observations, MAX_OBSERVATIONS);
     }
@@ -329,13 +349,21 @@ mod tests {
     #[test]
     fn normalisation_folds_two_spellings_into_one_average() {
         let db = Db::new_in_memory().unwrap();
-        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.4, 0.5)]).unwrap();
-        db.submit_vectors(&[vector("radiohead", "All I Need (Remastered 2011)", 0.6, 0.5)])
+        db.submit_vectors(&[vector("Radiohead", "All I Need", 0.4, 0.5)])
             .unwrap();
+        db.submit_vectors(&[vector(
+            "radiohead",
+            "All I Need (Remastered 2011)",
+            0.6,
+            0.5,
+        )])
+        .unwrap();
 
         let conn = db.conn.lock().unwrap();
         let rows: i64 = conn
-            .query_row("SELECT COUNT(*) FROM acoustic_vectors", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM acoustic_vectors", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(rows, 1);
     }
@@ -344,7 +372,8 @@ mod tests {
     #[test]
     fn out_of_range_values_are_clamped_on_the_way_in() {
         let db = Db::new_in_memory().unwrap();
-        db.submit_vectors(&[vector("Broken", "Client", 400.0, -5.0)]).unwrap();
+        db.submit_vectors(&[vector("Broken", "Client", 400.0, -5.0)])
+            .unwrap();
 
         let conn = db.conn.lock().unwrap();
         let (tempo, energy): (f64, f64) = conn

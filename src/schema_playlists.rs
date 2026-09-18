@@ -111,7 +111,11 @@ impl PlaylistsQuery {
     }
 
     /// Fetches a single playlist by ID if it belongs to the caller or is marked public.
-    async fn playlist(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<PlaylistPayload> {
+    async fn playlist(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<PlaylistPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
 
@@ -120,7 +124,9 @@ impl PlaylistsQuery {
             .ok_or_else(|| async_graphql::Error::new("playlist not found"))?;
 
         if !playlist.is_public && playlist.user_id != authed.username() {
-            return Err(forbidden("you do not have permission to view this private playlist"));
+            return Err(forbidden(
+                "you do not have permission to view this private playlist",
+            ));
         }
 
         to_playlist_payload(db, playlist)
@@ -230,7 +236,11 @@ impl PlaylistsMutation {
     }
 
     /// Deletes a playlist.
-    async fn delete_playlist(&self, ctx: &Context<'_>, playlist_id: String) -> async_graphql::Result<bool> {
+    async fn delete_playlist(
+        &self,
+        ctx: &Context<'_>,
+        playlist_id: String,
+    ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
 
@@ -251,7 +261,7 @@ impl PlaylistsMutation {
 
         let imported = importer::import_from_url(db, url.trim())
             .await
-            .map_err(|e| async_graphql::Error::new(e))?;
+            .map_err(async_graphql::Error::new)?;
 
         let title = title_override.unwrap_or(imported.title);
         let playlist = db.create_playlist(

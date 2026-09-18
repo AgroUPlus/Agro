@@ -40,7 +40,12 @@ fn harness() -> Harness {
         .create_account("beta", "beta-pass", Role::Member, AccountState::Active)
         .unwrap();
     let stranger = db
-        .create_account("stranger", "stranger-pass", Role::Member, AccountState::Active)
+        .create_account(
+            "stranger",
+            "stranger-pass",
+            Role::Member,
+            AccountState::Active,
+        )
         .unwrap();
 
     // Discoverability defaults closed, which is correct but makes every test start by opting in.
@@ -48,14 +53,24 @@ fn harness() -> Harness {
         db.set_discoverable(who, true).unwrap();
     }
 
-    let schema = Schema::build(Query::default(), Mutation::default(), async_graphql::EmptySubscription)
-        .data(db.clone())
-        .data(Arc::new(WsHub::new()))
-        .data(Storage::for_tests())
-        .data(SetupToken::for_fresh_server(1))
-        .finish();
+    let schema = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        async_graphql::EmptySubscription,
+    )
+    .data(db.clone())
+    .data(Arc::new(WsHub::new()))
+    .data(Storage::for_tests())
+    .data(SetupToken::for_fresh_server(1))
+    .finish();
 
-    Harness { schema, db, alpha, beta, stranger }
+    Harness {
+        schema,
+        db,
+        alpha,
+        beta,
+        stranger,
+    }
 }
 
 impl Harness {
@@ -70,8 +85,14 @@ impl Harness {
 
     /// Makes two accounts friends the way the API would, request and acceptance both.
     fn befriend(&self, a: &str, b: &str) {
-        assert!(self.db.send_friend_request(a, b).unwrap(), "request {a} -> {b}");
-        assert!(self.db.accept_friend_request(b, a).unwrap(), "accept {b} <- {a}");
+        assert!(
+            self.db.send_friend_request(a, b).unwrap(),
+            "request {a} -> {b}"
+        );
+        assert!(
+            self.db.accept_friend_request(b, a).unwrap(),
+            "accept {b} <- {a}"
+        );
     }
 
     /// Sends a drop through the API and answers with its id.
@@ -170,7 +191,9 @@ impl Harness {
                 play_uid: None,
             })
             .collect();
-        self.db.record_scrobbles(who, "test-device", None, &entries).unwrap();
+        self.db
+            .record_scrobbles(who, "test-device", None, &entries)
+            .unwrap();
     }
 
     /// Gives an account something to be caught playing.
@@ -212,7 +235,11 @@ impl Harness {
     }
 
     /// One sealed copy, addressed to a device.
-    fn copy_for(who: &str, device: &str, ciphertext: &str) -> crate::db_presence::PresenceCiphertext {
+    fn copy_for(
+        who: &str,
+        device: &str,
+        ciphertext: &str,
+    ) -> crate::db_presence::PresenceCiphertext {
         crate::db_presence::PresenceCiphertext {
             recipient_user_id: who.to_string(),
             recipient_device_id: device.to_string(),
@@ -246,7 +273,9 @@ async fn a_friend_sees_nothing_until_the_flag_is_set() {
     h.befriend("alpha", "beta");
     h.set_playing("alpha", "A Secret Song");
 
-    let closed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let closed = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_allowed(&closed, "friendsNowPlaying");
     assert_eq!(
         closed.data.to_string(),
@@ -255,7 +284,9 @@ async fn a_friend_sees_nothing_until_the_flag_is_set() {
     );
 
     h.db.set_visibility("alpha", true, false).unwrap();
-    let open = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let open = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert!(
         open.data.to_string().contains("A Secret Song"),
         "the flag was set and the friend still saw nothing: {:?}",
@@ -269,11 +300,16 @@ async fn a_stranger_never_sees_now_playing_however_open_the_flag() {
     h.db.set_visibility("alpha", true, true).unwrap();
     h.set_playing("alpha", "A Secret Song");
 
-    let r = h.run_as(&h.stranger, "{ friendsNowPlaying { trackTitle } }").await;
+    let r = h
+        .run_as(&h.stranger, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_eq!(r.data.to_string(), r#"{friendsNowPlaying: []}"#);
 
     let along = h
-        .run_as(&h.stranger, r#"mutation { startListenAlong(host: "alpha") { host } }"#)
+        .run_as(
+            &h.stranger,
+            r#"mutation { startListenAlong(host: "alpha") { host } }"#,
+        )
         .await;
     assert_refused(&along, "startListenAlong on a non-friend");
 }
@@ -304,10 +340,16 @@ async fn a_hidden_account_and_a_missing_one_answer_identically() {
     h.db.set_visibility("alpha", false, false).unwrap();
 
     let hidden = h
-        .run_as(&h.stranger, r#"{ tasteMatch(username: "alpha") { score } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ tasteMatch(username: "alpha") { score } }"#,
+        )
         .await;
     let missing = h
-        .run_as(&h.stranger, r#"{ tasteMatch(username: "ghost") { score } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ tasteMatch(username: "ghost") { score } }"#,
+        )
         .await;
 
     assert_refused(&hidden, "tasteMatch on a hidden account");
@@ -325,7 +367,9 @@ async fn search_lists_only_accounts_that_asked_to_be_listed() {
     let h = harness();
     h.db.set_discoverable("beta", false).unwrap();
 
-    let r = h.run_as(&h.alpha, r#"{ searchUsers(query: "b") { username } }"#).await;
+    let r = h
+        .run_as(&h.alpha, r#"{ searchUsers(query: "b") { username } }"#)
+        .await;
     assert_allowed(&r, "searchUsers");
     assert!(
         !r.data.to_string().contains("beta"),
@@ -337,20 +381,34 @@ async fn search_lists_only_accounts_that_asked_to_be_listed() {
 #[tokio::test]
 async fn search_never_lists_a_pending_or_suspended_account() {
     let h = harness();
-    h.db.set_account_state("beta", AccountState::Pending).unwrap();
-    let pending = h.run_as(&h.alpha, r#"{ searchUsers(query: "beta") { username } }"#).await;
-    assert!(!pending.data.to_string().contains("beta"), "a pending account was listed");
+    h.db.set_account_state("beta", AccountState::Pending)
+        .unwrap();
+    let pending = h
+        .run_as(&h.alpha, r#"{ searchUsers(query: "beta") { username } }"#)
+        .await;
+    assert!(
+        !pending.data.to_string().contains("beta"),
+        "a pending account was listed"
+    );
 
-    h.db.set_account_state("beta", AccountState::Suspended).unwrap();
-    let suspended = h.run_as(&h.alpha, r#"{ searchUsers(query: "beta") { username } }"#).await;
-    assert!(!suspended.data.to_string().contains("beta"), "a suspended account was listed");
+    h.db.set_account_state("beta", AccountState::Suspended)
+        .unwrap();
+    let suspended = h
+        .run_as(&h.alpha, r#"{ searchUsers(query: "beta") { username } }"#)
+        .await;
+    assert!(
+        !suspended.data.to_string().contains("beta"),
+        "a suspended account was listed"
+    );
 }
 
 /// Prefix-anchored, so the directory cannot be walked one letter at a time.
 #[tokio::test]
 async fn search_does_not_match_the_middle_of_a_username() {
     let h = harness();
-    let r = h.run_as(&h.alpha, r#"{ searchUsers(query: "trang") { username } }"#).await;
+    let r = h
+        .run_as(&h.alpha, r#"{ searchUsers(query: "trang") { username } }"#)
+        .await;
     assert!(
         !r.data.to_string().contains("stranger"),
         "a substring matched, which allows enumeration: {:?}",
@@ -373,11 +431,15 @@ async fn a_block_hides_both_directions() {
     assert_allowed(&blocked, "blockUser");
 
     // The blocked account loses the friendship, and with it everything the friendship permitted.
-    let theirs = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let theirs = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_eq!(theirs.data.to_string(), r#"{friendsNowPlaying: []}"#);
 
     // And neither can find the other again.
-    let search = h.run_as(&h.beta, r#"{ searchUsers(query: "alpha") { username } }"#).await;
+    let search = h
+        .run_as(&h.beta, r#"{ searchUsers(query: "alpha") { username } }"#)
+        .await;
     assert!(
         !search.data.to_string().contains("alpha"),
         "a blocker stayed findable by the account they blocked"
@@ -391,7 +453,9 @@ async fn a_block_is_not_reported_to_the_blocked_account() {
     let h = harness();
     h.db.block_user("alpha", "beta").unwrap();
 
-    let r = h.run_as(&h.beta, r#"{ profile(username: "alpha") { friendState } }"#).await;
+    let r = h
+        .run_as(&h.beta, r#"{ profile(username: "alpha") { friendState } }"#)
+        .await;
     assert_allowed(&r, "profile");
     assert!(
         !r.data.to_string().contains("blocked"),
@@ -409,12 +473,17 @@ async fn a_request_must_be_accepted_before_anything_is_shared() {
     h.set_playing("alpha", "A Secret Song");
 
     let sent = h
-        .run_as(&h.beta, r#"mutation { sendFriendRequest(username: "alpha") }"#)
+        .run_as(
+            &h.beta,
+            r#"mutation { sendFriendRequest(username: "alpha") }"#,
+        )
         .await;
     assert_allowed(&sent, "sendFriendRequest");
 
     // Pending is not accepted.
-    let r = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let r = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_eq!(
         r.data.to_string(),
         r#"{friendsNowPlaying: []}"#,
@@ -429,14 +498,23 @@ async fn only_the_addressee_can_accept_a_request() {
 
     // The sender cannot accept their own request, and neither can a bystander.
     let by_sender = h
-        .run_as(&h.beta, r#"mutation { acceptFriendRequest(username: "alpha") }"#)
+        .run_as(
+            &h.beta,
+            r#"mutation { acceptFriendRequest(username: "alpha") }"#,
+        )
         .await;
     assert_eq!(by_sender.data.to_string(), "{acceptFriendRequest: false}");
 
     let by_bystander = h
-        .run_as(&h.stranger, r#"mutation { acceptFriendRequest(username: "beta") }"#)
+        .run_as(
+            &h.stranger,
+            r#"mutation { acceptFriendRequest(username: "beta") }"#,
+        )
         .await;
-    assert_eq!(by_bystander.data.to_string(), "{acceptFriendRequest: false}");
+    assert_eq!(
+        by_bystander.data.to_string(),
+        "{acceptFriendRequest: false}"
+    );
 
     assert!(!h.db.are_friends("alpha", "beta").unwrap());
 }
@@ -451,7 +529,10 @@ async fn a_session_ends_when_the_friendship_does() {
     h.set_playing("alpha", "A Secret Song");
 
     let started = h
-        .run_as(&h.beta, r#"mutation { startListenAlong(host: "alpha") { host } }"#)
+        .run_as(
+            &h.beta,
+            r#"mutation { startListenAlong(host: "alpha") { host } }"#,
+        )
         .await;
     assert_allowed(&started, "startListenAlong");
 
@@ -470,8 +551,11 @@ async fn closing_now_playing_ends_the_sessions_it_permitted() {
     h.befriend("alpha", "beta");
     h.db.set_visibility("alpha", true, true).unwrap();
     h.set_playing("alpha", "A Secret Song");
-    h.run_as(&h.beta, r#"mutation { startListenAlong(host: "alpha") { host } }"#)
-        .await;
+    h.run_as(
+        &h.beta,
+        r#"mutation { startListenAlong(host: "alpha") { host } }"#,
+    )
+    .await;
 
     let closed = h
         .run_as(
@@ -492,7 +576,9 @@ async fn closing_now_playing_ends_the_sessions_it_permitted() {
 #[tokio::test]
 async fn a_member_cannot_mint_or_read_invites() {
     let h = harness();
-    let minted = h.run_as(&h.beta, "mutation { createInvite { code } }").await;
+    let minted = h
+        .run_as(&h.beta, "mutation { createInvite { code } }")
+        .await;
     assert_refused(&minted, "createInvite as a member");
 
     let listed = h.run_as(&h.beta, "{ invites { code } }").await;
@@ -507,7 +593,10 @@ async fn an_invite_cannot_be_spent_more_often_than_it_allows() {
     let h = harness();
     let invite = h.db.create_invite("alpha", 1, None).unwrap();
 
-    assert!(h.db.redeem_invite(&invite.code).unwrap(), "the first use was refused");
+    assert!(
+        h.db.redeem_invite(&invite.code).unwrap(),
+        "the first use was refused"
+    );
     assert!(
         !h.db.redeem_invite(&invite.code).unwrap(),
         "a single-use code was spent twice"
@@ -519,7 +608,10 @@ async fn a_revoked_invite_stops_working() {
     let h = harness();
     let invite = h.db.create_invite("alpha", 10, None).unwrap();
     assert!(h.db.revoke_invite(&invite.code).unwrap());
-    assert!(!h.db.redeem_invite(&invite.code).unwrap(), "a revoked code was spent");
+    assert!(
+        !h.db.redeem_invite(&invite.code).unwrap(),
+        "a revoked code was spent"
+    );
 }
 
 // ── Profile writes ──────────────────────────────────────────────────────────────────────────
@@ -545,7 +637,10 @@ async fn nobody_can_edit_anyone_elses_profile() {
     // There is deliberately no `username` argument: the mutation writes the caller and nothing
     // else, so there is no field through which another account could be named.
     let r = h
-        .run_as(&h.beta, r#"mutation { updateProfile(displayName: "Beta") { username } }"#)
+        .run_as(
+            &h.beta,
+            r#"mutation { updateProfile(displayName: "Beta") { username } }"#,
+        )
         .await;
     assert_allowed(&r, "updateProfile");
     assert_eq!(r.data.to_string(), "{updateProfile: {username: \"beta\"}}");
@@ -571,9 +666,18 @@ async fn setting_one_visibility_switch_leaves_the_others_alone() {
     assert_allowed(&response, "partial setVisibility");
 
     let profile = h.db.profile("alpha").unwrap().unwrap();
-    assert!(profile.show_now_playing, "now-playing was reverted by an unrelated call");
-    assert!(profile.show_stats, "stats were reverted by an unrelated call");
-    assert!(!profile.discoverable, "the switch that was actually set did not take");
+    assert!(
+        profile.show_now_playing,
+        "now-playing was reverted by an unrelated call"
+    );
+    assert!(
+        profile.show_stats,
+        "stats were reverted by an unrelated call"
+    );
+    assert!(
+        !profile.discoverable,
+        "the switch that was actually set did not take"
+    );
 }
 
 /// Revoking one device must not sign out every device that shares its name.
@@ -603,7 +707,11 @@ async fn revoking_one_credential_leaves_its_namesakes_alone() {
     assert_allowed(&response, "revoke one credential");
 
     let after = h.db.list_app_passwords("alpha").unwrap();
-    assert_eq!(after.len(), 2, "revoking one token took its namesakes with it");
+    assert_eq!(
+        after.len(),
+        2,
+        "revoking one token took its namesakes with it"
+    );
     assert!(
         !after.iter().any(|record| record.id == before[0].id),
         "the credential that was named is the one that should be gone"
@@ -656,7 +764,9 @@ async fn me_cannot_be_pointed_at_another_account() {
     let h = harness();
     h.befriend("alpha", "beta");
 
-    let response = h.run_as(&h.beta, r#"{ me(username: "alpha") { username role } }"#).await;
+    let response = h
+        .run_as(&h.beta, r#"{ me(username: "alpha") { username role } }"#)
+        .await;
     assert_refused(&response, "beta asking about alpha through me");
 }
 
@@ -674,7 +784,10 @@ async fn a_member_does_not_inherit_the_servers_archive() {
     h.archive_a_track("Something The Admin Owns");
 
     let response = h
-        .run_as(&h.beta, r#"{ libraryStats(userId: "beta") { trackCount archivedCount } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ libraryStats(userId: "beta") { trackCount archivedCount } }"#,
+        )
         .await;
     assert_allowed(&response, "beta reading their own library stats");
     let answered = response.data.into_json().unwrap();
@@ -691,27 +804,42 @@ async fn a_library_is_not_readable_until_it_is_shared() {
 
     // A stranger, with the switch off.
     let refused = h
-        .run_as(&h.stranger, r#"{ libraryStats(userId: "alpha") { trackCount } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ libraryStats(userId: "alpha") { trackCount } }"#,
+        )
         .await;
     assert_refused(&refused, "a stranger reading alpha's library");
 
     // A friend, with the switch still off.
     h.befriend("alpha", "beta");
     let still_refused = h
-        .run_as(&h.beta, r#"{ libraryStats(userId: "alpha") { trackCount } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ libraryStats(userId: "alpha") { trackCount } }"#,
+        )
         .await;
-    assert_refused(&still_refused, "a friend reading a library that is not shared");
+    assert_refused(
+        &still_refused,
+        "a friend reading a library that is not shared",
+    );
 
     // The switch on, for that friend.
     h.db.set_share_library("alpha", true).unwrap();
     let allowed = h
-        .run_as(&h.beta, r#"{ libraryStats(userId: "alpha") { trackCount } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ libraryStats(userId: "alpha") { trackCount } }"#,
+        )
         .await;
     assert_allowed(&allowed, "a friend reading a shared library");
 
     // Still not for the stranger.
     let stranger_again = h
-        .run_as(&h.stranger, r#"{ libraryStats(userId: "alpha") { trackCount } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ libraryStats(userId: "alpha") { trackCount } }"#,
+        )
         .await;
     assert_refused(&stranger_again, "a stranger reading a shared library");
 }
@@ -725,7 +853,10 @@ async fn a_shared_library_does_not_expose_the_archive() {
     h.db.set_share_library("alpha", true).unwrap();
 
     let response = h
-        .run_as(&h.beta, r#"{ libraryStats(userId: "alpha") { trackCount } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ libraryStats(userId: "alpha") { trackCount } }"#,
+        )
         .await;
     assert_allowed(&response, "friend reading a shared library");
     let answered = response.data.into_json().unwrap();
@@ -740,7 +871,10 @@ async fn a_shared_library_does_not_expose_the_archive() {
 async fn an_admin_cannot_read_another_accounts_library() {
     let h = harness();
     let response = h
-        .run_as(&h.alpha, r#"{ libraryStats(userId: "beta") { trackCount } }"#)
+        .run_as(
+            &h.alpha,
+            r#"{ libraryStats(userId: "beta") { trackCount } }"#,
+        )
         .await;
     assert_refused(&response, "an admin reading a member's library");
 }
@@ -756,19 +890,28 @@ async fn a_friends_statistics_follow_their_switch() {
     h.befriend("alpha", "beta");
 
     let closed = h
-        .run_as(&h.beta, r#"{ listeningStats(userId: "alpha") { playsTotal } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ listeningStats(userId: "alpha") { playsTotal } }"#,
+        )
         .await;
     assert_refused(&closed, "reading a friend's stats with the switch off");
 
     h.db.set_visibility("alpha", false, true).unwrap();
     let opened = h
-        .run_as(&h.beta, r#"{ listeningStats(userId: "alpha") { playsTotal } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ listeningStats(userId: "alpha") { playsTotal } }"#,
+        )
         .await;
     assert_allowed(&opened, "reading a friend's stats with the switch on");
 
     // A stranger is still refused, switch or no switch.
     let stranger = h
-        .run_as(&h.stranger, r#"{ listeningStats(userId: "alpha") { playsTotal } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ listeningStats(userId: "alpha") { playsTotal } }"#,
+        )
         .await;
     assert_refused(&stranger, "a stranger reading open stats");
 }
@@ -788,12 +931,31 @@ async fn a_suggestion_waits_for_the_room() {
     h.db.join_jam(&jam.id, "beta").unwrap();
     h.db.join_jam(&jam.id, "stranger").unwrap();
 
-    let (track, state) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Suggested", "A", None, 1000, false, JamMode::Democracy, None, None)
+    let (track, state) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "Suggested",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Democracy,
+            None,
+            None,
+        )
         .unwrap();
-    assert_eq!(state, JamTrackState::Proposed, "it went straight into the queue");
-    assert!(h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty());
+    assert_eq!(
+        state,
+        JamTrackState::Proposed,
+        "it went straight into the queue"
+    );
+    assert!(h
+        .db
+        .jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+        .unwrap()
+        .is_empty());
 
     // Three members means two others, so it needs two of them.
     assert_eq!(h.db.jam_approvals_needed(&jam.id).unwrap(), 2);
@@ -801,16 +963,28 @@ async fn a_suggestion_waits_for_the_room() {
     // The proposer's own approval is recorded and counts for nothing.
     h.db.approve_jam_track(&jam.id, &track, "alpha").unwrap();
     assert!(
-        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty(),
+        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+            .unwrap()
+            .is_empty(),
         "the proposer carried their own suggestion"
     );
 
     h.db.approve_jam_track(&jam.id, &track, "beta").unwrap();
-    assert!(h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty());
+    assert!(h
+        .db
+        .jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+        .unwrap()
+        .is_empty());
 
     h.db.approve_jam_track(&jam.id, &track, "stranger").unwrap();
-    let queue = h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap();
-    assert_eq!(queue.len(), 1, "the room accepted it and it did not join the queue");
+    let queue =
+        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+            .unwrap();
+    assert_eq!(
+        queue.len(),
+        1,
+        "the room accepted it and it did not join the queue"
+    );
     assert_eq!(queue[0].id, track);
 }
 
@@ -820,11 +994,26 @@ async fn a_solo_jam_queues_without_asking() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Democracy).unwrap();
 
-    let (_, state) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Only me", "A", None, 1000, false, JamMode::Democracy, None, None)
+    let (_, state) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "Only me",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Democracy,
+            None,
+            None,
+        )
         .unwrap();
-    assert_eq!(state, JamTrackState::Queued, "a solo jam could never pass anything");
+    assert_eq!(
+        state,
+        JamTrackState::Queued,
+        "a solo jam could never pass anything"
+    );
 }
 
 /// Open mode asks nobody.
@@ -834,12 +1023,27 @@ async fn open_mode_queues_immediately() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
 
-    let (_, state) = h
-        .db
-        .add_jam_track(&jam.id, "beta", "u:1", "Straight in", "B", None, 1000, false, JamMode::Open, None, None)
+    let (_, state) =
+        h.db.add_jam_track(
+            &jam.id,
+            "beta",
+            "u:1",
+            "Straight in",
+            "B",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
     assert_eq!(state, JamTrackState::Queued);
-    assert!(h.db.jam_tracks(&jam.id, JamTrackState::Proposed, "beta").unwrap().is_empty());
+    assert!(h
+        .db
+        .jam_tracks(&jam.id, JamTrackState::Proposed, "beta")
+        .unwrap()
+        .is_empty());
 }
 
 /// The queue keeps the order things were added, whatever the approvals say.
@@ -849,16 +1053,42 @@ async fn approvals_do_not_reorder_the_queue() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
 
-    let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 1000, false, JamMode::Open, None, None)
+    let (first, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "First",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
-    let (second, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:2", "Second", "B", None, 1000, false, JamMode::Open, None, None)
+    let (second, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "beta",
+            "u:2",
+            "Second",
+            "B",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     // Piling approvals on the later track must not move it up: votes decide entry, not position.
     h.db.approve_jam_track(&jam.id, &second, "alpha").unwrap();
-    let queue = h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap();
+    let queue =
+        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+            .unwrap();
     assert_eq!(queue[0].id, first, "approvals reordered the queue");
     assert_eq!(queue[1].id, second);
 }
@@ -870,17 +1100,44 @@ async fn the_server_advances_the_room_on_its_own() {
     let hub = std::sync::Arc::new(WsHub::new());
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
-    let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "First", "A", None, 40, false, JamMode::Open, None, None)
+    let (first, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "First",
+            "A",
+            None,
+            40,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
-    let (second, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Second", "A", None, 40, false, JamMode::Open, None, None)
+    let (second, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:2",
+            "Second",
+            "A",
+            None,
+            40,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     // Nobody has asked for anything: the clock starts the room.
     crate::jam_clock::tick(&h.db, &hub);
     let live = h.db.jam_by_id(&jam.id).unwrap().unwrap();
-    let now = h.db.jam_now_playing(&live).unwrap().expect("something should be playing");
+    let now =
+        h.db.jam_now_playing(&live)
+            .unwrap()
+            .expect("something should be playing");
     assert_eq!(now.track_id, first);
 
     // Still inside its duration, so the room stays put.
@@ -895,8 +1152,13 @@ async fn the_server_advances_the_room_on_its_own() {
     assert_eq!(live.now_playing_id.as_deref(), Some(second.as_str()));
 
     // And the finished one is not offered again.
-    let queue = h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap();
-    assert!(!queue.iter().any(|t| t.id == first), "a played track stayed in the queue");
+    let queue =
+        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+            .unwrap();
+    assert!(
+        !queue.iter().any(|t| t.id == first),
+        "a played track stayed in the queue"
+    );
 }
 
 /// A late joiner is told where the room is, not sent back to the start.
@@ -905,15 +1167,31 @@ async fn now_playing_reports_the_rooms_position() {
     let h = harness();
     let hub = std::sync::Arc::new(WsHub::new());
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "Long one", "A", None, 60_000, false, JamMode::Open, None, None)
-        .unwrap();
+    h.db.add_jam_track(
+        &jam.id,
+        "alpha",
+        "u:1",
+        "Long one",
+        "A",
+        None,
+        60_000,
+        false,
+        JamMode::Open,
+        None,
+        None,
+    )
+    .unwrap();
 
     crate::jam_clock::tick(&h.db, &hub);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let live = h.db.jam_by_id(&jam.id).unwrap().unwrap();
     let now = h.db.jam_now_playing(&live).unwrap().unwrap();
-    assert!(now.position_ms >= 40, "the room's position was reported as {}", now.position_ms);
+    assert!(
+        now.position_ms >= 40,
+        "the room's position was reported as {}",
+        now.position_ms
+    );
     assert!(now.position_ms < 60_000);
 }
 
@@ -924,10 +1202,17 @@ async fn a_jam_is_governed_by_its_creator_alone() {
     let jam = h.db.create_jam("alpha", JamMode::Democracy).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
 
-    let refused = h.run_as(&h.beta, r#"mutation { setJamMode(mode: "open") { mode } }"#).await;
+    let refused = h
+        .run_as(&h.beta, r#"mutation { setJamMode(mode: "open") { mode } }"#)
+        .await;
     assert_refused(&refused, "a member changing the mode");
 
-    let allowed = h.run_as(&h.alpha, r#"mutation { setJamMode(mode: "open") { mode } }"#).await;
+    let allowed = h
+        .run_as(
+            &h.alpha,
+            r#"mutation { setJamMode(mode: "open") { mode } }"#,
+        )
+        .await;
     assert_allowed(&allowed, "the creator changing the mode");
 }
 
@@ -938,17 +1223,35 @@ async fn only_the_owner_or_the_creator_removes_a_track() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
     h.db.join_jam(&jam.id, "stranger").unwrap();
-    let (track, _) = h.db
-        .add_jam_track(&jam.id, "beta", "u:1", "Beta's pick", "B", None, 1000, false, JamMode::Open, None, None)
+    let (track, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "beta",
+            "u:1",
+            "Beta's pick",
+            "B",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     let refused = h
-        .run_as(&h.stranger, &format!(r#"mutation {{ removeJamTrack(trackId: "{track}") {{ id }} }}"#))
+        .run_as(
+            &h.stranger,
+            &format!(r#"mutation {{ removeJamTrack(trackId: "{track}") {{ id }} }}"#),
+        )
         .await;
     assert_refused(&refused, "a member removing someone else's track");
 
     let allowed = h
-        .run_as(&h.beta, &format!(r#"mutation {{ removeJamTrack(trackId: "{track}") {{ id }} }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ removeJamTrack(trackId: "{track}") {{ id }} }}"#),
+        )
         .await;
     assert_allowed(&allowed, "removing your own track");
 }
@@ -958,12 +1261,27 @@ async fn only_the_owner_or_the_creator_removes_a_track() {
 async fn a_non_member_cannot_touch_the_queue() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
-    let (track, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
+    let (track, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "One",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     let refused = h
-        .run_as(&h.stranger, &format!(r#"mutation {{ approveJamTrack(trackId: "{track}") {{ id }} }}"#))
+        .run_as(
+            &h.stranger,
+            &format!(r#"mutation {{ approveJamTrack(trackId: "{track}") {{ id }} }}"#),
+        )
         .await;
     assert_refused(&refused, "a non-member approving");
 
@@ -982,16 +1300,36 @@ async fn ending_a_jam_clears_it_from_the_server() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:1", "One", "A", None, 1000, false, JamMode::Open, None, None)
-        .unwrap();
+    h.db.add_jam_track(
+        &jam.id,
+        "alpha",
+        "u:1",
+        "One",
+        "A",
+        None,
+        1000,
+        false,
+        JamMode::Open,
+        None,
+        None,
+    )
+    .unwrap();
 
     let left = h.run_as(&h.alpha, "mutation { leaveJam }").await;
     assert_allowed(&left, "the creator leaving");
 
-    assert!(h.db.jam_by_id(&jam.id).unwrap().is_none(), "the jam outlived its creator");
-    assert!(h.db.jam_for_member("beta").unwrap().is_none(), "beta is still in a deleted jam");
     assert!(
-        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha").unwrap().is_empty(),
+        h.db.jam_by_id(&jam.id).unwrap().is_none(),
+        "the jam outlived its creator"
+    );
+    assert!(
+        h.db.jam_for_member("beta").unwrap().is_none(),
+        "beta is still in a deleted jam"
+    );
+    assert!(
+        h.db.jam_tracks(&jam.id, JamTrackState::Queued, "alpha")
+            .unwrap()
+            .is_empty(),
         "the queue was left behind"
     );
 }
@@ -1000,7 +1338,9 @@ async fn ending_a_jam_clears_it_from_the_server() {
 #[tokio::test]
 async fn a_bad_join_code_reveals_nothing() {
     let h = harness();
-    let refused = h.run_as(&h.beta, r#"mutation { joinJam(code: "NOPE") { id } }"#).await;
+    let refused = h
+        .run_as(&h.beta, r#"mutation { joinJam(code: "NOPE") { id } }"#)
+        .await;
     assert_refused(&refused, "joining with a bad code");
 }
 
@@ -1017,7 +1357,9 @@ async fn a_paused_or_stale_friend_is_not_listening_now() {
 
     // Playing, and reported just now.
     h.set_playing("alpha", "Currently On");
-    let feed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let feed = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_allowed(&feed, "presence feed");
     assert_eq!(
         feed.data.into_json().unwrap()["friendsNowPlaying"]
@@ -1028,11 +1370,26 @@ async fn a_paused_or_stale_friend_is_not_listening_now() {
 
     // The same row, but paused: they are not listening to anything.
     h.db.update_handoff(
-        "alpha", "track://1", "Currently On", "Some Artist", None, None, 0, 0, false,
-        "device-1", None, None, None, None, None,
+        "alpha",
+        "track://1",
+        "Currently On",
+        "Some Artist",
+        None,
+        None,
+        0,
+        0,
+        false,
+        "device-1",
+        None,
+        None,
+        None,
+        None,
+        None,
     )
     .unwrap();
-    let feed = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let feed = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     let listed = feed.data.into_json().unwrap();
     assert_eq!(
         listed["friendsNowPlaying"].as_array().map(|a| a.len()),
@@ -1058,11 +1415,17 @@ async fn a_failed_signup_does_not_spend_the_invite() {
     let taken = h.db.account("beta").unwrap().is_some();
     assert!(taken, "precondition: beta exists");
     let listed = h.db.list_invites().unwrap();
-    assert_eq!(listed[0].used_count, 0, "the invite was spent before anything was validated");
+    assert_eq!(
+        listed[0].used_count, 0,
+        "the invite was spent before anything was validated"
+    );
 
     // And it still works afterwards.
     assert!(h.db.redeem_invite(&invite.code).unwrap());
-    assert!(!h.db.redeem_invite(&invite.code).unwrap(), "a one-use code was spent twice");
+    assert!(
+        !h.db.redeem_invite(&invite.code).unwrap(),
+        "a one-use code was spent twice"
+    );
 }
 
 /// A refund puts a use back, and never takes the count below zero.
@@ -1075,11 +1438,17 @@ async fn a_refunded_invite_can_be_used_again() {
     assert!(!h.db.redeem_invite(&invite.code).unwrap(), "already spent");
 
     assert!(h.db.refund_invite(&invite.code).unwrap());
-    assert!(h.db.redeem_invite(&invite.code).unwrap(), "the refund did not restore the use");
+    assert!(
+        h.db.redeem_invite(&invite.code).unwrap(),
+        "the refund did not restore the use"
+    );
 
     // Refunding past zero would make a code usable more often than allowed.
     h.db.refund_invite(&invite.code).unwrap();
-    assert!(!h.db.refund_invite(&invite.code).unwrap(), "refund went below zero");
+    assert!(
+        !h.db.refund_invite(&invite.code).unwrap(),
+        "refund went below zero"
+    );
 }
 
 /// Deleting an invite takes it off the list; only an administrator may.
@@ -1089,18 +1458,26 @@ async fn only_an_admin_deletes_an_invite() {
     let invite = h.db.create_invite("alpha", 1, None).unwrap();
 
     let refused = h
-        .run_as(&h.beta, &format!(r#"mutation {{ deleteInvite(code: "{}") }}"#, invite.code))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ deleteInvite(code: "{}") }}"#, invite.code),
+        )
         .await;
     assert_refused(&refused, "a member deleting an invite");
     assert_eq!(h.db.list_invites().unwrap().len(), 1);
 
     let allowed = h
-        .run_as(&h.alpha, &format!(r#"mutation {{ deleteInvite(code: "{}") }}"#, invite.code))
+        .run_as(
+            &h.alpha,
+            &format!(r#"mutation {{ deleteInvite(code: "{}") }}"#, invite.code),
+        )
         .await;
     assert_allowed(&allowed, "an admin deleting an invite");
-    assert!(h.db.list_invites().unwrap().is_empty(), "the invite was not removed");
+    assert!(
+        h.db.list_invites().unwrap().is_empty(),
+        "the invite was not removed"
+    );
 }
-
 
 /// A join code has to survive being read out loud.
 ///
@@ -1135,25 +1512,67 @@ async fn a_majority_skips_the_playing_track() {
     h.db.join_jam(&jam.id, "beta").unwrap();
     h.db.join_jam(&jam.id, "stranger").unwrap();
 
-    let (first, _) = h.db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Skip me", "A", None, 600_000, false, JamMode::Open, None, None)
+    let (first, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "Skip me",
+            "A",
+            None,
+            600_000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
-    h.db.add_jam_track(&jam.id, "alpha", "u:2", "Next", "A", None, 600_000, false, JamMode::Open, None, None)
-        .unwrap();
+    h.db.add_jam_track(
+        &jam.id,
+        "alpha",
+        "u:2",
+        "Next",
+        "A",
+        None,
+        600_000,
+        false,
+        JamMode::Open,
+        None,
+        None,
+    )
+    .unwrap();
     crate::jam_clock::tick(&h.db, &hub);
     assert_eq!(
-        h.db.jam_by_id(&jam.id).unwrap().unwrap().now_playing_id.as_deref(),
+        h.db.jam_by_id(&jam.id)
+            .unwrap()
+            .unwrap()
+            .now_playing_id
+            .as_deref(),
         Some(first.as_str())
     );
 
     // Three members, so two are needed.
     assert_eq!(h.db.jam_skips_needed(&jam.id).unwrap(), 2);
-    assert!(!h.db.vote_skip(&jam.id, &first, "alpha").unwrap(), "one vote skipped it");
+    assert!(
+        !h.db.vote_skip(&jam.id, &first, "alpha").unwrap(),
+        "one vote skipped it"
+    );
     // The same person again is not a second voice.
-    assert!(!h.db.vote_skip(&jam.id, &first, "alpha").unwrap(), "a repeated vote counted twice");
-    assert!(h.db.vote_skip(&jam.id, &first, "beta").unwrap(), "two of three did not carry it");
+    assert!(
+        !h.db.vote_skip(&jam.id, &first, "alpha").unwrap(),
+        "a repeated vote counted twice"
+    );
+    assert!(
+        h.db.vote_skip(&jam.id, &first, "beta").unwrap(),
+        "two of three did not carry it"
+    );
 
-    let skipped = h.run_as(&h.beta, "mutation { voteSkipJamTrack { nowPlaying { title } } }").await;
+    let skipped = h
+        .run_as(
+            &h.beta,
+            "mutation { voteSkipJamTrack { nowPlaying { title } } }",
+        )
+        .await;
     assert_allowed(&skipped, "voting to skip");
 
     // The clock takes the next one, and the skipped track does not come back.
@@ -1171,9 +1590,13 @@ async fn only_friends_see_a_jam_that_was_opened_up() {
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
     // Closed by default: a friend cannot see it.
-    assert!(h.db.friend_jams("beta").unwrap().is_empty(), "a code-only jam was advertised");
+    assert!(
+        h.db.friend_jams("beta").unwrap().is_empty(),
+        "a code-only jam was advertised"
+    );
 
-    h.db.set_jam_visibility(&jam.id, crate::db_jam::JamVisibility::Friends).unwrap();
+    h.db.set_jam_visibility(&jam.id, crate::db_jam::JamVisibility::Friends)
+        .unwrap();
     let seen = h.db.friend_jams("beta").unwrap();
     assert_eq!(seen.len(), 1, "an opened jam was not offered to a friend");
 
@@ -1185,12 +1608,24 @@ async fn only_friends_see_a_jam_that_was_opened_up() {
 
     // And joining without the code works for the friend, not the stranger.
     let refused = h
-        .run_as(&h.stranger, &format!(r#"mutation {{ joinFriendJam(jamId: "{}") {{ id }} }}"#, jam.id))
+        .run_as(
+            &h.stranger,
+            &format!(
+                r#"mutation {{ joinFriendJam(jamId: "{}") {{ id }} }}"#,
+                jam.id
+            ),
+        )
         .await;
     assert_refused(&refused, "a stranger joining a friend-only jam");
 
     let allowed = h
-        .run_as(&h.beta, &format!(r#"mutation {{ joinFriendJam(jamId: "{}") {{ id }} }}"#, jam.id))
+        .run_as(
+            &h.beta,
+            &format!(
+                r#"mutation {{ joinFriendJam(jamId: "{}") {{ id }} }}"#,
+                jam.id
+            ),
+        )
         .await;
     assert_allowed(&allowed, "a friend joining an opened jam");
 }
@@ -1203,12 +1638,18 @@ async fn a_member_cannot_open_the_jam_to_their_own_friends() {
     h.db.join_jam(&jam.id, "beta").unwrap();
 
     let refused = h
-        .run_as(&h.beta, r#"mutation { setJamVisibility(visibility: "friends") { visibility } }"#)
+        .run_as(
+            &h.beta,
+            r#"mutation { setJamVisibility(visibility: "friends") { visibility } }"#,
+        )
         .await;
     assert_refused(&refused, "a member opening the jam up");
 
     let allowed = h
-        .run_as(&h.alpha, r#"mutation { setJamVisibility(visibility: "friends") { visibility } }"#)
+        .run_as(
+            &h.alpha,
+            r#"mutation { setJamVisibility(visibility: "friends") { visibility } }"#,
+        )
         .await;
     assert_allowed(&allowed, "the creator opening the jam up");
 }
@@ -1233,7 +1674,9 @@ async fn activity_is_gated_separately_from_now_playing_and_stats() {
     );
 
     h.db.set_show_activity("alpha", true).unwrap();
-    let opened = h.run_as(&h.beta, r#"{ friendActivity { summary kind } }"#).await;
+    let opened = h
+        .run_as(&h.beta, r#"{ friendActivity { summary kind } }"#)
+        .await;
     assert_allowed(&opened, "reading the feed once it is opened");
     assert!(
         opened.data.to_string().contains("MILESTONE"),
@@ -1249,7 +1692,9 @@ async fn a_strangers_feed_never_contains_someone_they_are_not_friends_with() {
     h.seed_plays("alpha", "Xtal", "Aphex Twin", 12, 3600);
     h.db.set_show_activity("alpha", true).unwrap();
 
-    let response = h.run_as(&h.stranger, r#"{ friendActivity { username } }"#).await;
+    let response = h
+        .run_as(&h.stranger, r#"{ friendActivity { username } }"#)
+        .await;
     assert_allowed(&response, "a stranger reading their own feed");
     assert!(
         !response.data.to_string().contains("alpha"),
@@ -1329,7 +1774,10 @@ async fn a_recap_of_one_is_still_a_recap() {
     let h = harness();
     h.seed_plays("stranger", "Xtal", "Aphex Twin", 4, 3600);
     let response = h
-        .run_as(&h.stranger, r#"{ circleRecap { members anthem { title plays } } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ circleRecap { members anthem { title plays } } }"#,
+        )
         .await;
     assert_allowed(&response, "a recap with nobody else in it");
     assert!(response.data.to_string().contains("stranger"));
@@ -1348,7 +1796,10 @@ async fn the_trendsetter_is_decided_by_who_was_earliest() {
     h.seed_plays("alpha", "Windowlicker", "Aphex Twin", 20, 86_400);
 
     let response = h
-        .run_as(&h.alpha, r#"{ circleRecap(period: "ALL") { trendsetter { username firsts } } }"#)
+        .run_as(
+            &h.alpha,
+            r#"{ circleRecap(period: "ALL") { trendsetter { username firsts } } }"#,
+        )
         .await;
     assert_allowed(&response, "reading the trendsetter");
     assert!(
@@ -1445,7 +1896,9 @@ async fn a_drop_survives_the_friendship_that_delivered_it() {
 
     assert!(h.db.remove_friend("beta", "alpha").unwrap());
 
-    let inbox = h.run_as(&h.beta, r#"{ inbox { trackTitle fromUser } }"#).await;
+    let inbox = h
+        .run_as(&h.beta, r#"{ inbox { trackTitle fromUser } }"#)
+        .await;
     assert_allowed(&inbox, "reading the inbox after unfriending");
     assert!(
         inbox.data.to_string().contains("Xtal"),
@@ -1474,7 +1927,10 @@ async fn marking_someone_elses_drop_read_is_a_not_found() {
 
     // The sender is not the recipient, so this is not theirs to mark either.
     let by_sender = h
-        .run_as(&h.alpha, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#))
+        .run_as(
+            &h.alpha,
+            &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#),
+        )
         .await;
     assert_allowed(&by_sender, "the call itself succeeds");
     assert!(
@@ -1484,7 +1940,10 @@ async fn marking_someone_elses_drop_read_is_a_not_found() {
     );
 
     let by_recipient = h
-        .run_as(&h.beta, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#),
+        )
         .await;
     assert!(by_recipient.data.to_string().contains("true"));
 }
@@ -1509,7 +1968,9 @@ async fn a_sender_is_never_told_that_their_drop_was_read() {
 
     assert!(h.db.mark_drop_read("beta", &id).unwrap());
 
-    let sent_view = h.run_as(&h.alpha, r#"{ sentDrops { trackTitle readAt } }"#).await;
+    let sent_view = h
+        .run_as(&h.alpha, r#"{ sentDrops { trackTitle readAt } }"#)
+        .await;
     assert_allowed(&sent_view, "reading what you sent");
     assert!(
         sent_view.data.to_string().contains("Xtal"),
@@ -1543,7 +2004,9 @@ async fn archiving_clears_the_inbox_without_deleting_the_row() {
 
     assert!(h.db.archive_drop("beta", &id).unwrap());
 
-    let inbox = h.run_as(&h.beta, r#"{ inbox { trackTitle } unreadDropCount }"#).await;
+    let inbox = h
+        .run_as(&h.beta, r#"{ inbox { trackTitle } unreadDropCount }"#)
+        .await;
     assert!(!inbox.data.to_string().contains("Xtal"));
 
     let sent_view = h.run_as(&h.alpha, r#"{ sentDrops { trackTitle } }"#).await;
@@ -1573,16 +2036,23 @@ async fn you_cannot_drop_a_track_to_yourself() {
 #[tokio::test]
 async fn a_stranger_cannot_read_your_device_keys() {
     let h = harness();
-    h.db.register_device_key("alpha", "phone", "key-phone").unwrap();
+    h.db.register_device_key("alpha", "phone", "key-phone")
+        .unwrap();
 
     let refused = h
-        .run_as(&h.stranger, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#,
+        )
         .await;
     assert_refused(&refused, "a stranger reading a key list");
 
     h.befriend("alpha", "beta");
     let allowed = h
-        .run_as(&h.beta, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .run_as(
+            &h.beta,
+            r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#,
+        )
         .await;
     assert_allowed(&allowed, "a friend reading a key list");
 }
@@ -1592,16 +2062,27 @@ async fn a_stranger_cannot_read_your_device_keys() {
 #[tokio::test]
 async fn you_can_always_read_your_own_device_keys() {
     let h = harness();
-    h.db.register_device_key("alpha", "phone", "key-phone").unwrap();
-    h.db.register_device_key("alpha", "laptop", "key-laptop").unwrap();
+    h.db.register_device_key("alpha", "phone", "key-phone")
+        .unwrap();
+    h.db.register_device_key("alpha", "laptop", "key-laptop")
+        .unwrap();
 
     let response = h
-        .run_as(&h.alpha, r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#)
+        .run_as(
+            &h.alpha,
+            r#"{ deviceKeys(username: "alpha") { deviceId publicKey } }"#,
+        )
         .await;
     assert_allowed(&response, "reading your own key list");
     let rendered = format!("{:?}", response.data);
-    assert!(rendered.contains("phone"), "own list should carry every device: {rendered}");
-    assert!(rendered.contains("laptop"), "own list should carry every device: {rendered}");
+    assert!(
+        rendered.contains("phone"),
+        "own list should carry every device: {rendered}"
+    );
+    assert!(
+        rendered.contains("laptop"),
+        "own list should carry every device: {rendered}"
+    );
 }
 
 /// A friend may hand you a song. A friend may not fill your inbox.
@@ -1647,13 +2128,12 @@ async fn the_unread_count_ignores_read_and_archived_drops() {
     let count = h.run_as(&h.beta, r#"{ unreadDropCount }"#).await;
     assert!(count.data.to_string().contains('3'), "{:?}", count.data);
 
-    let ids: Vec<String> = h
-        .db
-        .inbox("beta", 10, 0)
-        .unwrap()
-        .into_iter()
-        .map(|drop| drop.id)
-        .collect();
+    let ids: Vec<String> =
+        h.db.inbox("beta", 10, 0)
+            .unwrap()
+            .into_iter()
+            .map(|drop| drop.id)
+            .collect();
     h.db.mark_drop_read("beta", &ids[0]).unwrap();
     h.db.archive_drop("beta", &ids[1]).unwrap();
 
@@ -1671,7 +2151,10 @@ async fn only_the_recipient_can_react_to_a_drop() {
     let id = h.drop_a_track("alpha", "beta", "Xtal").await;
 
     let by_sender = h
-        .run_as(&h.alpha, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .run_as(
+            &h.alpha,
+            &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#),
+        )
         .await;
     assert_allowed(&by_sender, "the call itself succeeds");
     assert!(
@@ -1681,7 +2164,10 @@ async fn only_the_recipient_can_react_to_a_drop() {
     );
 
     let by_stranger = h
-        .run_as(&h.stranger, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .run_as(
+            &h.stranger,
+            &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#),
+        )
         .await;
     assert!(
         by_stranger.data.to_string().contains("false"),
@@ -1690,7 +2176,10 @@ async fn only_the_recipient_can_react_to_a_drop() {
     );
 
     let by_recipient = h
-        .run_as(&h.beta, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#),
+        )
         .await;
     assert!(by_recipient.data.to_string().contains("true"));
 }
@@ -1702,14 +2191,25 @@ async fn a_reaction_reaches_the_sender_but_a_read_receipt_still_does_not() {
     h.befriend("alpha", "beta");
     let id = h.drop_a_track("alpha", "beta", "Xtal").await;
 
-    h.run_as(&h.beta, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#)).await;
-    h.run_as(&h.beta, &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#)).await;
+    h.run_as(
+        &h.beta,
+        &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#),
+    )
+    .await;
+    h.run_as(
+        &h.beta,
+        &format!(r#"mutation {{ reactToDrop(id: "{id}", emoji: "🔥") }}"#),
+    )
+    .await;
 
     let seen = h
         .run_as(&h.alpha, r#"{ sentDrops { reaction readAt } }"#)
         .await;
     let body = seen.data.to_string();
-    assert!(body.contains('🔥'), "the sender cannot see the reaction: {body}");
+    assert!(
+        body.contains('🔥'),
+        "the sender cannot see the reaction: {body}"
+    );
     assert!(
         body.contains("readAt\":null") || body.contains("readAt: null"),
         "a read receipt leaked to the sender: {body}"
@@ -1722,10 +2222,17 @@ async fn a_conversation_still_hides_read_receipts_on_your_own_messages() {
     let h = harness();
     h.befriend("alpha", "beta");
     let id = h.drop_a_track("alpha", "beta", "Xtal").await;
-    h.run_as(&h.beta, &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#)).await;
+    h.run_as(
+        &h.beta,
+        &format!(r#"mutation {{ markDropRead(id: "{id}") }}"#),
+    )
+    .await;
 
     let thread = h
-        .run_as(&h.alpha, r#"{ conversation(with: "beta") { fromUser readAt } }"#)
+        .run_as(
+            &h.alpha,
+            r#"{ conversation(with: "beta") { fromUser readAt } }"#,
+        )
         .await;
     assert_allowed(&thread, "reading your own thread");
     let body = thread.data.to_string();
@@ -1743,7 +2250,10 @@ async fn a_conversation_only_ever_contains_the_callers_own_messages() {
     h.drop_a_track("alpha", "beta", "Xtal").await;
 
     let peeked = h
-        .run_as(&h.stranger, r#"{ conversation(with: "beta") { trackTitle } }"#)
+        .run_as(
+            &h.stranger,
+            r#"{ conversation(with: "beta") { trackTitle } }"#,
+        )
         .await;
     assert_allowed(&peeked, "the query itself is not an error");
     assert!(
@@ -1762,7 +2272,10 @@ async fn a_friend_code_is_single_use() {
     let code = h.mint_friend_code(&h.alpha).await;
 
     let first = h
-        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#),
+        )
         .await;
     assert!(
         first.data.to_string().contains("alpha"),
@@ -1772,7 +2285,10 @@ async fn a_friend_code_is_single_use() {
     assert!(h.db.are_friends("alpha", "beta").unwrap());
 
     let second = h
-        .run_as(&h.stranger, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .run_as(
+            &h.stranger,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#),
+        )
         .await;
     assert!(
         second.data.to_string().contains("null"),
@@ -1791,7 +2307,10 @@ async fn minting_a_friend_code_invalidates_the_previous_one() {
     assert_ne!(old, new, "re-minting returned the same code");
 
     let stale = h
-        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{old}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{old}") }}"#),
+        )
         .await;
     assert!(
         stale.data.to_string().contains("null"),
@@ -1809,7 +2328,10 @@ async fn a_revoked_friend_code_stops_working() {
     h.run_as(&h.alpha, r#"mutation { revokeFriendCode }"#).await;
 
     let after = h
-        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#),
+        )
         .await;
     assert!(
         after.data.to_string().contains("null"),
@@ -1827,7 +2349,10 @@ async fn a_friend_code_cannot_be_used_to_get_around_a_block() {
     let code = h.mint_friend_code(&h.alpha).await;
 
     let blocked = h
-        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#),
+        )
         .await;
     assert!(
         blocked.data.to_string().contains("null"),
@@ -1847,7 +2372,10 @@ async fn an_expired_friend_code_is_refused() {
     h.expire_friend_codes();
 
     let after = h
-        .run_as(&h.beta, &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#))
+        .run_as(
+            &h.beta,
+            &format!(r#"mutation {{ redeemFriendCode(code: "{code}") }}"#),
+        )
         .await;
     assert!(
         after.data.to_string().contains("null"),
@@ -1868,13 +2396,35 @@ async fn a_jam_moves_on_from_a_track_with_no_duration() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
-    let (first, _) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "No Duration", "A", None, 0, false, JamMode::Open, None, None)
+    let (first, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "No Duration",
+            "A",
+            None,
+            0,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
-    let (second, _) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
+    let (second, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:2",
+            "Next Up",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());
@@ -1920,13 +2470,35 @@ async fn a_live_track_holds_a_jam_until_it_is_skipped() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
 
-    let (radio, _) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:1", "Some Radio", "A", None, 0, true, JamMode::Open, None, None)
+    let (radio, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:1",
+            "Some Radio",
+            "A",
+            None,
+            0,
+            true,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
-    let (next, _) = h
-        .db
-        .add_jam_track(&jam.id, "alpha", "u:2", "Next Up", "A", None, 1000, false, JamMode::Open, None, None)
+    let (next, _) =
+        h.db.add_jam_track(
+            &jam.id,
+            "alpha",
+            "u:2",
+            "Next Up",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
         .unwrap();
 
     let hub = std::sync::Arc::new(WsHub::new());
@@ -1945,7 +2517,11 @@ async fn a_live_track_holds_a_jam_until_it_is_skipped() {
 
     crate::jam_clock::tick(&h.db, &hub);
     assert_eq!(
-        h.db.jam_by_id(&jam.id).unwrap().unwrap().now_playing_id.as_deref(),
+        h.db.jam_by_id(&jam.id)
+            .unwrap()
+            .unwrap()
+            .now_playing_id
+            .as_deref(),
         Some(radio.as_str()),
         "the clock retired a stream that had not been skipped"
     );
@@ -1957,7 +2533,11 @@ async fn a_live_track_holds_a_jam_until_it_is_skipped() {
 
     crate::jam_clock::tick(&h.db, &hub);
     assert_eq!(
-        h.db.jam_by_id(&jam.id).unwrap().unwrap().now_playing_id.as_deref(),
+        h.db.jam_by_id(&jam.id)
+            .unwrap()
+            .unwrap()
+            .now_playing_id
+            .as_deref(),
         Some(next.as_str()),
         "a skipped stream did not hand the room on"
     );
@@ -1975,7 +2555,9 @@ async fn incognito_closes_now_playing_even_with_the_flag_open() {
     h.db.set_visibility("alpha", true, true).unwrap();
     h.set_playing("alpha", "A Secret Song");
 
-    let open = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let open = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert!(
         open.data.to_string().contains("A Secret Song"),
         "precondition failed: the friend should see this before incognito"
@@ -1983,7 +2565,9 @@ async fn incognito_closes_now_playing_even_with_the_flag_open() {
 
     h.db.set_incognito("alpha", true).unwrap();
 
-    let quiet = h.run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }").await;
+    let quiet = h
+        .run_as(&h.beta, "{ friendsNowPlaying { trackTitle } }")
+        .await;
     assert_allowed(&quiet, "friendsNowPlaying");
     assert_eq!(
         quiet.data.to_string(),
@@ -2017,11 +2601,21 @@ async fn incognito_is_indistinguishable_from_never_having_been_allowed() {
     h.db.set_visibility("alpha", true, true).unwrap();
     h.db.set_incognito("alpha", true).unwrap();
 
-    let friend = h.run_as(&h.beta, r#"{ profile(username: "alpha") { username } }"#).await;
-    let stranger = h.run_as(&h.stranger, r#"{ profile(username: "alpha") { username } }"#).await;
+    let friend = h
+        .run_as(&h.beta, r#"{ profile(username: "alpha") { username } }"#)
+        .await;
+    let stranger = h
+        .run_as(
+            &h.stranger,
+            r#"{ profile(username: "alpha") { username } }"#,
+        )
+        .await;
 
     let message = |r: &async_graphql::Response| {
-        r.errors.first().map(|e| e.message.clone()).unwrap_or_default()
+        r.errors
+            .first()
+            .map(|e| e.message.clone())
+            .unwrap_or_default()
     };
     assert_eq!(
         message(&friend),
@@ -2036,7 +2630,12 @@ async fn you_can_still_see_your_own_profile_while_incognito() {
     let h = harness();
     h.db.set_incognito("alpha", true).unwrap();
 
-    let own = h.run_as(&h.alpha, r#"{ profile(username: "alpha") { username incognito } }"#).await;
+    let own = h
+        .run_as(
+            &h.alpha,
+            r#"{ profile(username: "alpha") { username incognito } }"#,
+        )
+        .await;
     assert_allowed(&own, "own profile while incognito");
     assert!(own.data.to_string().contains("incognito: true"));
 }
@@ -2204,9 +2803,18 @@ async fn a_friend_is_handed_only_the_copy_sealed_to_their_own_device() {
         )
         .await;
     let body = response.data.to_string();
-    assert!(body.contains("for-beta-phone"), "the device's own copy: {body}");
-    assert!(!body.contains("for-beta-laptop"), "another device's copy leaked: {body}");
-    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+    assert!(
+        body.contains("for-beta-phone"),
+        "the device's own copy: {body}"
+    );
+    assert!(
+        !body.contains("for-beta-laptop"),
+        "another device's copy leaked: {body}"
+    );
+    assert!(
+        !body.contains("for-stranger"),
+        "another account's copy leaked: {body}"
+    );
 }
 
 #[tokio::test]
@@ -2264,7 +2872,11 @@ async fn a_stranger_sees_no_sealed_session_at_all() {
     h.set_playing_sealed(
         "alpha",
         "Placeholder",
-        Some(&[Harness::copy_for("stranger", "stranger-phone", "for-stranger")]),
+        Some(&[Harness::copy_for(
+            "stranger",
+            "stranger-phone",
+            "for-stranger",
+        )]),
     );
 
     // Sealing to somebody does not make them a friend. The feed is still the friend list.
@@ -2281,8 +2893,11 @@ async fn a_stranger_sees_no_sealed_session_at_all() {
 async fn sealing_does_not_override_the_now_playing_flag() {
     let h = harness();
     h.befriend("alpha", "beta");
-    h.run_as(&h.alpha, "mutation { setVisibility(showNowPlaying: false) }")
-        .await;
+    h.run_as(
+        &h.alpha,
+        "mutation { setVisibility(showNowPlaying: false) }",
+    )
+    .await;
     h.set_playing_sealed(
         "alpha",
         "Placeholder",
@@ -2414,8 +3029,14 @@ async fn the_friend_list_carries_the_sealed_copy_for_the_asking_device() {
         )
         .await;
     let body = response.data.to_string();
-    assert!(body.contains("for-beta-phone"), "the device's own copy: {body}");
-    assert!(!body.contains("for-beta-laptop"), "another device's copy leaked: {body}");
+    assert!(
+        body.contains("for-beta-phone"),
+        "the device's own copy: {body}"
+    );
+    assert!(
+        !body.contains("for-beta-laptop"),
+        "another device's copy leaked: {body}"
+    );
 }
 
 #[tokio::test]
@@ -2457,7 +3078,10 @@ async fn the_friend_list_still_refuses_a_friend_who_has_not_opted_in() {
         )
         .await;
     let body = response.data.to_string();
-    assert!(!body.contains("for-beta-phone"), "the flag was bypassed: {body}");
+    assert!(
+        !body.contains("for-beta-phone"),
+        "the flag was bypassed: {body}"
+    );
 }
 
 #[tokio::test]
@@ -2486,8 +3110,14 @@ async fn a_listener_is_pushed_the_sealed_copy_addressed_to_them() {
         .find(|f| f.msg_type == "LISTEN_ALONG")
         .expect("the listener was sent no LISTEN_ALONG frame");
     let body = listen_along.payload.to_string();
-    assert!(body.contains("for-beta-phone"), "the listener's own copy: {body}");
-    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+    assert!(
+        body.contains("for-beta-phone"),
+        "the listener's own copy: {body}"
+    );
+    assert!(
+        !body.contains("for-stranger"),
+        "another account's copy leaked: {body}"
+    );
 }
 
 #[tokio::test]
@@ -2515,8 +3145,14 @@ async fn a_presence_frame_carries_only_the_recipients_own_copy() {
         .find(|f| f.msg_type == "FRIEND_PRESENCE")
         .expect("no FRIEND_PRESENCE frame");
     let body = presence.payload.to_string();
-    assert!(body.contains("for-beta-phone"), "the friend's own copy: {body}");
-    assert!(!body.contains("for-stranger"), "another account's copy leaked: {body}");
+    assert!(
+        body.contains("for-beta-phone"),
+        "the friend's own copy: {body}"
+    );
+    assert!(
+        !body.contains("for-stranger"),
+        "another account's copy leaked: {body}"
+    );
 }
 
 /// What a stolen database would show of a sealed session.
@@ -2531,7 +3167,11 @@ async fn a_stolen_database_shows_no_trace_of_a_sealed_session() {
     h.set_playing_sealed(
         "alpha",
         "Private Session",
-        Some(&[Harness::copy_for("beta", "beta-phone", "opaque-bytes-for-beta")]),
+        Some(&[Harness::copy_for(
+            "beta",
+            "beta-phone",
+            "opaque-bytes-for-beta",
+        )]),
     );
 
     let handoff = h.db.get_handoff("alpha").unwrap().expect("a session");
@@ -2548,7 +3188,9 @@ async fn a_stolen_database_shows_no_trace_of_a_sealed_session() {
 
     // And nothing was sealed to anyone who was not asked for.
     assert!(
-        h.db.presence_ciphertexts_to("alpha", "stranger").unwrap().is_empty(),
+        h.db.presence_ciphertexts_to("alpha", "stranger")
+            .unwrap()
+            .is_empty(),
         "a copy exists for an account that is not a friend"
     );
 }

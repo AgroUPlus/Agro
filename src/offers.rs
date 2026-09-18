@@ -89,8 +89,11 @@ fn announce(db: &Db, hub: &Arc<WsHub>, user_id: &str) {
     }
     // Also include any devices from device_holdings
     if let Ok(conn) = db.conn.lock() {
-        if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT device_id FROM device_holdings WHERE user_id = ?1") {
-            if let Ok(rows) = stmt.query_map(rusqlite::params![user_id], |r| r.get::<_, String>(0)) {
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT DISTINCT device_id FROM device_holdings WHERE user_id = ?1")
+        {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![user_id], |r| r.get::<_, String>(0))
+            {
                 for r in rows.flatten() {
                     device_ids.insert(r);
                 }

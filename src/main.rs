@@ -1,24 +1,23 @@
-mod oidc;
-mod totp;
 mod audit;
-mod credentials;
 mod auth;
+mod catalog_boundary_tests;
+mod cover_lookup;
+mod credentials;
 mod db;
-mod db_identity;
-mod db_library;
+mod db_acoustic;
 mod db_artists;
 mod db_catalog;
 mod db_drops;
 mod db_feed;
+mod db_identity;
 mod db_jam;
+mod db_library;
 mod db_playlists;
-mod db_acoustic;
 mod db_popularity;
 mod db_presence;
 mod db_social;
-mod catalog_boundary_tests;
-mod guest_boundary_tests;
 mod embedded_dashboard;
+mod guest_boundary_tests;
 mod importer;
 mod jam_clock;
 mod library;
@@ -26,26 +25,29 @@ mod listen;
 mod login;
 mod norm;
 mod offers;
+mod oidc;
 mod openapi;
 mod passphrase;
 mod plugins;
+mod popular;
 mod proxy;
 mod rate_limit;
+mod relay;
 mod schema;
+mod schema_acoustic;
 mod schema_artists;
 mod schema_catalog;
 mod schema_drops;
 mod schema_feed;
 mod schema_jam;
 mod schema_playlists;
-mod schema_acoustic;
 mod schema_popularity;
 mod schema_social;
-mod social_boundary_tests;
 mod share;
+mod social_boundary_tests;
 mod stats;
 mod storage;
-mod relay;
+mod totp;
 mod ws;
 
 use async_graphql::Schema;
@@ -83,6 +85,11 @@ pub struct AppState {
     pub setup_token: Arc<auth::SetupToken>,
     /// Throttles the two endpoints that can be reached without a token.
     pub rate_limiter: Arc<login::RateLimiter>,
+    /// Throttles the public, unauthenticated popularity chart. Deliberately separate from
+    /// `rate_limiter`: that one is budgeted for login brute-force guesses (ten per five minutes)
+    /// and keyed only by IP, so sharing it would let a handful of chart page-views lock a visitor
+    /// out of signing in from the same address.
+    pub popular_rate_limiter: Arc<rate_limit::FixedWindow>,
     /// SSO sign-ins waiting for the browser to come back. See [`oidc::FlowStore`].
     pub oidc_flows: Arc<oidc::FlowStore>,
 }
@@ -134,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         http_client,
         setup_token: setup_token.clone(),
         rate_limiter: Arc::new(login::RateLimiter::new()),
+        popular_rate_limiter: Arc::new(rate_limit::FixedWindow::new()),
         oidc_flows: Arc::new(oidc::FlowStore::new()),
     };
 
@@ -146,23 +154,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let schema: AgroSchema = Schema::build(Query::default(), Mutation::default(), async_graphql::EmptySubscription)
-        .data(db.clone())
-        .data(ws_hub.clone())
-        .data(state.offers.clone())
-        // Resolvers need to know whether this deployment archives at all, and where — that is what
-        // decides which sync mode the clients are told to run in.
-        .data(state.storage.clone())
-        .data(setup_token.clone())
-        // Per-account ceiling on catalogue publishing. Lives with the schema rather than in
-        // `AppState` because the only thing that spends it is a resolver.
-        .data(schema_catalog::PublishQuota::default())
-        // A public endpoint with no depth or complexity limit is a denial-of-service primitive:
-        // GraphQL lets one request ask for a deeply nested or heavily aliased tree, and the cost
-        // is paid by the server before any resolver decides the caller was not allowed to ask.
-        .limit_depth(12)
-        .limit_complexity(500)
-        .finish();
+    let schema: AgroSchema = Schema::build(
+        Query::default(),
+        Mutation::default(),
+        async_graphql::EmptySubscription,
+    )
+    .data(db.clone())
+    .data(ws_hub.clone())
+    .data(state.offers.clone())
+    // Resolvers need to know whether this deployment archives at all, and where — that is what
+    // decides which sync mode the clients are told to run in.
+    .data(state.storage.clone())
+    .data(setup_token.clone())
+    // Per-account ceiling on catalogue publishing. Lives with the schema rather than in
+    // `AppState` because the only thing that spends it is a resolver.
+    .data(schema_catalog::PublishQuota::default())
+    // A public endpoint with no depth or complexity limit is a denial-of-service primitive:
+    // GraphQL lets one request ask for a deeply nested or heavily aliased tree, and the cost
+    // is paid by the server before any resolver decides the caller was not allowed to ask.
+    .limit_depth(12)
+    .limit_complexity(500)
+    .finish();
 
     // The dashboard is served from this same origin, so a wildcard buys nothing and lets any page
     // on the internet make authenticated-looking requests from a visitor's browser.
@@ -191,9 +203,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db = db.clone();
             let hub = ws_hub.clone();
             tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
-                    jam_clock::TICK_SECS,
-                ));
+                let mut ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(jam_clock::TICK_SECS));
                 loop {
                     ticker.tick().await;
                     jam_clock::tick(&db, &hub);
@@ -242,7 +253,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/v1/relay/{session_id}/send",
             post(relay::send_relay).layer(DefaultBodyLimit::disable()),
         )
-        .route("/api/v1/relay/{session_id}/receive", get(relay::receive_relay))
+        .route(
+            "/api/v1/relay/{session_id}/receive",
+            get(relay::receive_relay),
+        )
         .route("/api/v1/proxy", axum::routing::any(proxy::proxy_handler))
         .route("/api/v1/oidc/link", get(oidc::start_link))
         .layer(axum::middleware::from_fn_with_state(
@@ -271,12 +285,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/share/{token}", get(share::share_handler))
         // Public by design: a shared link is opened by someone with no account here.
         .route("/listen", get(listen::listen_handler))
+        // Public by design, for the docs site's logged-out Charts page — see `popular`'s module
+        // doc for why this discloses nothing the GraphQL query's auth check was protecting. A
+        // route-scoped `Any`-origin CORS layer rather than widening the global `cors` layer below,
+        // which is deliberately single-origin and guards every *authenticated* route.
+        .route(
+            "/api/v1/popular",
+            get(popular::popular_handler)
+                .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any)),
+        )
         // Documentation, not data: safe to leave public. GraphQL's SDL describes the shape of the
         // schema, not any account's contents, and GraphiQL still needs a real bearer token typed
         // into its headers panel before it can query anything.
         .route("/graphql/sdl", get(graphql_sdl))
         .route("/graphql/playground", get(graphql_playground))
-        .merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", openapi::ApiDoc::openapi()))
+        .merge(
+            SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", openapi::ApiDoc::openapi()),
+        )
         .fallback(embedded_dashboard::static_dashboard_handler)
         // Without this a single request can stream unbounded bytes into any JSON handler. The
         // upload routes opt back out, because that is exactly what they are for.
@@ -391,7 +416,10 @@ async fn security_headers(
              frame-ancestors 'none'",
         ),
     );
-    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
     headers.insert(
         "referrer-policy",
@@ -409,7 +437,10 @@ async fn security_headers(
 /// `GET /graphql/sdl` — the schema definition language, for anyone who wants a typed client.
 async fn graphql_sdl(schema: axum::Extension<AgroSchema>) -> impl axum::response::IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         schema.sdl(),
     )
 }
