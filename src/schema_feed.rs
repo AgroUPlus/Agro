@@ -146,16 +146,40 @@ impl FeedQuery {
     /// overlaps, which is the same kind of disclosure the statistics page already makes, and asking
     /// people to open a second switch for it would mean an empty recap for everyone who had
     /// already said yes to the first.
+    ///
+    /// `year` overrides `period` with a **calendar** year read in `utc_offset_minutes`, which is
+    /// what Agro Replay asks for. `period: "YEAR"` cannot serve that: it means the last 365 days,
+    /// so a recap of 2026 opened in February would be half about 2027.
     async fn circle_recap(
         &self,
         ctx: &Context<'_>,
         period: Option<String>,
+        year: Option<i32>,
+        utc_offset_minutes: Option<i32>,
     ) -> async_graphql::Result<CircleRecapPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
         let now = chrono::Utc::now().timestamp();
-        let period = period.unwrap_or_else(|| "MONTH".to_string()).to_uppercase();
-        let since = crate::stats::period_start(&period, now);
+
+        // A calendar year needs both edges. A rolling period needs only the near one, because its
+        // far edge is now — which is why `until` is an `Option` rather than a very large date.
+        let (period, since, until) = match year {
+            Some(year) => {
+                let offset = utc_offset_minutes.unwrap_or(0);
+                let (start, end) = crate::stats_wrapped::year_bounds(year, offset)
+                    .ok_or_else(|| async_graphql::Error::new("That is not a year Agro can read"))?;
+                (
+                    year.to_string(),
+                    Some(start),
+                    crate::stats::parse_time(&end),
+                )
+            }
+            None => {
+                let period = period.unwrap_or_else(|| "MONTH".to_string()).to_uppercase();
+                let since = crate::stats::period_start(&period, now);
+                (period, since, None)
+            }
+        };
 
         // The caller is always in their own recap; their own data needs no permission.
         let mut members = vec![authed.username().to_string()];
@@ -175,10 +199,16 @@ impl FeedQuery {
         // rows were in the window.
         let mut histories: Vec<(String, Vec<crate::db::ScrobbleRow>)> = Vec::new();
         for member in &members {
-            histories.push((
-                member.clone(),
-                db.scrobble_rows(member, None, since.as_deref())?,
-            ));
+            let mut rows = db.scrobble_rows(member, None, since.as_deref())?;
+            // The far edge is applied here rather than in SQL because `scrobble_rows` takes only a
+            // lower bound. A row whose timestamp will not parse is kept, matching what every other
+            // reader of these rows does with one.
+            if let Some(until) = until {
+                rows.retain(|row| {
+                    crate::stats::parse_time(&row.played_at).is_none_or(|at| at < until)
+                });
+            }
+            histories.push((member.clone(), rows));
         }
 
         Ok(CircleRecapPayload {
