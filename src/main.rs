@@ -165,6 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .data(db.clone())
     .data(ws_hub.clone())
     .data(state.offers.clone())
+    // `AppState` itself: `schema_popularity` and `schema_acoustic` resolvers ask the context
+    // for the whole struct rather than one field, and nothing else registered it. Without this,
+    // every `ctx.data::<AppState>()` in those resolvers fails with "Data `AppState` does not
+    // exist" — silently breaking the popularity contributor and acoustic search.
+    .data(state.clone())
     // Resolvers need to know whether this deployment archives at all, and where — that is what
     // decides which sync mode the clients are told to run in.
     .data(state.storage.clone())
