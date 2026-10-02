@@ -5,6 +5,7 @@ use async_graphql::{Context, InputObject, Object, SimpleObject};
 use crate::db::Db;
 use crate::db_playlists::{NewPlaylistItem, Playlist, PlaylistItem};
 use crate::importer;
+use crate::playlist_visibility::PlaylistVisibility;
 use crate::schema::{bounded, caller, forbidden};
 
 #[derive(SimpleObject, Clone)]
@@ -29,6 +30,8 @@ pub struct PlaylistPayload {
     pub title: String,
     pub description: Option<String>,
     pub is_public: bool,
+    /// Who can open it. `isPublic` stays for clients that predate the three levels.
+    pub visibility: PlaylistVisibility,
     pub created_at: String,
     pub updated_at: String,
     pub item_count: i32,
@@ -64,12 +67,14 @@ fn to_item_payload(item: PlaylistItem) -> PlaylistItemPayload {
 fn to_playlist_payload(db: &Db, p: Playlist) -> async_graphql::Result<PlaylistPayload> {
     let items = db.get_playlist_items(&p.id)?;
     let item_count = items.len() as i32;
+    let visibility = p.visibility();
     Ok(PlaylistPayload {
         id: p.id,
         user_id: p.user_id,
         title: p.title,
         description: p.description,
         is_public: p.is_public,
+        visibility,
         created_at: p.created_at,
         updated_at: p.updated_at,
         item_count,
@@ -77,13 +82,23 @@ fn to_playlist_payload(db: &Db, p: Playlist) -> async_graphql::Result<PlaylistPa
     })
 }
 
+/// The level a client asked for: `visibility` when it knows the three levels, otherwise the
+/// `isPublic` boolean every client has always sent. Nothing asked for means private.
+fn requested_visibility(
+    visibility: Option<PlaylistVisibility>,
+    is_public: Option<bool>,
+) -> PlaylistVisibility {
+    visibility.unwrap_or_else(|| PlaylistVisibility::from_public_flag(is_public.unwrap_or(false)))
+}
+
 #[derive(Default)]
 pub struct PlaylistsQuery;
 
 #[Object]
 impl PlaylistsQuery {
-    /// Lists all playlists accessible to the caller: their own private/public playlists
-    /// plus all public playlists on the server.
+    /// Lists the playlists the caller can open and find: their own, every public one on the
+    /// server, and the friends-only ones their accepted friends have shared. A private playlist
+    /// is never listed for anyone but its owner.
     async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<PlaylistPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -99,7 +114,17 @@ impl PlaylistsQuery {
 
         for p in public_lists {
             if !seen.contains(&p.id) {
+                seen.insert(p.id.clone());
                 user_lists.push(p);
+            }
+        }
+
+        for friend in db.friends(authed.username())? {
+            for p in db.list_friends_only_playlists(&friend.username)? {
+                if !seen.contains(&p.id) && db.can_view_playlist(&p, authed.username())? {
+                    seen.insert(p.id.clone());
+                    user_lists.push(p);
+                }
             }
         }
 
@@ -110,7 +135,8 @@ impl PlaylistsQuery {
         Ok(payloads)
     }
 
-    /// Fetches a single playlist by ID if it belongs to the caller or is marked public.
+    /// Fetches a single playlist by ID if the caller may open it: they own it, it is public, or it
+    /// is friends-only and they are an accepted friend of its owner.
     async fn playlist(
         &self,
         ctx: &Context<'_>,
@@ -123,9 +149,9 @@ impl PlaylistsQuery {
             .get_playlist(&id)?
             .ok_or_else(|| async_graphql::Error::new("playlist not found"))?;
 
-        if !playlist.is_public && playlist.user_id != authed.username() {
+        if !db.can_view_playlist(&playlist, authed.username())? {
             return Err(forbidden(
-                "you do not have permission to view this private playlist",
+                "you do not have permission to view this playlist",
             ));
         }
 
@@ -145,6 +171,7 @@ impl PlaylistsMutation {
         title: String,
         description: Option<String>,
         is_public: Option<bool>,
+        visibility: Option<PlaylistVisibility>,
     ) -> async_graphql::Result<PlaylistPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -159,7 +186,7 @@ impl PlaylistsMutation {
             authed.username(),
             &clean_title,
             clean_desc.as_deref(),
-            is_public.unwrap_or(false),
+            requested_visibility(visibility, is_public),
         )?;
 
         to_playlist_payload(db, playlist)
@@ -222,17 +249,25 @@ impl PlaylistsMutation {
         Ok(db.remove_playlist_item(&playlist_id, &item_id)?)
     }
 
-    /// Updates playlist visibility (public vs private).
+    /// Sets who can open a playlist: `visibility`, or the older `isPublic` boolean. Owner only.
     async fn update_playlist_visibility(
         &self,
         ctx: &Context<'_>,
         playlist_id: String,
-        is_public: bool,
+        is_public: Option<bool>,
+        visibility: Option<PlaylistVisibility>,
     ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
 
-        Ok(db.update_playlist_visibility(&playlist_id, authed.username(), is_public)?)
+        if visibility.is_none() && is_public.is_none() {
+            return Err(async_graphql::Error::new("give visibility or isPublic"));
+        }
+        Ok(db.update_playlist_visibility(
+            &playlist_id,
+            authed.username(),
+            requested_visibility(visibility, is_public),
+        )?)
     }
 
     /// Deletes a playlist.
@@ -255,6 +290,7 @@ impl PlaylistsMutation {
         url: String,
         title_override: Option<String>,
         is_public: Option<bool>,
+        visibility: Option<PlaylistVisibility>,
     ) -> async_graphql::Result<PlaylistPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
@@ -268,7 +304,7 @@ impl PlaylistsMutation {
             authed.username(),
             &title,
             imported.description.as_deref(),
-            is_public.unwrap_or(false),
+            requested_visibility(visibility, is_public),
         )?;
 
         if !imported.tracks.is_empty() {

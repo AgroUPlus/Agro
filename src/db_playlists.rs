@@ -10,6 +10,7 @@ use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
 use crate::norm;
+use crate::playlist_visibility::PlaylistVisibility;
 
 #[derive(Clone, Debug)]
 pub struct Playlist {
@@ -18,8 +19,25 @@ pub struct Playlist {
     pub title: String,
     pub description: Option<String>,
     pub is_public: bool,
+    /// Open to the owner's accepted friends. Meaningless once `is_public` is set.
+    pub friends_only: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// A `playlists` row selected as `id, user_id, title, description, is_public, friends_only,
+/// created_at, updated_at` — the one column order every playlist query uses.
+fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
+    Ok(Playlist {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        title: row.get(2)?,
+        description: row.get(3)?,
+        is_public: row.get::<_, i32>(4)? != 0,
+        friends_only: row.get::<_, i32>(5)? != 0,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -54,16 +72,17 @@ impl Db {
         user_id: &str,
         title: &str,
         description: Option<&str>,
-        is_public: bool,
+        visibility: PlaylistVisibility,
     ) -> Result<Playlist> {
         let conn = self.conn.lock().unwrap();
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
+        let (is_public, friends_only) = visibility.flags();
 
         conn.execute(
-            "INSERT INTO playlists (id, user_id, title, description, is_public, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, user_id, title, description, is_public as i32, now, now],
+            "INSERT INTO playlists (id, user_id, title, description, is_public, friends_only, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, user_id, title, description, is_public as i32, friends_only as i32, now, now],
         )?;
 
         Ok(Playlist {
@@ -72,6 +91,7 @@ impl Db {
             title: title.to_string(),
             description: description.map(|s| s.to_string()),
             is_public,
+            friends_only,
             created_at: now.clone(),
             updated_at: now,
         })
@@ -81,43 +101,22 @@ impl Db {
     pub fn get_playlist(&self, id: &str) -> Result<Option<Playlist>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, created_at, updated_at
+            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
              FROM playlists WHERE id = ?1",
         )?;
 
-        stmt.query_row(params![id], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })
-        .optional()
+        stmt.query_row(params![id], playlist_from_row).optional()
     }
 
     /// Lists playlists owned by the user.
     pub fn list_user_playlists(&self, user_id: &str) -> Result<Vec<Playlist>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, created_at, updated_at
+            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
              FROM playlists WHERE user_id = ?1 ORDER BY updated_at DESC",
         )?;
 
-        let rows = stmt.query_map(params![user_id], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![user_id], playlist_from_row)?;
 
         let mut res = Vec::new();
         for r in rows {
@@ -130,21 +129,29 @@ impl Db {
     pub fn list_public_playlists(&self) -> Result<Vec<Playlist>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, created_at, updated_at
+            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
              FROM playlists WHERE is_public = 1 ORDER BY updated_at DESC",
         )?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
+        let rows = stmt.query_map([], playlist_from_row)?;
+
+        let mut res = Vec::new();
+        for r in rows {
+            res.push(r?);
+        }
+        Ok(res)
+    }
+
+    /// The playlists `owner` has shared with friends only. Not those that are public or private.
+    pub fn list_friends_only_playlists(&self, owner: &str) -> Result<Vec<Playlist>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
+             FROM playlists WHERE user_id = ?1 AND friends_only = 1 AND is_public = 0
+             ORDER BY updated_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![owner], playlist_from_row)?;
 
         let mut res = Vec::new();
         for r in rows {
@@ -338,18 +345,26 @@ impl Db {
         Ok(count > 0)
     }
 
-    /// Updates the public/private visibility of a playlist.
+    /// Sets who can open a playlist. Only its owner can; anyone else changes nothing and gets `false`.
     pub fn update_playlist_visibility(
         &self,
         playlist_id: &str,
         user_id: &str,
-        is_public: bool,
+        visibility: PlaylistVisibility,
     ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
+        let (is_public, friends_only) = visibility.flags();
         let count = conn.execute(
-            "UPDATE playlists SET is_public = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
-            params![is_public as i32, now, playlist_id, user_id],
+            "UPDATE playlists SET is_public = ?1, friends_only = ?2, updated_at = ?3
+              WHERE id = ?4 AND user_id = ?5",
+            params![
+                is_public as i32,
+                friends_only as i32,
+                now,
+                playlist_id,
+                user_id
+            ],
         )?;
         Ok(count > 0)
     }
@@ -374,7 +389,12 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
 
         let pl = db
-            .create_playlist("alpha", "Road Trip", Some("Summer bops"), false)
+            .create_playlist(
+                "alpha",
+                "Road Trip",
+                Some("Summer bops"),
+                PlaylistVisibility::Private,
+            )
             .unwrap();
         assert_eq!(pl.title, "Road Trip");
         assert!(!pl.is_public);
@@ -424,7 +444,7 @@ mod tests {
 
         // Visibility toggle
         assert!(db
-            .update_playlist_visibility(&pl.id, "alpha", true)
+            .update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Public)
             .unwrap());
         let public_lists = db.list_public_playlists().unwrap();
         assert_eq!(public_lists.len(), 1);

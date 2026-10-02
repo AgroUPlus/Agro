@@ -1066,6 +1066,12 @@ const MIGRATIONS: &[&str] = &[
     // never carries an account id and never exposes a row below the exposure floor, so this switch
     // controls disclosure of aggregate taste, not identity. There is nothing under it to leak.
     "ALTER TABLE users ADD COLUMN popular_opt_in INTEGER NOT NULL DEFAULT 1;",
+    // 49 — a playlist can be shared with friends only.
+    //
+    // `is_public` stays the answer to "can every account open this"; this is the step between that
+    // and owner-only. Defaults to 0, so every playlist that existed keeps exactly the audience it
+    // had, and a new one is closed until someone opens it — see `playlist_visibility`.
+    "ALTER TABLE playlists ADD COLUMN friends_only INTEGER NOT NULL DEFAULT 0;",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -3738,6 +3744,8 @@ mod migration_order_tests {
         "1d4f6a273e4bcf5b",
         "d5bc8bb460c3e9c5",
         "549e6b2be0e83b04",
+        "7ba7fb712ebb777d",
+        "0843bda0607e7dc0",
     ];
 
     fn digest(migration: &str) -> String {
