@@ -30,6 +30,7 @@ mod oidc;
 mod openapi;
 mod passphrase;
 mod plugins;
+mod playlist_visibility;
 mod popular;
 mod proxy;
 mod rate_limit;
