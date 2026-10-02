@@ -59,6 +59,7 @@ GET /listen?<target>[&s=<speed>&p=<pitch>]
 | `id` | Agro short-link UID | Minted by `createShortLink`. Resolved by `resolveShortLink`. Preferred whenever Agro is paired: it keeps raw URLs and video ids out of the query string, and it is the only form Agro's link manager can list, count or revoke. |
 | `v` | YouTube video id | Exactly **11** characters of URL-safe base64. Carried in the open — it is public already, and it is what makes a shared link readable. |
 | `u` | Any other track URL, percent-encoded | Checked against the allowlist in §5 before use. |
+| `pl` | Agro playlist id (a UUID) | A playlist published to this server. The forwarder MUST refuse anything that is not a UUID, MUST NOT look the id up, and MUST NOT show anything about the playlist: who may open it is decided when the app fetches it with the visitor's own account (§7a). |
 
 A forwarder that receives none of these, or more than one, MUST refuse (§6).
 
@@ -154,6 +155,22 @@ intent://listen?<rebuilt>#Intent;scheme=wanda;package=com.wander.android;S.brows
 A receiver MUST accept a link on any host it mints on (§2) — its own domain *and* its Agro
 server, over `http` or `https` — or it will mint links it cannot open.
 
+### 7a. Playlists
+
+A `pl` target is handed to the app as its own playlist link rather than through `wanda://listen`:
+
+```
+wanda://playlist?agro=<id>
+intent://playlist?agro=<id>#Intent;scheme=wanda;package=com.wander.android;S.browser_fallback_url=<install page>;end
+```
+
+There is no web target to fall back to, so the fallback is a fixed install page, never an address
+taken from the link. `s` and `p` do not apply.
+
+A minter SHOULD mint a `pl` link on the Agro server's own address (or the domain configured on
+that server), not on a device-only domain: a static forwarder cannot serve a page for a playlist
+it has no server behind.
+
 ---
 
 ## 8. Privacy
@@ -172,7 +189,7 @@ server, over `http` or `https` — or it will mint links it cannot open.
 | Rule | Wanda | Agro | frwd.top |
 |---|---|---|---|
 | §2 tier order | ✅ `shareBase()` | n/a | n/a |
-| §3.1 target params | ✅ | ✅ | ✅ |
+| §3.1 target params | ✅ | ✅ | ✅ (no `pl`, see §7a) |
 | §3.2 `s`/`p` bounds | ✅ `SpeedAndPitch.RANGE` | ✅ `RATE_RANGE` | ✅ `rebuiltSearch()` |
 | §4 rebuild not pass-through | n/a | ✅ | ✅ `rebuiltSearch()` |
 | §5 allowlist | ✅ `isAllowed()` | ✅ `resolve()` | ✅ `ALLOWED_HOSTS` |

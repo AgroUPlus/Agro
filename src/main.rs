@@ -23,6 +23,7 @@ mod importer;
 mod jam_clock;
 mod library;
 mod listen;
+mod listen_playlist;
 mod login;
 mod norm;
 mod offers;

@@ -48,6 +48,8 @@ pub struct ListenParams {
     v: Option<String>,
     /// Any other track link, percent-encoded. Checked against the allowlist before it is used.
     u: Option<String>,
+    /// A playlist published to this server, by id. See `listen_playlist`.
+    pl: Option<String>,
     /// Playback rate the sharer was listening at, so the link plays what they meant.
     s: Option<f32>,
     /// Pitch, independent of rate. Both are bounded to what the player will accept.
@@ -120,6 +122,16 @@ pub async fn listen_handler(
     Query(params): Query<ListenParams>,
     State(state): State<AppState>,
 ) -> Response {
+    // Exactly one target (§3.1): a playlist id beside a track target is refused, not picked from.
+    if let Some(playlist) = params.pl.as_deref() {
+        let alone = params.id.is_none() && params.v.is_none() && params.u.is_none();
+        return if alone && crate::listen_playlist::is_playlist_id(playlist) {
+            crate::listen_playlist::page(playlist)
+        } else {
+            refusal()
+        };
+    }
+
     let target = match resolve(&params, &state) {
         Some(target) => target,
         None => return refusal(),
