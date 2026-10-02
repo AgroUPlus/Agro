@@ -388,7 +388,13 @@ impl Db {
         let count = conn.execute(
             "UPDATE playlists SET is_public = ?1, friends_only = ?2, updated_at = ?3
               WHERE id = ?4 AND user_id = ?5",
-            params![is_public as i32, friends_only as i32, now, playlist_id, user_id],
+            params![
+                is_public as i32,
+                friends_only as i32,
+                now,
+                playlist_id,
+                user_id
+            ],
         )?;
         Ok(count > 0)
     }
@@ -413,7 +419,12 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
 
         let pl = db
-            .create_playlist("alpha", "Road Trip", Some("Summer bops"), PlaylistVisibility::Private)
+            .create_playlist(
+                "alpha",
+                "Road Trip",
+                Some("Summer bops"),
+                PlaylistVisibility::Private,
+            )
             .unwrap();
         assert_eq!(pl.title, "Road Trip");
         assert!(!pl.is_public);

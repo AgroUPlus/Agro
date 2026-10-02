@@ -92,14 +92,23 @@ mod tests {
             PlaylistVisibility::Public,
         ] {
             let (is_public, friends_only) = level.flags();
-            assert_eq!(PlaylistVisibility::from_flags(is_public, friends_only), level);
+            assert_eq!(
+                PlaylistVisibility::from_flags(is_public, friends_only),
+                level
+            );
         }
     }
 
     #[test]
     fn the_original_boolean_still_means_public_or_private() {
-        assert_eq!(PlaylistVisibility::from_public_flag(true), PlaylistVisibility::Public);
-        assert_eq!(PlaylistVisibility::from_public_flag(false), PlaylistVisibility::Private);
+        assert_eq!(
+            PlaylistVisibility::from_public_flag(true),
+            PlaylistVisibility::Public
+        );
+        assert_eq!(
+            PlaylistVisibility::from_public_flag(false),
+            PlaylistVisibility::Private
+        );
     }
 
     #[test]
@@ -112,7 +121,10 @@ mod tests {
         ] {
             let made = playlist(&db, "alpha", level);
             assert_eq!(made.visibility(), level);
-            assert_eq!(db.get_playlist(&made.id).unwrap().unwrap().visibility(), level);
+            assert_eq!(
+                db.get_playlist(&made.id).unwrap().unwrap().visibility(),
+                level
+            );
         }
     }
 
@@ -134,15 +146,24 @@ mod tests {
         assert!(!db.can_view_playlist(&pl, "beta").unwrap(), "a stranger");
 
         db.send_friend_request("beta", "alpha").unwrap();
-        assert!(!db.can_view_playlist(&pl, "beta").unwrap(), "a request not yet accepted");
+        assert!(
+            !db.can_view_playlist(&pl, "beta").unwrap(),
+            "a request not yet accepted"
+        );
 
         db.accept_friend_request("alpha", "beta").unwrap();
-        assert!(db.can_view_playlist(&pl, "beta").unwrap(), "an accepted friend");
+        assert!(
+            db.can_view_playlist(&pl, "beta").unwrap(),
+            "an accepted friend"
+        );
         assert!(db.can_view_playlist(&pl, "alpha").unwrap(), "the owner");
         assert!(!db.can_view_playlist(&pl, "gamma").unwrap(), "someone else");
 
         db.remove_friend("alpha", "beta").unwrap();
-        assert!(!db.can_view_playlist(&pl, "beta").unwrap(), "after unfriending");
+        assert!(
+            !db.can_view_playlist(&pl, "beta").unwrap(),
+            "after unfriending"
+        );
     }
 
     #[test]
@@ -159,11 +180,15 @@ mod tests {
         befriend(&db, "alpha", "beta");
         let pl = playlist(&db, "alpha", PlaylistVisibility::Private);
 
-        assert!(db.update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Friends).unwrap());
+        assert!(db
+            .update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Friends)
+            .unwrap());
         let now = db.get_playlist(&pl.id).unwrap().unwrap();
         assert!(db.can_view_playlist(&now, "beta").unwrap());
 
-        assert!(db.update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Private).unwrap());
+        assert!(db
+            .update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Private)
+            .unwrap());
         let back = db.get_playlist(&pl.id).unwrap().unwrap();
         assert!(!db.can_view_playlist(&back, "beta").unwrap());
     }
@@ -173,8 +198,13 @@ mod tests {
         let db = Db::new_in_memory().unwrap();
         let pl = playlist(&db, "alpha", PlaylistVisibility::Private);
 
-        assert!(!db.update_playlist_visibility(&pl.id, "beta", PlaylistVisibility::Public).unwrap());
-        assert_eq!(db.get_playlist(&pl.id).unwrap().unwrap().visibility(), PlaylistVisibility::Private);
+        assert!(!db
+            .update_playlist_visibility(&pl.id, "beta", PlaylistVisibility::Public)
+            .unwrap());
+        assert_eq!(
+            db.get_playlist(&pl.id).unwrap().unwrap().visibility(),
+            PlaylistVisibility::Private
+        );
     }
 
     #[test]
@@ -187,6 +217,9 @@ mod tests {
 
         let listed = db.list_friends_only_playlists("alpha").unwrap();
 
-        assert_eq!(listed.iter().map(|p| p.id.clone()).collect::<Vec<_>>(), vec![shared.id]);
+        assert_eq!(
+            listed.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
+            vec![shared.id]
+        );
     }
 }
