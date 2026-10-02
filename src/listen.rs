@@ -134,7 +134,21 @@ pub async fn listen_handler(
 
     let target = match resolve(&params, &state) {
         Some(target) => target,
-        None => return refusal(),
+        // A link swept for going unused says so (§6a); anything else gets the refusal that says
+        // nothing (§6). A failed lookup is the refusal too — it must not read as "deleted".
+        None => {
+            let retired = params.id.as_deref().is_some_and(|id| {
+                state.db.short_link_retired(id).unwrap_or_else(|e| {
+                    tracing::warn!("listen: tombstone lookup failed: {e}");
+                    false
+                })
+            });
+            return if retired {
+                crate::listen_retired::page()
+            } else {
+                refusal()
+            };
+        }
     };
 
     let mut search_params = if let Some(id) = &params.id {
