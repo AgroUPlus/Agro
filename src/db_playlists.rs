@@ -25,6 +25,21 @@ pub struct Playlist {
     pub updated_at: String,
 }
 
+/// A `playlists` row selected as `id, user_id, title, description, is_public, friends_only,
+/// created_at, updated_at` — the one column order every playlist query uses.
+fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
+    Ok(Playlist {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        title: row.get(2)?,
+        description: row.get(3)?,
+        is_public: row.get::<_, i32>(4)? != 0,
+        friends_only: row.get::<_, i32>(5)? != 0,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct PlaylistItem {
     pub id: String,
@@ -90,19 +105,7 @@ impl Db {
              FROM playlists WHERE id = ?1",
         )?;
 
-        stmt.query_row(params![id], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                friends_only: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })
-        .optional()
+        stmt.query_row(params![id], playlist_from_row).optional()
     }
 
     /// Lists playlists owned by the user.
@@ -113,18 +116,7 @@ impl Db {
              FROM playlists WHERE user_id = ?1 ORDER BY updated_at DESC",
         )?;
 
-        let rows = stmt.query_map(params![user_id], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                friends_only: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![user_id], playlist_from_row)?;
 
         let mut res = Vec::new();
         for r in rows {
@@ -141,18 +133,7 @@ impl Db {
              FROM playlists WHERE is_public = 1 ORDER BY updated_at DESC",
         )?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                friends_only: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map([], playlist_from_row)?;
 
         let mut res = Vec::new();
         for r in rows {
@@ -170,18 +151,7 @@ impl Db {
              ORDER BY updated_at DESC",
         )?;
 
-        let rows = stmt.query_map(params![owner], |row| {
-            Ok(Playlist {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                is_public: row.get::<_, i32>(4)? != 0,
-                friends_only: row.get::<_, i32>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![owner], playlist_from_row)?;
 
         let mut res = Vec::new();
         for r in rows {
