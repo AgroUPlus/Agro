@@ -1,3 +1,7 @@
+// `MergedObject` nests one future per merged object when it resolves a field, and the schema roots
+// merge over twenty each. The default limit of 128 is not deep enough to lay those futures out.
+#![recursion_limit = "256"]
+
 mod audit;
 mod auth;
 mod catalog_boundary_tests;
