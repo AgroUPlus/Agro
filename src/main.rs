@@ -16,6 +16,7 @@ mod db_feed;
 mod db_identity;
 mod db_jam;
 mod db_library;
+mod db_library_album;
 mod db_playlist_edits;
 mod db_playlist_followers;
 mod db_playlist_items;

@@ -13,6 +13,7 @@ mod handoff;
 mod handoff_input;
 mod holdings;
 mod library;
+mod library_album;
 mod library_payload;
 mod library_stats;
 mod links;
@@ -41,6 +42,7 @@ pub struct Query(
     handoff::HandoffQuery,
     holdings::HoldingsQuery,
     library::LibraryQuery,
+    library_album::LibraryAlbumQuery,
     library_stats::LibraryStatsQuery,
     links::LinksQuery,
     nodes::NodesQuery,
