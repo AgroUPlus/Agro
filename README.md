@@ -186,6 +186,17 @@ location /api/v1/relay/ {
 
 Building requires ~4 GB RAM and ~12 GB disk. The running server idles at 20–30 MB RSS. Use `cargo build --release -j2` if memory is tight.
 
+Measured with `scripts/loadtest/` on two pinned cores, every connected device sending a playback
+heartbeat every 30 s and ten friends per account:
+
+| Devices online at once | p95 latency | CPU (of 2 cores) | RSS |
+|---|---|---|---|
+| 5,000 | 8.5 ms | 0.6 | 189 MB |
+| 6,500 | 16 ms | 1.0 | 240 MB |
+| 8,000 | 145 ms | 1.5 | 295 MB |
+
+Relayed audio and uploads are bounded by bandwidth rather than CPU, and are not in these numbers.
+
 ---
 
 ## Quickstart
