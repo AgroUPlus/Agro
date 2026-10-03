@@ -6,7 +6,7 @@ use super::Db;
 
 impl Db {
     pub fn get_cached_proxy(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let now = chrono::Utc::now().timestamp();
         let mut stmt = conn
             .prepare("SELECT headers, body FROM proxy_cache WHERE url = ?1 AND expires_at > ?2")?;

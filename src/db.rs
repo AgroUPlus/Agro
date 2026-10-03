@@ -5,7 +5,7 @@
 
 use rusqlite::{Connection, Result};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Takes the database away from the group and the world.
 ///
@@ -55,6 +55,7 @@ mod links;
 mod migrations;
 mod nodes;
 mod plugins;
+mod pool;
 mod proxy_cache;
 mod retention;
 mod scrobbles;
@@ -75,17 +76,22 @@ pub struct Db {
     /// `pub(crate)` so the library index can keep its own `impl Db` block in `db_library`, rather
     /// than growing this file by another few hundred lines of unrelated SQL.
     pub(crate) conn: Arc<Mutex<Connection>>,
+    /// Read-only connections for methods that only SELECT. See [`pool`].
+    readers: Arc<pool::ReadPool>,
 }
 
 impl Db {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let conn = Connection::open(&path)?;
-        let db = Db {
+        pool::tune_writer(&conn)?;
+        let mut db = Db {
             conn: Arc::new(Mutex::new(conn)),
+            readers: Arc::new(pool::ReadPool::empty()),
         };
         db.init_schema()?;
         db.migrate()?;
+        db.readers = Arc::new(pool::ReadPool::open(&path)?);
         // After the schema, so the -wal and -shm SQLite creates along the way are covered too.
         restrict_permissions(&path);
         Ok(db)
@@ -95,10 +101,24 @@ impl Db {
         let conn = Connection::open_in_memory()?;
         let db = Db {
             conn: Arc::new(Mutex::new(conn)),
+            readers: Arc::new(pool::ReadPool::empty()),
         };
         db.init_schema()?;
         db.migrate()?;
         Ok(db)
+    }
+}
+
+impl Db {
+    /// A connection for a method made entirely of SELECTs.
+    ///
+    /// Never call this while holding [`Self::conn`]: a reader cannot see the writer's uncommitted
+    /// transaction, so a read inside a write would answer from before it.
+    pub(crate) fn read(&self) -> MutexGuard<'_, Connection> {
+        match self.readers.get() {
+            Some(reader) => reader,
+            None => self.conn.lock().unwrap(),
+        }
     }
 }
 

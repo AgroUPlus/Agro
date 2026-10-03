@@ -95,7 +95,7 @@ impl Db {
         viewer: &str,
         viewer_device: &str,
     ) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT ciphertext
                FROM handoff_presence_ciphertexts
@@ -116,7 +116,7 @@ impl Db {
         owner: &str,
         recipient: &str,
     ) -> Result<Vec<PresenceCiphertext>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT recipient_user_id, recipient_device_id, ciphertext
                FROM handoff_presence_ciphertexts

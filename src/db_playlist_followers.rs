@@ -31,7 +31,7 @@ impl Db {
     }
 
     pub fn is_following_playlist(&self, playlist_id: &str, user_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM playlist_followers WHERE playlist_id = ?1 AND user_id = ?2)",
             params![playlist_id, user_id],
@@ -42,7 +42,7 @@ impl Db {
     /// The followed playlists that still exist, newest follow first. Access is the caller's to
     /// check; a deleted playlist takes its follower rows with it.
     pub fn followed_playlists(&self, user_id: &str) -> Result<Vec<Playlist>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let columns = PLAYLIST_COLUMNS
             .split(", ")
             .map(|c| format!("p.{c}"))
@@ -60,7 +60,7 @@ impl Db {
     /// Everyone to tell about a change to `playlist_id`: its followers. The owner is the caller's
     /// to add.
     pub fn playlist_follower_ids(&self, playlist_id: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT user_id FROM playlist_followers WHERE playlist_id = ?1")?;
         let rows = stmt.query_map(params![playlist_id], |row| row.get(0))?;

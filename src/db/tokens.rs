@@ -34,7 +34,7 @@ impl Db {
     /// How many accounts exist. Zero means the server has never been set up, which is the only
     /// state in which an unauthenticated request is allowed to create one.
     pub fn user_count(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
     }
 
@@ -91,7 +91,7 @@ impl Db {
 
     /// Never returns the token itself: a credential is shown once, at creation.
     pub fn list_app_passwords(&self, username: &str) -> Result<Vec<AppPasswordRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT a.rowid, a.label, a.created_at, a.last_used_at FROM app_passwords a
              JOIN users u ON u.id = a.user_id

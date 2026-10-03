@@ -135,7 +135,7 @@ impl Db {
     /// steadily all week qualifies while one played twice yesterday does not.
     pub fn popular_tracks(&self, today: i64, days: i64, limit: usize) -> Result<Vec<PopularTrack>> {
         let since = today - days.max(1) + 1;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT MIN(title), MIN(artist), MIN(album), SUM(count) AS total
              FROM popularity_counters

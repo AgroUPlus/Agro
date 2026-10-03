@@ -26,7 +26,7 @@ impl Db {
     }
 
     pub fn get_ephemeral_share(&self, token: &str) -> Result<Option<ShareRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let now = chrono::Utc::now().to_rfc3339();
         let mut stmt = conn.prepare("SELECT track_title, artist_name, album_name, audio_url, expires_at FROM ephemeral_shares WHERE token = ?1 AND expires_at > ?2")?;
         let mut rows = stmt.query(params![token, now])?;

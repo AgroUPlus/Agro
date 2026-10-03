@@ -31,6 +31,7 @@ fn stopped_after(applied: usize) -> Db {
     let conn = Connection::open_in_memory().unwrap();
     let db = Db {
         conn: Arc::new(Mutex::new(conn)),
+        readers: Arc::new(crate::db::pool::ReadPool::empty()),
     };
     db.init_schema().unwrap();
     {

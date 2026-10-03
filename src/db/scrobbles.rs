@@ -93,7 +93,7 @@ impl Db {
         device_name: Option<&str>,
         since: Option<&str>,
     ) -> Result<Vec<ScrobbleRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT s.track_title, s.artist_name, s.album_name, s.genre, s.duration_secs,
                     COALESCE(NULLIF(rn.petname, ''), s.device_name) AS device_name,

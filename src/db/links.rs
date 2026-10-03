@@ -11,7 +11,7 @@ impl Db {
     /// so the allowlist it enforces is the union of what the accounts here have set. Only rows
     /// with forwarding actually switched on contribute to it.
     pub fn allowed_share_hosts(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT share_hosts FROM synced_settings
              WHERE share_enabled = 1 AND share_hosts IS NOT NULL",
@@ -58,7 +58,7 @@ impl Db {
     /// Expiry is enforced here. It was not, so a link given a deliberate lifetime kept forwarding
     /// for ever — the column was written and then never read.
     pub fn get_short_link(&self, id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT target_url FROM short_links
              WHERE id = ?1 AND (expires_at IS NULL OR expires_at > ?2)",

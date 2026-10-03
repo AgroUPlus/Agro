@@ -96,7 +96,7 @@ impl Db {
 
     /// Fetches a playlist by ID.
     pub fn get_playlist(&self, id: &str) -> Result<Option<Playlist>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             &format!("SELECT {PLAYLIST_COLUMNS} FROM playlists WHERE id = ?1"),
             params![id],
@@ -131,7 +131,7 @@ impl Db {
         clause: &str,
         params: impl rusqlite::Params,
     ) -> Result<Vec<Playlist>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {PLAYLIST_COLUMNS} FROM playlists {clause}"
         ))?;

@@ -355,7 +355,7 @@ impl Db {
     /// How many drops `from` has sent `to` since `since`. Feeds the send rate limit, which exists
     /// so that "a friend may hand you a song" does not also mean "a friend may fill your inbox".
     pub fn drops_sent_since(&self, from: &str, to: &str, since: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT COUNT(*) FROM track_drops
               WHERE from_user = ?1 COLLATE NOCASE

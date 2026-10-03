@@ -44,7 +44,7 @@ impl Db {
     /// Every registered node, across users. The plugin list needs a whole-deployment view rather
     /// than one user's devices.
     pub fn get_all_nodes(&self) -> Result<Vec<NodeRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT device_id, user_id, petname, client_type, version, current_track, last_seen_at
              FROM registered_nodes ORDER BY last_seen_at DESC",
@@ -98,7 +98,7 @@ impl Db {
     }
 
     pub fn get_active_nodes(&self, user_id: &str) -> Result<Vec<NodeRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT device_id, user_id, petname, client_type, version, current_track, last_seen_at
              FROM registered_nodes WHERE user_id = ?1 ORDER BY last_seen_at DESC",

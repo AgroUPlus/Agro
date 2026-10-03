@@ -40,7 +40,7 @@ impl Db {
     /// who did not listen is not in this year's ranking, and counting them would inflate everybody
     /// else's percentile with people who never took part.
     fn year_cohort(&self, since: &str, until: &str) -> Result<Vec<(String, i64)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT user_id, SUM(MAX(duration_secs, 0)) AS secs
              FROM scrobbles

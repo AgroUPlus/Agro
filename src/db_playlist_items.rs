@@ -118,7 +118,7 @@ fn next_position(conn: &Connection, playlist_id: &str) -> Result<i32> {
 impl Db {
     /// Fetches all items in a playlist ordered by their position.
     pub fn get_playlist_items(&self, playlist_id: &str) -> Result<Vec<PlaylistItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT id, playlist_id, position, title, artist, album, duration_ms,
                     norm_artist, norm_title, artwork_url, origin_uri, added_by, added_at

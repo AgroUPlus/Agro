@@ -160,7 +160,7 @@ impl Db {
     }
 
     pub fn list_users(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare("SELECT username FROM users ORDER BY created_at ASC")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
         let mut users = Vec::new();
@@ -174,7 +174,7 @@ impl Db {
     }
 
     pub fn get_user_by_username(&self, username: &str) -> Result<Option<(String, String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT id, username, api_key FROM users WHERE username = ?1")?;
         let mut rows = stmt.query(params![username])?;

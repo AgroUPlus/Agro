@@ -83,6 +83,7 @@ PORT=1674 ./target/release/agro
 | `AGRO_ARCHIVE_HOOK` | Shell command run after a file is filed. Paths arrive via env, not argv. |
 | `AGRO_ALLOWED_ORIGIN` | CORS origin for the dashboard. No wildcard. |
 | `AGRO_SIGNUP` | `approval` (default), `invite`, or `closed`. |
+| `AGRO_DB_READERS` | Read-only SQLite connections beside the single writer. Default `4`. |
 
 **Archive hook example** (Nextcloud):
 ```ini

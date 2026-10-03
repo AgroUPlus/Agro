@@ -103,7 +103,7 @@ impl Db {
     // ── Index ───────────────────────────────────────────────────────────────────────────────
 
     pub fn library_track(&self, content_hash: &str) -> Result<Option<LibraryTrack>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT content_hash, title, artist, album, album_artist, track_no, disc_no, year,
                     genre, duration_ms, size_bytes, format, bitrate_kbps, archived_path
@@ -226,7 +226,7 @@ impl Db {
 
     /// What a device holds. Scoped by account for the same reason [`Self::forget_holdings`] is.
     pub fn device_holding_hashes(&self, user_id: &str, device_id: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT content_hash FROM device_holdings
               WHERE user_id = ?1 AND device_id = ?2 ORDER BY content_hash",
@@ -241,7 +241,7 @@ impl Db {
     /// be used for it: that counts every archived track in the deployment into every account's
     /// total, so it reads the same for a guest holding nothing as for the admin.
     pub fn spool_bytes_for(&self, user_id: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT COALESCE(SUM(size_bytes), 0) FROM spool_items WHERE user_id = ?1",
             params![user_id],
@@ -251,7 +251,7 @@ impl Db {
 
     /// Whether this account registered this device. Backs `require_own_device`.
     pub fn device_belongs_to(&self, user_id: &str, device_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM registered_nodes WHERE user_id = ?1 AND device_id = ?2",
             params![user_id, device_id],
@@ -262,7 +262,7 @@ impl Db {
 
     /// Looks up the username that registered a device.
     pub fn owner_of_device(&self, device_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT user_id FROM registered_nodes WHERE device_id = ?1 LIMIT 1")?;
         let mut rows = stmt.query(params![device_id])?;
@@ -291,7 +291,7 @@ impl Db {
         device_id: &str,
         limit: i64,
     ) -> Result<Vec<LibraryTrack>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT DISTINCT t.content_hash, t.title, t.artist, t.album, t.album_artist,
                     t.track_no, t.disc_no, t.year, t.genre, t.duration_ms, t.size_bytes,
@@ -332,7 +332,7 @@ impl Db {
         user_id: &str,
         content_hash: &str,
     ) -> Result<Vec<PeerSourceInfo>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             // An inner join, and no `COALESCE` on `last_seen_at`. A holding whose device is gone
             // is not a source that happens to be offline — it is not a source at all. The old
@@ -372,7 +372,7 @@ impl Db {
         device_id: &str,
         limit: i64,
     ) -> Result<Vec<LibraryTrack>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT t.content_hash, t.title, t.artist, t.album, t.album_artist,
                     t.track_no, t.disc_no, t.year, t.genre, t.duration_ms, t.size_bytes,
@@ -396,7 +396,7 @@ impl Db {
     /// always on — which is how this behaved — a member opening the dashboard was shown the
     /// operator's whole archive as their own fleet total.
     pub fn library_stats(&self, user_id: &str, include_archive: bool) -> Result<LibraryStats> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let (track_count, archived_count, total_bytes) = conn.query_row(
             "SELECT COUNT(*),
                     COALESCE(SUM(CASE WHEN t.archived_path IS NOT NULL THEN 1 ELSE 0 END), 0),
@@ -598,7 +598,7 @@ impl Db {
 
     /// The stored cover's file extension, or `None` when the album has no artwork.
     pub fn cover_extension(&self, album_key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT extension FROM library_covers WHERE album_key = ?1",
             params![album_key],
@@ -613,7 +613,7 @@ impl Db {
 
     /// One archived file per album, for the backfill pass to read artwork out of.
     pub fn albums_for_cover_backfill(&self) -> Result<Vec<(String, String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT COALESCE(t.album_artist, t.artist), t.album, MIN(t.archived_path)
              FROM library_tracks t
@@ -671,7 +671,7 @@ impl Db {
         device_id: &str,
         content_hash: &str,
     ) -> Result<Option<UploadSession>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT upload_id, user_id, device_id, content_hash, size_bytes, received_bytes, target,
                     extension
@@ -691,7 +691,7 @@ impl Db {
     }
 
     pub fn upload_session(&self, upload_id: &str) -> Result<Option<UploadSession>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT upload_id, user_id, device_id, content_hash, size_bytes, received_bytes, target,
                     extension
@@ -722,7 +722,7 @@ impl Db {
 
     /// Upload sessions whose TTL has passed, so their `.part` files can be removed too.
     pub fn expired_uploads(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT upload_id FROM upload_sessions WHERE expires_at <= ?1")?;
         let rows = stmt.query_map(params![chrono::Utc::now().to_rfc3339()], |row| row.get(0))?;
@@ -760,7 +760,7 @@ impl Db {
     }
 
     pub fn spool_total_bytes(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT COALESCE(SUM(size_bytes),0) FROM spool_items",
             [],
@@ -769,7 +769,7 @@ impl Db {
     }
 
     pub fn spool_contains(&self, content_hash: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let found: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM spool_items WHERE content_hash = ?1",
@@ -790,7 +790,7 @@ impl Db {
     ///
     /// Expired rows go regardless of the budget; that is the TTL, not the quota.
     pub fn spool_evictable_for(&self, user_id: &str, budget: i64) -> Result<Vec<(String, i64)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT content_hash, size_bytes, expires_at FROM spool_items
               WHERE user_id = ?1 ORDER BY created_at ASC",
@@ -815,7 +815,7 @@ impl Db {
 
     /// Every account with something in the spool, for the periodic sweep.
     pub fn spool_users(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare("SELECT DISTINCT user_id FROM spool_items")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
         rows.collect()
@@ -823,7 +823,7 @@ impl Db {
 
     /// Which account spooled a file, so a fetch can be scoped to it.
     pub fn spool_owner(&self, content_hash: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT user_id FROM spool_items WHERE content_hash = ?1",
             params![content_hash],

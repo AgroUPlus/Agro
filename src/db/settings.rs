@@ -44,7 +44,7 @@ impl Db {
     }
 
     pub fn get_synced_settings(&self, user_id: &str) -> Result<Option<SyncedSettingsRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT settings_blob, has_server_url, lyrics_fetch_online, stream_format,
                     share_domain, share_hosts, share_enabled, updated_at

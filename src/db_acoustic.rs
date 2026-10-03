@@ -183,7 +183,7 @@ impl Db {
         limit: usize,
     ) -> Result<Vec<NeighbourTrack>> {
         let key = recording_key(artist, title);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
 
         let mut select = conn.prepare(
             "SELECT title, artist, tempo, energy, brightness, danceability, key_x, key_y,

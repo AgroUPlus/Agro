@@ -103,7 +103,7 @@ impl Db {
         user_id: &str,
         exclude_device: Option<&str>,
     ) -> Result<Option<HandoffRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         // `updated_at` is an RFC 3339 stamp written by this process, always at the same offset, so
         // it orders lexicographically — no date parsing, which would fail silently to NULL and
         // scramble the order rather than erroring.

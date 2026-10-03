@@ -44,7 +44,7 @@ impl Db {
         } else {
             ""
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT t.content_hash, t.title, t.artist, t.track_no, t.disc_no, t.duration_ms, t.year
                FROM library_tracks t
