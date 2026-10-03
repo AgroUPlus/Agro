@@ -26,7 +26,7 @@
             Agro
           </a>
           <nav class="nav-links">
-            <a href="#cascade-showcase" class="nav-link">Overview</a>
+            <a href="#ecosystem" class="nav-link">What's what</a>
             <a href="#capabilities" class="nav-link">Capabilities</a>
             <a href="#security" class="nav-link">Security</a>
             <a href="#getstarted" class="nav-link">Get Started</a>
@@ -53,7 +53,7 @@
           <div class="hero-grid">
             <div class="hero-text-side">
               <h1 class="hero-title">A simple, open-source music ecosystem</h1>
-              <p class="hero-sub">A clean, modern music client and self-hosted ecosystem connecting Wander and Wanda, built by the community under AGPL-3.0.</p>
+              <p class="hero-sub">Agro is the server behind Wanda on Android and Wander on the desktop. Both apps play your music on their own; connect them to Agro and they share handoff, jam rooms, friends and stats. Open source under AGPL-3.0.</p>
               
               <div class="hero-actions">
                 <button class="btn btn-filled" onclick="openModal()">
@@ -91,7 +91,7 @@
               <div class="phone-chassis phone-slanted">
                 <div class="phone-punchhole"></div>
                 <div class="phone-screen">
-                  <img src="./assets/shot-lyrics.jpg" alt="Agro Wanda Player &amp; Lyrics" />
+                  <img src="./assets/shots/wanda-player.jpg" alt="Wanda's player" />
                 </div>
                 <div class="phone-home-pill"></div>
               </div>
@@ -99,10 +99,46 @@
               <div class="phone-chassis phone-upright">
                 <div class="phone-punchhole"></div>
                 <div class="phone-screen">
-                  <img src="./assets/shot-artist.jpg" alt="Agro Wanda Artist Profile" />
+                  <img src="./assets/shots/wanda-album.jpg" alt="An album page in Wanda" />
                 </div>
                 <div class="phone-home-pill"></div>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ECOSYSTEM: which part does what -->
+      <section id="ecosystem">
+        <div class="container">
+          <span class="section-badge">
+            <span class="material-symbols-rounded" style="font-size:18px;">hub</span>
+            What's what
+          </span>
+          <h2 class="section-title">One server, two apps</h2>
+          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px; max-width:680px;">Wanda and Wander are the players. Agro is the optional server that connects them to each other and to your friends.</p>
+
+          <div class="security-grid">
+            <div class="security-card eco-card">
+              <div class="security-icon"><span class="material-symbols-rounded" style="font-size:32px; color:var(--md-sys-color-primary)">dns</span></div>
+              <div class="eco-kind">Server</div>
+              <div class="security-title">Agro</div>
+              <p class="security-desc">A small Rust server with a web dashboard. It carries handoff, jam rooms, friends, shared playlists, share links and stats from every device. Host it yourself or sign in to Agro Cloud.</p>
+              <a href="https://github.com/AgroUPlus/Agro" target="_blank" rel="noopener" class="eco-link">AgroUPlus/Agro &rarr;</a>
+            </div>
+            <div class="security-card eco-card">
+              <div class="security-icon"><span class="material-symbols-rounded" style="font-size:32px; color:var(--md-sys-color-tertiary)">android</span></div>
+              <div class="eco-kind">Android app</div>
+              <div class="security-title">Wanda</div>
+              <p class="security-desc">The music player for your phone. Navidrome/Subsonic, local files, YouTube Music and Deezer in one library, with lyrics, song recognition and playlist import. Works without Agro.</p>
+              <a href="https://github.com/AgroUPlus/Wanda" target="_blank" rel="noopener" class="eco-link">AgroUPlus/Wanda &rarr;</a>
+            </div>
+            <div class="security-card eco-card">
+              <div class="security-icon"><span class="material-symbols-rounded" style="font-size:32px; color:#FFB4A9">terminal</span></div>
+              <div class="eco-kind">Desktop app</div>
+              <div class="security-title">Wander</div>
+              <p class="security-desc">A terminal music player for Linux. Navidrome/Subsonic and local files in one queue, with cover art, lyrics and visualisers. Works without Agro.</p>
+              <a href="https://github.com/AgroUPlus/Wander" target="_blank" rel="noopener" class="eco-link">AgroUPlus/Wander &rarr;</a>
             </div>
           </div>
         </div>
@@ -115,18 +151,18 @@
             <div class="fanning-stage">
               <div class="phone-chassis fan-phone fan-1">
                 <div class="phone-screen">
-                  <img src="./assets/shot-artist.jpg" alt="Artist Profile" />
+                  <img src="./assets/shots/wanda-home.jpg" alt="Wanda's home screen with quick picks" />
                 </div>
               </div>
               <div class="phone-chassis fan-phone fan-2">
                 <div class="phone-screen">
-                  <img src="./assets/shot-mix.jpg" alt="Daily Mix Navidrome" />
+                  <img src="./assets/shots/wanda-mix.jpg" alt="A daily mix from Navidrome" />
                 </div>
               </div>
               <div class="phone-chassis fan-phone fan-3">
                 <div class="phone-punchhole"></div>
                 <div class="phone-screen">
-                  <img src="./assets/shot-stats.jpg" alt="Listening Stats" />
+                  <img src="./assets/shots/wanda-stats.jpg" alt="Listening stats" />
                 </div>
                 <div class="phone-home-pill"></div>
               </div>
@@ -135,14 +171,14 @@
             <div class="cascade-text">
               <span class="section-badge">
                 <span class="material-symbols-rounded" style="font-size:18px;">insights</span>
-                On-device intelligence
+                Wanda on Android
               </span>
-              <h2 class="section-title">Personalize your music experience with Agro</h2>
+              <h2 class="section-title">A player that knows your taste</h2>
               <p style="color:var(--md-sys-color-on-surface-variant); font-size:15.5px; line-height:1.7; margin-bottom:16px;">
-                Rich listening insights, automated year in review, and seamless navigation between local files, Subsonic/Navidrome libraries, and stream sources.
+                Wanda brings listening stats, a yearly recap and daily mixes, and moves freely between local files, Navidrome/Subsonic libraries and streaming sources.
               </p>
               <p style="color:var(--md-sys-color-on-surface-variant); font-size:15.5px; line-height:1.7;">
-                All analytics are calculated entirely on your device with local SQLite queries. Zero surveillance, zero telemetry uploads.
+                Stats are worked out on the phone and never leave it. Connect Agro and you can choose to see them across every device on your account. No telemetry, ever.
               </p>
             </div>
           </div>
@@ -157,81 +193,82 @@
             Capabilities
           </span>
           <h2 class="section-title">Built for every side of your listening</h2>
-          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px; margin-bottom: 40px;">Agro bridges your music life across all devices without big tech snooping, telemetry, or walled gardens.</p>
+          <p style="color:var(--md-sys-color-on-surface-variant); font-size:16px; margin-bottom: 40px;">Each card says which part does the work.</p>
 
+          <h3 class="promo-group-title">What Agro adds <span class="promo-group-sub">Needs an Agro server: your own, or Agro Cloud</span></h3>
           <div class="promo-grid">
-            <!-- Playback Handoff -->
             <div class="promo-card">
               <div class="promo-img-wrapper">
-                <img src="./assets/mockups/promo-agro-flagship.jpg" alt="Playback moving between Wanda and Wander" />
+                <img src="./assets/mockups/promo-agro-devices.jpg" alt="Wander on a desktop beside two Wanda phones showing stats and the player" loading="lazy" />
               </div>
               <div class="promo-info">
                 <div class="promo-badge bg-violet">
-                  <span class="material-symbols-rounded">sync_alt</span>
-                  <span>Cross-device</span>
+                  <span class="material-symbols-rounded">dns</span>
+                  <span>Agro &middot; Cross-device</span>
                 </div>
-                <h3 class="promo-title">Playback Handoff</h3>
-                <p class="promo-desc">Transfer active queues, playback progress, and seek positions between phone and computer in real time, without missing a single beat.</p>
+                <h3 class="promo-title">Pick Up Where You Left Off</h3>
+                <p class="promo-desc">Move what's playing from Wander on your computer to Wanda on your phone, with the queue and position intact. Listening stats add up across every device on your account.</p>
                 <ul class="feature-bullets">
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Instant queue &amp; position sync</span></li>
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Zero lag between phone and laptop</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Queue &amp; position handoff, both ways</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Stats &amp; settings synced across devices</span></li>
                 </ul>
               </div>
             </div>
 
-            <!-- Social Jam -->
             <div class="promo-card">
               <div class="promo-img-wrapper">
-                <img src="./assets/mockups/promo-agro-jam-social.jpg" alt="Social Jam Session" />
+                <img src="./assets/mockups/promo-agro-social.jpg" alt="Wanda's friends list, a jam room and a shared playlist's edit settings" loading="lazy" />
               </div>
               <div class="promo-info">
                 <div class="promo-badge bg-magenta">
-                  <span class="material-symbols-rounded">group</span>
-                  <span>Social Listening</span>
+                  <span class="material-symbols-rounded">dns</span>
+                  <span>Agro &middot; Social</span>
                 </div>
-                <h3 class="promo-title">Live Jam Sessions &amp; Presence</h3>
-                <p class="promo-desc">Listen together in real time. Agro coordinates active queues, seek positions, and recipient-encrypted presence without any central server eavesdropping.</p>
+                <h3 class="promo-title">Jam Rooms, Friends &amp; Shared Playlists</h3>
+                <p class="promo-desc">Start a jam, share the code, and everyone hears the same track. Let friends add to a playlist with you. They see what you're playing only if you turn it on, encrypted for each friend.</p>
                 <ul class="feature-bullets">
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Presence feeds sealed with E2EE</span></li>
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>No centralized party room surveillance</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Shared queue, voting and Jam Radio</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Playlists only you, friends, or anyone can edit</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Every social switch off by default</span></li>
                 </ul>
               </div>
             </div>
+          </div>
 
-            <!-- Discovery Tools -->
+          <h3 class="promo-group-title">What Wanda does on its own <span class="promo-group-sub">No server needed</span></h3>
+          <div class="promo-grid">
             <div class="promo-card">
               <div class="promo-img-wrapper">
-                <img src="./assets/mockups/promo-wanda-discovery-tools.jpg" alt="Music Recognition & Discovery Tools" />
+                <img src="./assets/mockups/promo-wanda-sources.jpg" alt="Wanda showing a Navidrome daily mix, an artist page and search across sources" loading="lazy" />
               </div>
               <div class="promo-info">
                 <div class="promo-badge bg-cyan">
-                  <span class="material-symbols-rounded">travel_explore</span>
-                  <span>Smart Tools</span>
+                  <span class="material-symbols-rounded">android</span>
+                  <span>Wanda &middot; Library</span>
                 </div>
-                <h3 class="promo-title">Audio Recognition, Lyrics &amp; Import</h3>
-                <p class="promo-desc">Hear something playing in the real world? Wanda identifies tracks on-device via ACR acoustic fingerprinting, fetches synchronized lyrics from LRCLIB, and imports entire playlists seamlessly.</p>
+                <h3 class="promo-title">Four Sources, One Library</h3>
+                <p class="promo-desc">Navidrome/Subsonic, files on your phone, YouTube Music and Deezer show up as one library with one search and one queue. The same song from two sources appears once.</p>
                 <ul class="feature-bullets">
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>On-device acoustic fingerprinting</span></li>
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Synced lyrics &amp; playlist import</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Plays the best-quality copy available</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Daily mixes &amp; radio made on the phone</span></li>
                 </ul>
               </div>
             </div>
 
-            <!-- Library & Insights -->
             <div class="promo-card">
               <div class="promo-img-wrapper">
-                <img src="./assets/mockups/promo-wanda-cascade.jpg" alt="Listening stats, artist pages and daily mixes" />
+                <img src="./assets/mockups/promo-wanda-discovery.jpg" alt="Wanda importing a playlist, recognising a song and showing synced lyrics" loading="lazy" />
               </div>
               <div class="promo-info">
                 <div class="promo-badge bg-teal">
-                  <span class="material-symbols-rounded">cloud_sync</span>
-                  <span>Library &amp; Insights</span>
+                  <span class="material-symbols-rounded">android</span>
+                  <span>Wanda &middot; Tools</span>
                 </div>
-                <h3 class="promo-title">Your Library, Everywhere</h3>
-                <p class="promo-desc">Local files, Navidrome/Subsonic and stream sources behave as one library. Direct peer-to-peer relay stages media between your own devices, and every statistic is computed on-device with local SQLite.</p>
+                <h3 class="promo-title">Recognition, Lyrics &amp; Import</h3>
+                <p class="promo-desc">Hear something you like? Wanda matches it against your own library, right on the phone. Synced lyrics follow along, and playlists from Spotify, Deezer or YouTube Music come in with a link.</p>
                 <ul class="feature-bullets">
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Resumable peer transfers &amp; cache budget</span></li>
-                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Stats stay local, never uploaded</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>Song recognition without the cloud</span></li>
+                  <li class="feature-bullet"><span class="material-symbols-rounded">check_circle</span><span>LRCLIB lyrics only if you allow it</span></li>
                 </ul>
               </div>
             </div>
