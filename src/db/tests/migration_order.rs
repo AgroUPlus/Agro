@@ -107,6 +107,7 @@ const SHIPPED: &[&str] = &[
     "549e6b2be0e83b04",
     "7ba7fb712ebb777d",
     "0843bda0607e7dc0",
+    "b57e6f29183a7c68",
 ];
 
 fn digest(migration: &str) -> String {

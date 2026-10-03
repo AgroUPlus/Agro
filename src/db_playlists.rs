@@ -4,12 +4,14 @@
 //! `norm_title`, `duration_ms`) rather than a hardcoded backend reference. Clients resolve each
 //! track against their own local storage, Navidrome instance, or streaming fallbacks.
 //!
-//! Playlists can be private (owner-only) or public (visible to other users on this Agro server).
+//! Who can open one is `playlist_visibility`; who can change it is `playlist_access`. Its items
+//! are `db_playlist_items`, edits to them `db_playlist_edits`, and who keeps a live copy
+//! `db_playlist_followers`.
 
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
-use crate::norm;
+use crate::playlist_access::EditAccess;
 use crate::playlist_visibility::PlaylistVisibility;
 
 #[derive(Clone, Debug)]
@@ -23,11 +25,16 @@ pub struct Playlist {
     pub friends_only: bool,
     pub created_at: String,
     pub updated_at: String,
+    /// Counts every change, so an edit can name the version it was made against.
+    pub revision: i64,
+    pub edit_access: EditAccess,
 }
 
-/// A `playlists` row selected as `id, user_id, title, description, is_public, friends_only,
-/// created_at, updated_at` — the one column order every playlist query uses.
-fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
+/// The one column order every playlist query selects, read back by [`playlist_from_row`].
+pub(crate) const PLAYLIST_COLUMNS: &str =
+    "id, user_id, title, description, is_public, friends_only, created_at, updated_at, revision, edit_access";
+
+pub(crate) fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
     Ok(Playlist {
         id: row.get(0)?,
         user_id: row.get(1)?,
@@ -37,36 +44,24 @@ fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
         friends_only: row.get::<_, i32>(5)? != 0,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        revision: row.get(8)?,
+        edit_access: EditAccess::from_stored(row.get(9)?),
     })
 }
 
-#[derive(Clone, Debug)]
-pub struct PlaylistItem {
-    pub id: String,
-    pub playlist_id: String,
-    pub position: i32,
-    pub title: String,
-    pub artist: String,
-    pub album: Option<String>,
-    pub duration_ms: Option<i64>,
-    pub norm_artist: String,
-    pub norm_title: String,
-    pub artwork_url: Option<String>,
-    pub origin_uri: Option<String>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct NewPlaylistItem {
-    pub title: String,
-    pub artist: String,
-    pub album: Option<String>,
-    pub duration_ms: Option<i64>,
-    pub artwork_url: Option<String>,
-    pub origin_uri: Option<String>,
+/// Marks a playlist as changed: one more revision, and a fresh `updated_at`. Every write to a
+/// playlist or its items goes through here, inside the same transaction as the write itself.
+pub(crate) fn bump_revision(conn: &rusqlite::Connection, playlist_id: &str) -> Result<i64> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.query_row(
+        "UPDATE playlists SET revision = revision + 1, updated_at = ?1 WHERE id = ?2 RETURNING revision",
+        params![now, playlist_id],
+        |row| row.get(0),
+    )
 }
 
 impl Db {
-    /// Creates a new playlist for the given user.
+    /// Creates a new playlist for the given user. Nobody else may edit it until its owner says so.
     pub fn create_playlist(
         &self,
         user_id: &str,
@@ -94,279 +89,92 @@ impl Db {
             friends_only,
             created_at: now.clone(),
             updated_at: now,
+            revision: 0,
+            edit_access: EditAccess::Off,
         })
     }
 
     /// Fetches a playlist by ID.
     pub fn get_playlist(&self, id: &str) -> Result<Option<Playlist>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
-             FROM playlists WHERE id = ?1",
-        )?;
-
-        stmt.query_row(params![id], playlist_from_row).optional()
+        conn.query_row(
+            &format!("SELECT {PLAYLIST_COLUMNS} FROM playlists WHERE id = ?1"),
+            params![id],
+            playlist_from_row,
+        )
+        .optional()
     }
 
     /// Lists playlists owned by the user.
     pub fn list_user_playlists(&self, user_id: &str) -> Result<Vec<Playlist>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
-             FROM playlists WHERE user_id = ?1 ORDER BY updated_at DESC",
-        )?;
-
-        let rows = stmt.query_map(params![user_id], playlist_from_row)?;
-
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
+        self.select_playlists(
+            "WHERE user_id = ?1 ORDER BY updated_at DESC",
+            params![user_id],
+        )
     }
 
     /// Lists all public playlists across all users on the server.
     pub fn list_public_playlists(&self) -> Result<Vec<Playlist>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
-             FROM playlists WHERE is_public = 1 ORDER BY updated_at DESC",
-        )?;
-
-        let rows = stmt.query_map([], playlist_from_row)?;
-
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
+        self.select_playlists("WHERE is_public = 1 ORDER BY updated_at DESC", [])
     }
 
     /// The playlists `owner` has shared with friends only. Not those that are public or private.
     pub fn list_friends_only_playlists(&self, owner: &str) -> Result<Vec<Playlist>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, user_id, title, description, is_public, friends_only, created_at, updated_at
-             FROM playlists WHERE user_id = ?1 AND friends_only = 1 AND is_public = 0
-             ORDER BY updated_at DESC",
-        )?;
-
-        let rows = stmt.query_map(params![owner], playlist_from_row)?;
-
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
+        self.select_playlists(
+            "WHERE user_id = ?1 AND friends_only = 1 AND is_public = 0 ORDER BY updated_at DESC",
+            params![owner],
+        )
     }
 
-    /// Fetches all items in a playlist ordered by their position.
-    pub fn get_playlist_items(&self, playlist_id: &str) -> Result<Vec<PlaylistItem>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, playlist_id, position, title, artist, album, duration_ms,
-                    norm_artist, norm_title, artwork_url, origin_uri
-             FROM playlist_items
-             WHERE playlist_id = ?1
-             ORDER BY position ASC",
-        )?;
-
-        let rows = stmt.query_map(params![playlist_id], |row| {
-            Ok(PlaylistItem {
-                id: row.get(0)?,
-                playlist_id: row.get(1)?,
-                position: row.get(2)?,
-                title: row.get(3)?,
-                artist: row.get(4)?,
-                album: row.get(5)?,
-                duration_ms: row.get(6)?,
-                norm_artist: row.get(7)?,
-                norm_title: row.get(8)?,
-                artwork_url: row.get(9)?,
-                origin_uri: row.get(10)?,
-            })
-        })?;
-
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
-    }
-
-    /// Adds a track to the end of a playlist.
-    pub fn add_playlist_item(
+    pub(crate) fn select_playlists(
         &self,
-        playlist_id: &str,
-        item: NewPlaylistItem,
-    ) -> Result<PlaylistItem> {
+        clause: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<Playlist>> {
         let conn = self.conn.lock().unwrap();
-        let item_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let norm_artist = norm::normalize_artist(&item.artist);
-        let norm_title = norm::normalize_title(&item.title);
-
-        let next_pos: i32 = conn.query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?1",
-            params![playlist_id],
-            |r| r.get(0),
-        )?;
-
-        conn.execute(
-            "INSERT INTO playlist_items (
-                id, playlist_id, position, title, artist, album, duration_ms,
-                norm_artist, norm_title, artwork_url, origin_uri
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                item_id,
-                playlist_id,
-                next_pos,
-                item.title,
-                item.artist,
-                item.album,
-                item.duration_ms,
-                norm_artist,
-                norm_title,
-                item.artwork_url,
-                item.origin_uri,
-            ],
-        )?;
-
-        conn.execute(
-            "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",
-            params![now, playlist_id],
-        )?;
-
-        Ok(PlaylistItem {
-            id: item_id,
-            playlist_id: playlist_id.to_string(),
-            position: next_pos,
-            title: item.title,
-            artist: item.artist,
-            album: item.album,
-            duration_ms: item.duration_ms,
-            norm_artist,
-            norm_title,
-            artwork_url: item.artwork_url,
-            origin_uri: item.origin_uri,
-        })
-    }
-
-    /// Batch inserts tracks into a playlist (useful for importers).
-    pub fn add_playlist_items(
-        &self,
-        playlist_id: &str,
-        items: &[NewPlaylistItem],
-    ) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let start_pos: i32 = tx.query_row(
-            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = ?1",
-            params![playlist_id],
-            |r| r.get(0),
-        )?;
-
-        let mut inserted = 0;
-        for (i, item) in items.iter().enumerate() {
-            let item_id = uuid::Uuid::new_v4().to_string();
-            let norm_artist = norm::normalize_artist(&item.artist);
-            let norm_title = norm::normalize_title(&item.title);
-            let position = start_pos + i as i32;
-
-            tx.execute(
-                "INSERT INTO playlist_items (
-                    id, playlist_id, position, title, artist, album, duration_ms,
-                    norm_artist, norm_title, artwork_url, origin_uri
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    item_id,
-                    playlist_id,
-                    position,
-                    item.title,
-                    item.artist,
-                    item.album,
-                    item.duration_ms,
-                    norm_artist,
-                    norm_title,
-                    item.artwork_url,
-                    item.origin_uri,
-                ],
-            )?;
-
-            inserted += 1;
-        }
-
-        tx.execute(
-            "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",
-            params![now, playlist_id],
-        )?;
-
-        tx.commit()?;
-        Ok(inserted)
-    }
-
-    /// Removes a specific item from a playlist and compacts the position indices.
-    pub fn remove_playlist_item(&self, playlist_id: &str, item_id: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let now = chrono::Utc::now().to_rfc3339();
-
-        let count = tx.execute(
-            "DELETE FROM playlist_items WHERE playlist_id = ?1 AND id = ?2",
-            params![playlist_id, item_id],
-        )?;
-
-        if count > 0 {
-            // Recompact positions
-            let mut stmt = tx.prepare(
-                "SELECT id FROM playlist_items WHERE playlist_id = ?1 ORDER BY position ASC",
-            )?;
-            let item_ids: Vec<String> = stmt
-                .query_map(params![playlist_id], |r| r.get(0))?
-                .collect::<Result<Vec<String>, _>>()?;
-
-            for (pos, id) in item_ids.iter().enumerate() {
-                tx.execute(
-                    "UPDATE playlist_items SET position = ?1 WHERE id = ?2",
-                    params![pos as i32, id],
-                )?;
-            }
-
-            tx.execute(
-                "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",
-                params![now, playlist_id],
-            )?;
-        }
-
-        tx.commit()?;
-        Ok(count > 0)
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {PLAYLIST_COLUMNS} FROM playlists {clause}"
+        ))?;
+        let rows = stmt.query_map(params, playlist_from_row)?;
+        rows.collect()
     }
 
     /// Sets who can open a playlist. Only its owner can; anyone else changes nothing and gets `false`.
+    ///
+    /// Narrowing who can open it narrows who can edit it in the same write, so no one is ever left
+    /// able to change a playlist they can no longer see — see [`EditAccess::clamped_to`].
     pub fn update_playlist_visibility(
         &self,
         playlist_id: &str,
         user_id: &str,
         visibility: PlaylistVisibility,
     ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let current: Option<i32> = tx
+            .query_row(
+                "SELECT edit_access FROM playlists WHERE id = ?1 AND user_id = ?2",
+                params![playlist_id, user_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else {
+            return Ok(false);
+        };
+        let edit_access = EditAccess::from_stored(current).clamped_to(visibility);
         let (is_public, friends_only) = visibility.flags();
-        let count = conn.execute(
-            "UPDATE playlists SET is_public = ?1, friends_only = ?2, updated_at = ?3
-              WHERE id = ?4 AND user_id = ?5",
+        tx.execute(
+            "UPDATE playlists SET is_public = ?1, friends_only = ?2, edit_access = ?3 WHERE id = ?4",
             params![
                 is_public as i32,
                 friends_only as i32,
-                now,
-                playlist_id,
-                user_id
+                edit_access.stored(),
+                playlist_id
             ],
         )?;
-        Ok(count > 0)
+        bump_revision(&tx, playlist_id)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Deletes a playlist and its items (cascaded).
@@ -377,82 +185,5 @@ impl Db {
             params![playlist_id, user_id],
         )?;
         Ok(count > 0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_playlist_lifecycle_and_items() {
-        let db = Db::new_in_memory().unwrap();
-
-        let pl = db
-            .create_playlist(
-                "alpha",
-                "Road Trip",
-                Some("Summer bops"),
-                PlaylistVisibility::Private,
-            )
-            .unwrap();
-        assert_eq!(pl.title, "Road Trip");
-        assert!(!pl.is_public);
-
-        let item1 = db
-            .add_playlist_item(
-                &pl.id,
-                NewPlaylistItem {
-                    title: "Get Lucky".to_string(),
-                    artist: "Daft Punk".to_string(),
-                    album: Some("Random Access Memories".to_string()),
-                    duration_ms: Some(248000),
-                    artwork_url: None,
-                    origin_uri: Some("spotify:track:123".to_string()),
-                },
-            )
-            .unwrap();
-        assert_eq!(item1.position, 0);
-        assert_eq!(item1.norm_artist, "daft punk");
-
-        let item2 = db
-            .add_playlist_item(
-                &pl.id,
-                NewPlaylistItem {
-                    title: "Instant Crush".to_string(),
-                    artist: "Daft Punk ft. Julian Casablancas".to_string(),
-                    album: Some("Random Access Memories".to_string()),
-                    duration_ms: Some(337000),
-                    artwork_url: None,
-                    origin_uri: None,
-                },
-            )
-            .unwrap();
-        assert_eq!(item2.position, 1);
-
-        let items = db.get_playlist_items(&pl.id).unwrap();
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].title, "Get Lucky");
-        assert_eq!(items[1].title, "Instant Crush");
-
-        // Remove item 1 (index 0) and verify position recompacting
-        assert!(db.remove_playlist_item(&pl.id, &item1.id).unwrap());
-        let items_after = db.get_playlist_items(&pl.id).unwrap();
-        assert_eq!(items_after.len(), 1);
-        assert_eq!(items_after[0].id, item2.id);
-        assert_eq!(items_after[0].position, 0);
-
-        // Visibility toggle
-        assert!(db
-            .update_playlist_visibility(&pl.id, "alpha", PlaylistVisibility::Public)
-            .unwrap());
-        let public_lists = db.list_public_playlists().unwrap();
-        assert_eq!(public_lists.len(), 1);
-        assert_eq!(public_lists[0].id, pl.id);
-
-        // Delete playlist
-        assert!(db.delete_playlist(&pl.id, "alpha").unwrap());
-        assert!(db.get_playlist(&pl.id).unwrap().is_none());
-        assert!(db.get_playlist_items(&pl.id).unwrap().is_empty());
     }
 }

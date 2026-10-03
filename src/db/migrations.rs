@@ -16,6 +16,7 @@ mod v10_18;
 mod v19_30;
 mod v31_41;
 mod v42_49;
+mod v50_59;
 
 /// Schema changes, in order. **Append only** — an entry's index is its version number, so
 /// reordering or removing one silently skips it on every database that has already run it.
@@ -26,6 +27,7 @@ pub(super) static MIGRATIONS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         v19_30::ENTRIES,
         v31_41::ENTRIES,
         v42_49::ENTRIES,
+        v50_59::ENTRIES,
     ]
     .concat()
 });
