@@ -65,6 +65,7 @@ mod stats_wrapped;
 mod storage;
 mod totp;
 mod ws;
+mod ws_channels;
 
 use async_graphql::Schema;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -229,6 +230,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     ticker.tick().await;
                     jam_clock::tick(&db, &hub);
+                }
+            });
+        }
+
+        // Replay buffers expire on the scale of seconds, not of the storage sweep. Left to the
+        // fifteen-minute pass, an account that stopped receiving would hold its last burst of
+        // presence frames for that long.
+        {
+            let hub = ws_hub.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(ws_channels::REPLAY_TTL);
+                loop {
+                    ticker.tick().await;
+                    hub.channels.sweep();
                 }
             });
         }

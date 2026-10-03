@@ -212,7 +212,7 @@ async fn a_push_reaches_owner_and_followers_and_carries_only_id_and_revision() {
         )
         .await,
     );
-    let mut rx = h.hub.tx.subscribe();
+    let mut rx = h.hub.channels.tap.subscribe();
 
     h.run_as(
         &h.alpha,
