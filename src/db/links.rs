@@ -50,6 +50,8 @@ impl Db {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, target_url, user_id, unix_now(), source, expires_at],
         )?;
+        // A fresh id that happens to match a deleted one is a live link now, not a deleted one.
+        conn.execute("DELETE FROM retired_short_links WHERE id = ?1", params![id])?;
         Ok(())
     }
 

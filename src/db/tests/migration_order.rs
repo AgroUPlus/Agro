@@ -109,6 +109,8 @@ const SHIPPED: &[&str] = &[
     "7ba7fb712ebb777d",
     "0843bda0607e7dc0",
     "b57e6f29183a7c68",
+    // Short-link reuse. Shipped on `main` as 50 and moved here: see the entry's own comment.
+    "722e6f5d40e2e152",
 ];
 
 fn digest(migration: &str) -> String {

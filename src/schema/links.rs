@@ -115,7 +115,8 @@ pub struct LinksMutation;
 
 #[Object]
 impl LinksMutation {
-    /// Creates a short UID for a share URL. Returns the short link UID (e.g. "aB3x9Q").
+    /// Creates a short UID for a share URL. Returns the short link UID (e.g. "aB3x9Q"), or the
+    /// account's existing open-ended link to the same target — see `db_short_links`.
     ///
     /// `source` records which backend minted the underlying share — `"navidrome"` when the link
     /// points at a Navidrome share, so deleting it later can also revoke it there.
@@ -143,6 +144,12 @@ impl LinksMutation {
         // domain. `/listen` checks the host against an allowlist; this checks the scheme.
         if !target_url.starts_with("https://") && !target_url.starts_with("http://") {
             return Err("A link target must be an http or https URL".into());
+        }
+        // The same target shared again gets the link it already has, rather than one more row.
+        if expires_at.is_none() {
+            if let Some(existing) = db.reuse_short_link(&user_id, target_url, source.as_deref())? {
+                return Ok(existing);
+            }
         }
         use rand::Rng;
         const CHARSET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

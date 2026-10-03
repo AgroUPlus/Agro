@@ -27,4 +27,22 @@ pub(super) const ENTRIES: &[&str] = &[
          FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
      );
      CREATE INDEX IF NOT EXISTS idx_playlist_followers_user ON playlist_followers(user_id);",
+    // 51 — one short link per target, and links that lapse when nobody uses them.
+    //
+    // Every share minted a new row, so sending the same track ten times left ten links behind, and
+    // none of them ever went unless it had named a deadline. `last_shared_at` records the owner
+    // sending a link again, which counts as use alongside a click; the index is what finding the
+    // existing link for a target is looked up by. `retired_short_links` keeps only the ids of
+    // links swept for going unused — no target, no owner — so `/listen` can say the link was
+    // deleted rather than that it never existed. See `db_short_links`.
+    //
+    // Shipped on `main` as 50 while collaborative playlists took 50 on the branch production
+    // runs; production was already stamped 50 with the playlist columns, so this is the entry that
+    // moved.
+    "ALTER TABLE short_links ADD COLUMN last_shared_at INTEGER;
+     CREATE INDEX IF NOT EXISTS idx_short_links_owner_target ON short_links(user_id, target_url);
+     CREATE TABLE IF NOT EXISTS retired_short_links (
+         id         TEXT PRIMARY KEY,
+         retired_at INTEGER NOT NULL
+     );",
 ];

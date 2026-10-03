@@ -24,6 +24,7 @@ mod db_playlists;
 mod db_popularity;
 mod db_presence;
 mod db_replay;
+mod db_short_links;
 mod db_social;
 mod embedded_dashboard;
 mod feature_toggle_tests;
@@ -34,6 +35,7 @@ mod jam_clock;
 mod library;
 mod listen;
 mod listen_playlist;
+mod listen_retired;
 mod login;
 mod norm;
 mod offers;
@@ -258,6 +260,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 library::sweep_storage(&state).await;
                 // Rides the same ticker rather than taking its own: both are housekeeping at the
                 // same rate, and a second timer would only be a second thing to reason about.
+                // Before `sweep_retention`, which deletes expired links without a tombstone; this
+                // one leaves the ids behind so `/listen` can say the link was deleted.
+                match state.db.sweep_idle_short_links() {
+                    Ok(n) if n > 0 => tracing::debug!("retention sweep: {n} idle short links"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("retention sweep: idle short links failed: {e}"),
+                }
                 state.db.sweep_retention();
                 // Separate call rather than a line inside `sweep_retention`, which holds the
                 // connection mutex for its whole body — the mutex is not reentrant.
