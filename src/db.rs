@@ -1072,6 +1072,20 @@ const MIGRATIONS: &[&str] = &[
     // and owner-only. Defaults to 0, so every playlist that existed keeps exactly the audience it
     // had, and a new one is closed until someone opens it — see `playlist_visibility`.
     "ALTER TABLE playlists ADD COLUMN friends_only INTEGER NOT NULL DEFAULT 0;",
+    // 50 — one short link per target, and links that lapse when nobody uses them.
+    //
+    // Every share minted a new row, so sending the same track ten times left ten links behind, and
+    // none of them ever went unless it had named a deadline. `last_shared_at` records the owner
+    // sending a link again, which counts as use alongside a click; the index is what finding the
+    // existing link for a target is looked up by. `retired_short_links` keeps only the ids of
+    // links swept for going unused — no target, no owner — so `/listen` can say the link was
+    // deleted rather than that it never existed. See `db_short_links`.
+    "ALTER TABLE short_links ADD COLUMN last_shared_at INTEGER;
+     CREATE INDEX IF NOT EXISTS idx_short_links_owner_target ON short_links(user_id, target_url);
+     CREATE TABLE IF NOT EXISTS retired_short_links (
+         id         TEXT PRIMARY KEY,
+         retired_at INTEGER NOT NULL
+     );",
 ];
 
 /// How long a play keeps its exact timestamp. Past this, no outbox is still holding it, so
@@ -2329,6 +2343,8 @@ impl Db {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![id, target_url, user_id, unix_now(), source, expires_at],
         )?;
+        // A fresh id that happens to match a deleted one is a live link now, not a deleted one.
+        conn.execute("DELETE FROM retired_short_links WHERE id = ?1", params![id])?;
         Ok(())
     }
 

@@ -138,6 +138,15 @@ tags or from a backend, and never authored by the server showing it.
 A forwarder that cannot resolve a link MUST serve a human-readable refusal page. It MUST NOT
 redirect anywhere, and MUST NOT reveal why beyond "this link is not one we forward".
 
+### 6a. Reuse and lapse (Agro short links)
+
+- Minting a short link for a target the account already holds an open-ended link to (same target
+  URL and source, no `expiresAt`) MUST return that link rather than a new one. Sending it again
+  counts as use.
+- A short link nobody has opened or re-shared for **30 days** MUST be deleted. The forwarder keeps
+  only its id, for up to a year, and answers that id with a page saying the link was deleted
+  (`410 Gone`) instead of the §6 refusal. That page names no track, owner or date.
+
 ---
 
 ## 7. Reaching the app
@@ -195,6 +204,7 @@ it has no server behind.
 | §5 allowlist | ✅ `isAllowed()` | ✅ `resolve()` | ✅ `ALLOWED_HOSTS` |
 | §5a escaping | n/a | ✅ `escape_html()` | ✅ DOM APIs, no `innerHTML` |
 | §7 accepts own hosts | ✅ `ownHosts()` | n/a | n/a |
+| §6a reuse and lapse | n/a | ✅ `db_short_links` | n/a |
 | §8 no visitor log | n/a | ✅ | ✅ |
 
 All three conform as of version 1.
