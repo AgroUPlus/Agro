@@ -3,6 +3,7 @@
 use async_graphql::{InputObject, SimpleObject};
 
 use crate::db::Db;
+use crate::db_library::album_key;
 use crate::db_playlist_items::{NewPlaylistItem, PlaylistItem};
 use crate::db_playlists::Playlist;
 use crate::playlist_access::{EditAccess, PlaylistRole};
@@ -25,6 +26,9 @@ pub struct PlaylistItemPayload {
     /// Who added it. Only meaningful to show once others can edit, but always sent.
     pub added_by: Option<String>,
     pub added_at: Option<String>,
+    /// The album's cover on this server, when it has one: fetch `/api/v1/cover/{coverKey}`. Most
+    /// items carry no artwork of their own, so this is what lets a playlist show any.
+    pub cover_key: Option<String>,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -81,8 +85,15 @@ impl PlaylistTrackInput {
     }
 }
 
-pub fn to_item_payload(item: PlaylistItem) -> PlaylistItemPayload {
-    PlaylistItemPayload {
+pub fn to_item_payload(db: &Db, item: PlaylistItem) -> async_graphql::Result<PlaylistItemPayload> {
+    let cover_key = match item.album.as_deref().filter(|a| !a.trim().is_empty()) {
+        Some(album) => {
+            let key = album_key(&item.artist, album);
+            db.cover_extension(&key)?.map(|_| key)
+        }
+        None => None,
+    };
+    Ok(PlaylistItemPayload {
         id: item.id,
         playlist_id: item.playlist_id,
         position: item.position,
@@ -96,7 +107,8 @@ pub fn to_item_payload(item: PlaylistItem) -> PlaylistItemPayload {
         origin_uri: item.origin_uri,
         added_by: item.added_by,
         added_at: item.added_at,
-    }
+        cover_key,
+    })
 }
 
 /// `p` as `viewer` sees it. The caller has already checked they may open it.
@@ -112,7 +124,10 @@ pub fn to_playlist_payload(
     Ok(PlaylistPayload {
         item_count: items.len() as i32,
         total_duration_ms: items.iter().filter_map(|it| it.duration_ms).sum(),
-        items: items.into_iter().map(to_item_payload).collect(),
+        items: items
+            .into_iter()
+            .map(|item| to_item_payload(db, item))
+            .collect::<async_graphql::Result<_>>()?,
         id: p.id,
         user_id: p.user_id,
         title: p.title,

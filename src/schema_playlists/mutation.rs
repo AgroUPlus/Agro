@@ -65,7 +65,7 @@ impl PlaylistWriteMutation {
 
         let item = db.add_playlist_item(&playlist_id, authed.username(), track.into_item()?)?;
         announce_change(ctx, &playlist_id)?;
-        Ok(to_item_payload(item))
+        to_item_payload(db, item)
     }
 
     /// Removes a track from a playlist by item ID. Owner only; see `addTrackToPlaylist`.
