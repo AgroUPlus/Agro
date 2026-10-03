@@ -262,6 +262,7 @@ impl JamQuery {
     async fn friend_jams(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<FriendJamPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let mut open = Vec::new();
         for jam in db.friend_jams(authed.username())? {
@@ -281,6 +282,7 @@ impl JamQuery {
     async fn jam(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<JamPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         match db.jam_for_member(authed.username())? {
             Some(jam) => Ok(Some(describe(
                 db,
@@ -309,6 +311,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
             db.leave_jam(&existing.id, authed.username())?;
@@ -332,6 +335,7 @@ impl JamMutation {
     async fn join_jam(&self, ctx: &Context<'_>, code: String) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         // The same words for a wrong code and an ended one. A code is a credential, and telling
         // the difference apart is how you find out which codes exist.
@@ -366,6 +370,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let jam = db
             .friend_jams(authed.username())?
@@ -396,6 +401,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         if !jam.host.eq_ignore_ascii_case(&me) {
             return Err(forbidden("only the creator can open the jam up"));
         }
@@ -418,6 +424,7 @@ impl JamMutation {
     async fn vote_skip_jam_track(&self, ctx: &Context<'_>) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let Some(track_id) = jam.now_playing_id.clone() else {
             return Err("Nothing is playing to skip".into());
@@ -448,6 +455,7 @@ impl JamMutation {
     async fn leave_jam(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let creator_left = jam.host.eq_ignore_ascii_case(&me);
         db.leave_jam(&jam.id, &me)?;
@@ -490,6 +498,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let title = title.trim();
         if title.is_empty() {
@@ -532,6 +541,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         if db.jam_track_owner(&jam.id, &track_id)?.is_none() {
             return Err(forbidden("that track is not in this jam"));
@@ -554,6 +564,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let owner = db
             .jam_track_owner(&jam.id, &track_id)?
@@ -585,6 +596,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         if !jam.host.eq_ignore_ascii_case(&me) {
             return Err(forbidden("only the host can change the mode"));
         }

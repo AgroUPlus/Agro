@@ -81,6 +81,10 @@ impl OfferBatcher {
 
 /// Offers each of the account's devices whatever it is currently missing.
 fn announce(db: &Db, hub: &Arc<WsHub>, user_id: &str) {
+    // Every offer points at a transfer the server would refuse.
+    if !crate::features::Feature::LibraryTransfers.is_on(db) {
+        return;
+    }
     let mut device_ids = HashSet::new();
     if let Ok(nodes) = db.get_active_nodes(user_id) {
         for node in nodes {

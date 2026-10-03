@@ -197,6 +197,16 @@ heartbeat every 30 s and ten friends per account:
 
 Relayed audio and uploads are bounded by bandwidth rather than CPU, and are not in these numbers.
 
+### Turning features off
+
+**Management → Plugins & Rules** in the dashboard lists every server feature that costs CPU, disk or
+bandwidth, with what each one costs, and lets an admin switch it off for the whole server:
+audio relay, library uploads & transfers, the privacy proxy, share links, friends' now playing,
+listen along, jams, acoustic search, Agro Wrapped and the popular chart. A feature that is off is
+refused — `403` with `"code": "FEATURE_DISABLED"` over HTTP, a GraphQL error with the same code —
+and clients can read the current state from `serverFeatures`. Everything is on until switched off,
+and switching a feature back on loses nothing.
+
 ---
 
 ## Quickstart

@@ -3,7 +3,7 @@
 use crate::auth::AuthedUser;
 use crate::db::Db;
 use crate::plugins::AgroPlugin;
-use async_graphql::{Context, Object};
+use async_graphql::{Context, Object, SimpleObject};
 
 use super::nodes::NODE_ONLINE_SECONDS;
 use super::require_admin;
@@ -47,6 +47,13 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
     }
 }
 
+/// One switchable feature and whether it is on.
+#[derive(SimpleObject)]
+pub struct ServerFeature {
+    pub id: String,
+    pub enabled: bool,
+}
+
 #[derive(Default)]
 pub struct PluginsQuery;
 
@@ -59,14 +66,29 @@ impl PluginsQuery {
         require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
         let caller = ctx.data::<AuthedUser>()?.username().to_string();
-        let saved_states = db.get_plugin_states().unwrap_or_default();
-        let mut plugins = crate::plugins::get_plugins(&plugin_context(db, &caller));
-        for p in &mut plugins {
-            if let Some(&enabled) = saved_states.get(&p.id) {
-                p.is_enabled = enabled;
-            }
-        }
-        Ok(plugins)
+        Ok(crate::plugins::get_plugins(
+            &plugin_context(db, &caller),
+            db,
+        ))
+    }
+
+    /// Which server features are on, for any signed-in account.
+    ///
+    /// Clients read this to hide what the operator has switched off, rather than offering a screen
+    /// whose every call will be refused with `FEATURE_DISABLED`.
+    async fn server_features(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<ServerFeature>> {
+        super::caller(ctx)?;
+        let db = ctx.data::<Db>()?;
+        Ok(crate::features::Feature::ALL
+            .into_iter()
+            .map(|feature| ServerFeature {
+                id: feature.id().to_string(),
+                enabled: feature.is_on(db),
+            })
+            .collect())
     }
 }
 
@@ -85,6 +107,13 @@ impl PluginsMutation {
     ) -> async_graphql::Result<bool> {
         require_admin(ctx)?;
         let db = ctx.data::<Db>()?;
+        // Only what the server can actually refuse. This used to accept any id at all, so the
+        // dashboard's switches wrote rows nothing ever read.
+        if crate::features::Feature::from_id(&plugin_id).is_none() {
+            return Err(async_graphql::Error::new(format!(
+                "\"{plugin_id}\" is not something this server can switch off."
+            )));
+        }
         db.set_plugin_enabled(&plugin_id, is_enabled)?;
         Ok(true)
     }

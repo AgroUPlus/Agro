@@ -6,8 +6,6 @@ import LogsTab from './LogsTab.jsx';
 
 export default function ManagementTab({
   me,
-  rules,
-  onToggleRule,
   logs = [],
   onUnauthorized
 }) {
@@ -49,7 +47,7 @@ export default function ManagementTab({
         <PeopleTab me={me} onUnauthorized={onUnauthorized} />
       )}
       {subSection === 'plugins' && (
-        <AdminPluginsTab rules={rules} onToggleRule={onToggleRule} />
+        <AdminPluginsTab onUnauthorized={onUnauthorized} />
       )}
       {subSection === 'logs' && (
         <LogsTab logs={logs} />

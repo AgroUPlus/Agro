@@ -1,6 +1,6 @@
 //! Which plugins the operator has switched on.
 
-use rusqlite::{params, Result};
+use rusqlite::{params, OptionalExtension, Result};
 
 use super::Db;
 
@@ -13,6 +13,18 @@ impl Db {
             params![plugin_id, is_enabled],
         )?;
         Ok(())
+    }
+
+    /// One plugin's saved state, or `None` when nobody has ever switched it. Read on hot paths —
+    /// every heartbeat asks about presence — so it is a primary-key lookup on a reader.
+    pub fn plugin_state(&self, plugin_id: &str) -> Result<Option<bool>> {
+        self.read()
+            .query_row(
+                "SELECT is_enabled FROM plugins_state WHERE id = ?1",
+                params![plugin_id],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     pub fn get_plugin_states(&self) -> Result<std::collections::HashMap<String, bool>> {

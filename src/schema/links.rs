@@ -215,6 +215,7 @@ impl LinksMutation {
     ) -> async_graphql::Result<SharePayload> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::ShareLinks.require(db)?;
         let ttl = ttl_hours.unwrap_or(24);
         let token = db.create_ephemeral_share(
             &user_id,

@@ -26,6 +26,8 @@ mod db_presence;
 mod db_replay;
 mod db_social;
 mod embedded_dashboard;
+mod feature_toggle_tests;
+mod features;
 mod guest_boundary_tests;
 mod importer;
 mod jam_clock;
@@ -76,6 +78,7 @@ use axum::{
     Router,
 };
 use db::Db;
+use features::Feature;
 use schema::{AgroSchema, Mutation, Query};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -272,28 +275,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Each switchable feature's routes refuse while it is off. See `features::gate`.
+    let gated = |feature: Feature| {
+        axum::middleware::from_fn_with_state((db.clone(), feature), features::gate)
+    };
+
     // Everything that exposes a user's data sits behind the token check; the dashboard's own
     // static files and the capability-URL share endpoint stay public.
     let protected = Router::new()
         .route("/graphql", post(graphql_handler))
         .route("/ws/sync", get(ws::ws_handler))
-        .route("/api/v1/library/upload", post(library::begin_upload))
+        .route(
+            "/api/v1/library/upload",
+            post(library::begin_upload).layer(gated(Feature::LibraryTransfers)),
+        )
         .route(
             "/api/v1/library/upload/{upload_id}",
-            put(library::put_upload).layer(DefaultBodyLimit::disable()),
+            put(library::put_upload)
+                .layer(DefaultBodyLimit::disable())
+                .layer(gated(Feature::LibraryTransfers)),
         )
-        .route("/api/v1/library/fetch/{content_hash}", get(library::fetch))
+        .route(
+            "/api/v1/library/fetch/{content_hash}",
+            get(library::fetch).layer(gated(Feature::LibraryTransfers)),
+        )
         .route("/api/v1/cover/{album_key}", get(library::cover))
-        .route("/api/v1/relay/open", post(relay::open_relay))
+        .route(
+            "/api/v1/relay/open",
+            post(relay::open_relay).layer(gated(Feature::AudioRelay)),
+        )
         .route(
             "/api/v1/relay/{session_id}/send",
-            post(relay::send_relay).layer(DefaultBodyLimit::disable()),
+            post(relay::send_relay)
+                .layer(DefaultBodyLimit::disable())
+                .layer(gated(Feature::AudioRelay)),
         )
         .route(
             "/api/v1/relay/{session_id}/receive",
-            get(relay::receive_relay),
+            get(relay::receive_relay).layer(gated(Feature::AudioRelay)),
         )
-        .route("/api/v1/proxy", axum::routing::any(proxy::proxy_handler))
+        .route(
+            "/api/v1/proxy",
+            axum::routing::any(proxy::proxy_handler).layer(gated(Feature::PrivacyProxy)),
+        )
         .route("/api/v1/oidc/link", get(oidc::start_link))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

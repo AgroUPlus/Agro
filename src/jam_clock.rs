@@ -40,6 +40,10 @@ const ABANDONED_AFTER_MS: i64 = 5 * 60 * 1000;
 
 /// One pass over every live jam.
 pub fn tick(db: &Db, hub: &Arc<WsHub>) {
+    // Switched off, the rooms are frozen rather than deleted: turning jams back on resumes them.
+    if !crate::features::Feature::Jams.is_on(db) {
+        return;
+    }
     let Ok(jams) = db.live_jams() else { return };
     for jam in jams {
         if let Err(err) = advance(db, hub, &jam) {

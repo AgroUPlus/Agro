@@ -61,6 +61,7 @@ impl AcousticQuery {
         #[graphql(default = 20)] limit: i64,
     ) -> Result<Vec<SimilarTrackEntry>> {
         let state = ctx.data::<AppState>()?;
+        crate::features::Feature::AcousticSearch.require(&state.db)?;
         ctx.data::<AuthedUser>()?;
 
         let limit = limit.clamp(1, 100) as usize;
@@ -99,6 +100,7 @@ impl AcousticMutation {
         entries: Vec<AcousticVectorInput>,
     ) -> Result<i32> {
         let state = ctx.data::<AppState>()?;
+        crate::features::Feature::AcousticSearch.require(&state.db)?;
         // The last point at which anyone knows who is speaking. Nothing below this line does.
         ctx.data::<AuthedUser>()?;
 

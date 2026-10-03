@@ -141,6 +141,7 @@ impl StatsQuery {
     ) -> async_graphql::Result<AgroWrappedPayload> {
         crate::schema_social::require_visible(ctx, &user_id, crate::schema_social::Surface::Stats)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Wrapped.require(db)?;
         let rows = db.scrobble_rows(&user_id, None, None)?;
         let wrapped = crate::stats_wrapped::compute_wrapped(
             &rows,

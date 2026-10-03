@@ -104,6 +104,7 @@ impl SyncOffersMutation {
         device_id: String,
     ) -> async_graphql::Result<i32> {
         authorize(ctx, &user_id)?;
+        crate::features::Feature::LibraryTransfers.require(ctx.data::<Db>()?)?;
         let missing = ctx
             .data::<Db>()?
             .missing_on_device(&user_id, &device_id, MAX_MISSING)?;

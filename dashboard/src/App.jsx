@@ -4,8 +4,7 @@ import {
   setToken,
   gql,
   consumeSsoFragment,
-  setEnrolmentRequiredHandler,
-  FALLBACK_RULES
+  setEnrolmentRequiredHandler
 } from './api.js';
 import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
@@ -56,7 +55,6 @@ export default function App() {
   const isAdmin = role === 'admin';
 
   const [nodes, setNodes] = useState([]);
-  const [rules, setRules] = useState(FALLBACK_RULES);
   const [lastHandoff, setLastHandoff] = useState({
     title: 'Wander Daemon Ready',
     artist: 'Kolb Audio Subsystem',
@@ -125,18 +123,6 @@ export default function App() {
         { time: new Date().toLocaleTimeString(), event: `[NODE] Removed device ${deviceId}` },
         ...prev
       ]);
-    } catch (e) {
-      if (e.unauthorized) setLocked(true);
-    }
-  };
-
-  const handleToggleRule = async (id) => {
-    const target = rules.find((r) => r.id === id);
-    if (!target) return;
-    const nextState = !target.isEnabled;
-    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, isEnabled: nextState } : r)));
-    try {
-      await gql(`mutation TogglePluginState { togglePlugin(pluginId: "${id}", isEnabled: ${nextState}) }`);
     } catch (e) {
       if (e.unauthorized) setLocked(true);
     }
@@ -273,8 +259,6 @@ export default function App() {
           {activeTab === 'management' && isAdmin && (
             <ManagementTab
               me={username}
-              rules={rules}
-              onToggleRule={handleToggleRule}
               logs={syncLogs}
               onUnauthorized={() => setLocked(true)}
             />
