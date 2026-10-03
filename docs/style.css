@@ -315,6 +315,26 @@ section { padding: 90px 0; }
   gap: 28px;
 }
 
+.promo-group-title {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  font-size: 1.25rem; font-weight: 800; color: var(--md-sys-color-on-surface); margin: 0 0 20px;
+}
+.promo-grid + .promo-group-title { margin-top: 48px; }
+.promo-group-sub { font-size: 13.5px; font-weight: 500; color: var(--md-sys-color-on-surface-variant); }
+
+/* Ecosystem: which part does what */
+#ecosystem { border-top: 2px dashed var(--md-sys-color-outline-variant); }
+.eco-card { display: flex; flex-direction: column; }
+.eco-kind {
+  font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--md-sys-color-outline); margin-bottom: 2px;
+}
+.eco-link {
+  margin-top: auto; padding-top: 14px; font-size: 13px; font-weight: 700;
+  color: var(--md-sys-color-primary); text-decoration: none;
+}
+.eco-link:hover { text-decoration: underline; }
+
 .promo-card {
   background: var(--md-sys-color-surface-container-low);
   border: 2px solid var(--md-sys-color-outline-variant);

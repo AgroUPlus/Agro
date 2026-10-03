@@ -5,7 +5,7 @@
 <h1 align="center">Agro</h1>
 
 <p align="center">
-  Open-source, self-hosted music ecosystem for <a href="https://github.com/AgroUPlus/Wander">Wander</a> and <a href="https://github.com/AgroUPlus/Wanda">Wanda</a>
+  The self-hosted server behind <a href="https://github.com/AgroUPlus/Wanda">Wanda</a> (Android) and <a href="https://github.com/AgroUPlus/Wander">Wander</a> (desktop)
 </p>
 
 <p align="center">
@@ -38,13 +38,19 @@ Agro is a lightweight Rust daemon that keeps playback state, library sync, and s
 
 ---
 
-## Screenshots
+## What's what
+
+| | What it is | Needs Agro? |
+|---|---|---|
+| **Agro** (this repo) | The server: handoff, jam rooms, friends, shared playlists, share links, stats across devices. Self-host it, or use Agro Cloud. | — |
+| **[Wanda](https://github.com/AgroUPlus/Wanda)** | The Android player: Navidrome/Subsonic, local files, YouTube Music and Deezer in one library. | No. Agro adds the shared features. |
+| **[Wander](https://github.com/AgroUPlus/Wander)** | The terminal player for Linux: Navidrome/Subsonic and local files. | No. Agro adds the shared features. |
+
+The screenshots below are from Wanda and Wander, showing what they can do once connected to Agro.
 
 <p align="center">
-  <img src="docs/assets/shot-artist.jpg" width="180" alt="Artist profile" />
-  <img src="docs/assets/shot-lyrics.jpg" width="180" alt="Player & lyrics" />
-  <img src="docs/assets/shot-mix.jpg" width="180" alt="Daily mix" />
-  <img src="docs/assets/shot-stats.jpg" width="180" alt="Listening stats" />
+  <img src="docs/assets/mockups/promo-agro-devices.jpg" width="49%" alt="Wander on a desktop beside two Wanda phones: playback hands off between them and stats cover every device" />
+  <img src="docs/assets/mockups/promo-agro-social.jpg" width="49%" alt="Wanda's friends list, a jam room and a shared playlist's edit settings" />
 </p>
 
 ---
