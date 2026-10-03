@@ -16,13 +16,14 @@ import SocialTab from './tabs/SocialTab.jsx';
 import DevicesTab from './tabs/DevicesTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
 import PopularTab from './tabs/PopularTab.jsx';
-import LibraryBrowser from './tabs/LibraryBrowser.jsx';
+import LibraryTab from './tabs/LibraryTab.jsx';
 import LinksTab from './tabs/LinksTab.jsx';
 import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
 import ManagementTab from './tabs/ManagementTab.jsx';
 
 function getTabFromHash() {
-  const hash = window.location.hash.replace(/^#\/?/, '').trim();
+  // Only the first segment names the tab; the Library tab routes the rest itself.
+  const hash = window.location.hash.replace(/^#\/?/, '').trim().split('/')[0];
   const valid = ALL_TABS.map((item) => item.id);
   return valid.includes(hash) ? hash : 'social';
 }
@@ -82,6 +83,10 @@ export default function App() {
     window.location.hash = `#/${tabId}`;
     if (tabId === 'social') setUnreadDrops(0);
   };
+
+  // Stable, because the Library pages fetch in effects that depend on it and this component
+  // re-renders on every poll.
+  const lockOut = useCallback(() => setLocked(true), []);
 
   const handleSignOut = () => {
     setToken('');
@@ -254,7 +259,7 @@ export default function App() {
           )}
 
           {activeTab === 'library' && (
-            <LibraryBrowser username={username} devices={nodes} onUnauthorized={() => setLocked(true)} />
+            <LibraryTab username={username} devices={nodes} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'links' && (
