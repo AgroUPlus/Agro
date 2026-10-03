@@ -40,6 +40,9 @@ pub struct Stats {
     /// Seconds per device, most-listened first. Only meaningful across a fleet, so it has no
     /// counterpart in the single-machine version this is ported from.
     pub by_device: Vec<(String, i64)>,
+    /// When the earliest play counted here happened, Unix seconds. None with no dated play. What
+    /// lets a client turn an all-time total into a per-day average: ALL has no length of its own.
+    pub first_played_at: Option<i64>,
 }
 
 pub fn compute(rows: &[ScrobbleRow], top_n: usize, now: i64) -> Stats {
@@ -72,6 +75,7 @@ pub fn compute(rows: &[ScrobbleRow], top_n: usize, now: i64) -> Stats {
 
         stats.secs_total += secs;
         if let Some(at) = at {
+            stats.first_played_at = Some(stats.first_played_at.map_or(at, |first| first.min(at)));
             if at >= day_ago {
                 stats.secs_today += secs;
             }
@@ -352,5 +356,23 @@ mod tests {
     fn period_start_is_none_for_all_time() {
         assert!(period_start("ALL", 0).is_none());
         assert!(period_start("WEEK", 10 * DAY).is_some());
+    }
+
+    #[test]
+    fn reports_when_the_earliest_dated_play_happened() {
+        let now = 1_800_000_000;
+        let rows = vec![
+            row("A", "Late", 60, now - DAY, "phone"),
+            row("A", "Early", 60, now - 30 * DAY, "phone"),
+            ScrobbleRow {
+                played_at: "not a date".to_string(),
+                ..row("A", "Undated", 60, now, "phone")
+            },
+        ];
+        assert_eq!(
+            compute(&rows, 10, now).first_played_at,
+            Some(now - 30 * DAY)
+        );
+        assert_eq!(compute(&[], 10, now).first_played_at, None);
     }
 }

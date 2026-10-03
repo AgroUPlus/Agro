@@ -32,6 +32,9 @@ pub struct ListeningStats {
     pub by_hour: Vec<i64>,
     /// Seconds per device, most-listened first.
     pub by_device: Vec<StatEntry>,
+    /// When the earliest play in the period happened, Unix seconds; null when there is none.
+    /// How long ALL actually is, so a client can average over it.
+    pub first_played_at: Option<i64>,
 }
 
 fn to_listening_stats(stats: crate::stats::Stats) -> ListeningStats {
@@ -49,6 +52,7 @@ fn to_listening_stats(stats: crate::stats::Stats) -> ListeningStats {
         heatmap: stats.heatmap,
         by_hour: stats.by_hour,
         by_device: to_entries(stats.by_device),
+        first_played_at: stats.first_played_at,
     }
 }
 
