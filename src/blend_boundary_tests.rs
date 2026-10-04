@@ -282,7 +282,10 @@ async fn it_is_written_only_once_everyone_asked_has_answered() {
                  mix: 50, window: ALL_TIME, refresh: WEEKLY) { playlistId } }"#,
         )
         .await;
-    let id = made["createBlend"]["playlistId"].as_str().unwrap().to_string();
+    let id = made["createBlend"]["playlistId"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let count = |data: &Value| data["playlist"]["items"].as_array().unwrap().len();
 
     h.ok(
@@ -308,9 +311,8 @@ async fn it_is_written_only_once_everyone_asked_has_answered() {
 #[test]
 fn a_blend_written_before_everyone_answered_is_emptied_until_they_have() {
     let h = harness();
-    let blend = h
-        .db
-        .create_blend(
+    let blend =
+        h.db.create_blend(
             "alpha",
             "Early",
             &["beta".to_string()],
@@ -347,7 +349,13 @@ fn a_blend_written_before_everyone_answered_is_emptied_until_they_have() {
         .unwrap();
     }
 
-    assert!(h.db.refresh_blend_if_due(&blend.id).unwrap().is_some(), "members are told");
+    assert!(
+        h.db.refresh_blend_if_due(&blend.id).unwrap().is_some(),
+        "members are told"
+    );
     assert!(h.db.get_playlist_items(&blend.id).unwrap().is_empty());
-    assert!(h.db.refresh_blend_if_due(&blend.id).unwrap().is_none(), "nothing left to remove");
+    assert!(
+        h.db.refresh_blend_if_due(&blend.id).unwrap().is_none(),
+        "nothing left to remove"
+    );
 }
