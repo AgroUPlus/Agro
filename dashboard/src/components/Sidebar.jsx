@@ -6,6 +6,7 @@ import {
   BarChart3,
   TrendingUp,
   Link2 as LinkIcon,
+  ArchiveRestore,
   Settings,
   ShieldCheck,
   LogOut,
@@ -21,6 +22,7 @@ export const NAV_ITEMS = [
   { id: 'popular', label: 'Popular on Agro', icon: TrendingUp },
   { id: 'library', label: 'Library', icon: Library },
   { id: 'links', label: 'Links', icon: LinkIcon },
+  { id: 'backups', label: 'Backups', icon: ArchiveRestore },
   { id: 'management', label: 'Management', icon: ShieldCheck, adminOnly: true }
 ];
 

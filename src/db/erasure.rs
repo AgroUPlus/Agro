@@ -32,6 +32,7 @@ const OWNED_BY_USERNAME: &[&str] = &[
     "spool_items",
     "upload_sessions",
     "playlist_followers",
+    "vault_backups",
 ];
 
 impl Db {

@@ -118,6 +118,18 @@ fn a_deleted_account_leaves_no_trace_and_others_keep_what_is_theirs() {
     db.create_drop(GONE, "alpha", &drop).unwrap();
     db.subscribe_artist(GONE, "Some Artist", None).unwrap();
     db.create_invite(GONE, 1, None).unwrap();
+    let label = crate::db_vault::VaultLabel {
+        device_id: "phone".into(),
+        device_name: Some("Pixel".into()),
+        app_version: Some("1.5.5".into()),
+        format: 1,
+        plain_bytes: 10,
+        sections: vec![crate::db_vault::VaultSection {
+            name: "SETTINGS".into(),
+            count: 4,
+        }],
+    };
+    db.store_vault_backup(GONE, &label, b"sealed").unwrap();
 
     // Their playlist, followed by alpha; alpha's playlist, which they added to and follow.
     let theirs = db

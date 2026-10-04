@@ -115,6 +115,8 @@ const SHIPPED: &[&str] = &[
     "6babe8292559a2ea",
     // Blends.
     "e96d5df36a9708a4",
+    // Cloud vault.
+    "b13680827a693bcb",
 ];
 
 fn digest(migration: &str) -> String {
