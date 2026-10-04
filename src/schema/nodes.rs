@@ -52,6 +52,8 @@ pub fn server_capabilities() -> Vec<String> {
         "playlists.blends".to_string(),
         // The cloud vault: `vaultBackups`, and the byte routes under `/api/v1/vault/backups`.
         "vault.backups".to_string(),
+        // `vaultKeyEnvelope`: a device paired without the passphrase can still unlock the vault.
+        "vault.keyEnvelope".to_string(),
     ]
 }
 

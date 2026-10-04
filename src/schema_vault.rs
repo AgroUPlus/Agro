@@ -46,6 +46,13 @@ impl From<VaultBackup> for VaultBackupPayload {
     }
 }
 
+/// The account's vault key as the server keeps it: sealed under the passphrase, which it never has.
+#[derive(SimpleObject, Clone)]
+pub struct VaultKeyEnvelope {
+    pub vault_salt: String,
+    pub vault_key_wrapped: String,
+}
+
 /// The rules a client shows, so it never has to hard-code them and disagree.
 #[derive(SimpleObject, Clone)]
 pub struct VaultLimits {
@@ -67,6 +74,28 @@ impl VaultQuery {
         let db = ctx.data::<Db>()?;
         Feature::CloudBackups.require(db)?;
         Ok(db.vault_backups(me)?.into_iter().map(Into::into).collect())
+    }
+
+    /// Your sealed vault key, or null before any device has enrolled one.
+    ///
+    /// For a device that signed in without the passphrase — by pairing QR or device token — and so
+    /// never received the envelope login hands out. It asks the user for the passphrase and unwraps
+    /// this on the device; the server learns nothing it did not have, and no new sign-in is minted.
+    ///
+    /// Not behind the backups switch: the same key seals synced settings. What it hands a stolen
+    /// token is an Argon2id-wrapped key, as a stolen database already holds.
+    async fn vault_key_envelope(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Option<VaultKeyEnvelope>> {
+        let me = caller(ctx)?.username();
+        Ok(match ctx.data::<Db>()?.vault_envelope(me)? {
+            (Some(vault_salt), Some(vault_key_wrapped)) => Some(VaultKeyEnvelope {
+                vault_salt,
+                vault_key_wrapped,
+            }),
+            _ => None,
+        })
     }
 
     async fn vault_limits(&self) -> VaultLimits {
