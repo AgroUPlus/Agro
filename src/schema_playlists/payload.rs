@@ -52,6 +52,8 @@ pub struct PlaylistPayload {
     pub my_role: PlaylistRole,
     pub is_following: bool,
     pub total_duration_ms: i64,
+    /// Written by Agro from its members' listening (see `blend`); nobody edits it by hand.
+    pub is_blend: bool,
 }
 
 #[derive(InputObject, Clone)]
@@ -121,6 +123,7 @@ pub fn to_playlist_payload(
     let my_role = db.playlist_role(&p, viewer)?;
     let is_following = db.is_following_playlist(&p.id, viewer)?;
     let visibility = p.visibility();
+    let is_blend = p.is_generated();
     Ok(PlaylistPayload {
         item_count: items.len() as i32,
         total_duration_ms: items.iter().filter_map(|it| it.duration_ms).sum(),
@@ -140,6 +143,7 @@ pub fn to_playlist_payload(
         edit_access: p.edit_access.clamped_to(visibility),
         my_role,
         is_following,
+        is_blend,
     })
 }
 

@@ -74,10 +74,7 @@ export default function Sidebar({
             onClick={() => setShowUserMenu(!showUserMenu)}
           >
             <Avatar username={username} size={22} />
-            <span className="user-badge-text">
-              <span className="user-badge-name">{username || '…'}</span>
-              <span className="user-badge-version">{import.meta.env.VITE_AGRO_VERSION}</span>
-            </span>
+            <span className="user-badge-name">{username || '…'}</span>
             {isAdmin && <span className="role-chip">admin</span>}
             <ChevronDown size={14} />
           </button>
@@ -109,6 +106,7 @@ export default function Sidebar({
             </div>
           )}
         </div>
+        <div className="user-badge-version">{import.meta.env.VITE_AGRO_VERSION}</div>
       </div>
     </aside>
   );

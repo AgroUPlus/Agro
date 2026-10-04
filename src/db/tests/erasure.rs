@@ -145,6 +145,39 @@ fn a_deleted_account_leaves_no_trace_and_others_keep_what_is_theirs() {
     db.record_jam_recap(&room, GONE).unwrap().unwrap();
     db.record_jam_recap(&room, "alpha").unwrap().unwrap();
 
+    // A blend they made, and one of alpha's their listening was written into.
+    db.conn
+        .lock()
+        .unwrap()
+        .execute("UPDATE users SET show_stats = 1", [])
+        .unwrap();
+    let play = crate::db::ScrobbleEntry {
+        track_title: "Their Favourite".into(),
+        artist_name: "Their Artist".into(),
+        album_name: None,
+        genre: None,
+        duration_secs: 200,
+        played_at: chrono::Utc::now().to_rfc3339(),
+        play_uid: None,
+    };
+    db.record_scrobbles(GONE, "phone", None, &[play]).unwrap();
+    let recipe = crate::blend_recipe::BlendSettings {
+        size: 25,
+        mix: 50,
+        window: crate::blend_recipe::BlendWindow::AllTime,
+        refresh: crate::blend_recipe::BlendRefresh::Weekly,
+    };
+    let made = db
+        .create_blend(GONE, "Their blend", &["alpha".to_string()], recipe)
+        .unwrap();
+    db.answer_blend_invite(&made.id, "alpha", true).unwrap();
+    let alphas_blend = db
+        .create_blend("alpha", "Alpha's blend", &[GONE.to_string()], recipe)
+        .unwrap();
+    db.answer_blend_invite(&alphas_blend.id, GONE, true)
+        .unwrap();
+    assert!(db.refresh_blend_if_due(&alphas_blend.id).unwrap().is_some());
+
     assert!(
         !traces(&db, &user_id).is_empty(),
         "the setup should leave traces to remove"
@@ -179,4 +212,59 @@ fn a_deleted_account_leaves_no_trace_and_others_keep_what_is_theirs() {
         )
         .unwrap();
     assert_eq!(orphans, 0, "their jam's queue outlived it");
+}
+
+#[test]
+fn a_blend_they_were_in_is_rewritten_without_them() {
+    let db = Db::new_in_memory().unwrap();
+    for name in ["alpha", GONE] {
+        db.create_account(
+            name,
+            "a-long-passphrase",
+            Role::Member,
+            AccountState::Active,
+        )
+        .unwrap();
+    }
+    db.conn
+        .lock()
+        .unwrap()
+        .execute("UPDATE users SET show_stats = 1", [])
+        .unwrap();
+    for (who, title) in [(GONE, "theirs"), ("alpha", "alpha's")] {
+        let play = crate::db::ScrobbleEntry {
+            track_title: title.into(),
+            artist_name: format!("{who} artist"),
+            album_name: None,
+            genre: None,
+            duration_secs: 200,
+            played_at: chrono::Utc::now().to_rfc3339(),
+            play_uid: None,
+        };
+        db.record_scrobbles(who, "phone", None, &[play]).unwrap();
+    }
+    let recipe = crate::blend_recipe::BlendSettings {
+        size: 25,
+        mix: 50,
+        window: crate::blend_recipe::BlendWindow::AllTime,
+        refresh: crate::blend_recipe::BlendRefresh::Frozen,
+    };
+    let blend = db
+        .create_blend("alpha", "Ours", &[GONE.to_string()], recipe)
+        .unwrap();
+    db.answer_blend_invite(&blend.id, GONE, true).unwrap();
+    db.refresh_blend_if_due(&blend.id).unwrap();
+    assert_eq!(db.get_playlist_items(&blend.id).unwrap().len(), 2);
+
+    db.delete_user(GONE).unwrap();
+
+    // Frozen, so only the deletion can have made it due.
+    assert!(db.refresh_blend_if_due(&blend.id).unwrap().is_some());
+    let titles: Vec<_> = db
+        .get_playlist_items(&blend.id)
+        .unwrap()
+        .into_iter()
+        .map(|i| i.title)
+        .collect();
+    assert_eq!(titles, ["alpha's"]);
 }

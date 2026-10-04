@@ -5,10 +5,13 @@
 
 mod edits;
 mod follow;
+mod generated;
 mod mutation;
 mod notify;
 mod payload;
 mod query;
+
+pub(crate) use notify::{announce, audience};
 
 #[derive(async_graphql::MergedObject, Default)]
 pub struct PlaylistsQuery(query::PlaylistReadQuery, follow::FollowQuery);

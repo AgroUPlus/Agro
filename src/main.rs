@@ -4,12 +4,19 @@
 
 mod audit;
 mod auth;
+mod blend;
+mod blend_boundary_tests;
+mod blend_contract_tests;
+mod blend_recipe;
+mod blend_tests;
 mod catalog_boundary_tests;
 mod cover_lookup;
 mod credentials;
 mod db;
 mod db_acoustic;
 mod db_artists;
+mod db_blend;
+mod db_blend_refresh;
 mod db_catalog;
 mod db_drops;
 mod db_feed;
@@ -57,6 +64,7 @@ mod relay;
 mod schema;
 mod schema_acoustic;
 mod schema_artists;
+mod schema_blend;
 mod schema_catalog;
 mod schema_drops;
 mod schema_feed;

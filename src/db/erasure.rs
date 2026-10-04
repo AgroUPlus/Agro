@@ -102,15 +102,30 @@ fn erase_owned(tx: &Transaction<'_>, user_id: &str, username: &str) -> Result<()
         params![username, user_id],
     )?;
 
-    // Their playlists, with the tracks in them and everyone else's follows of them. The children
-    // go first: once the playlist row is gone there is nothing left to find them by.
+    // Their playlists, with the tracks in them, everyone else's follows of them and, for a blend
+    // they made, its recipe and members. The children go first: once the playlist row is gone
+    // there is nothing left to find them by.
     let owned = "SELECT id FROM playlists WHERE user_id = ?1";
+    for table in [
+        "playlist_items",
+        "playlist_followers",
+        "blends",
+        "blend_members",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE playlist_id IN ({owned})"),
+            params![username],
+        )?;
+    }
+    // Blends of other people's they were in are rewritten without them on the next read: what
+    // their listening put there is theirs, even though it names nobody.
     tx.execute(
-        &format!("DELETE FROM playlist_items WHERE playlist_id IN ({owned})"),
+        "UPDATE blends SET refreshed_at = NULL
+          WHERE playlist_id IN (SELECT playlist_id FROM blend_members WHERE username = ?1)",
         params![username],
     )?;
     tx.execute(
-        &format!("DELETE FROM playlist_followers WHERE playlist_id IN ({owned})"),
+        "DELETE FROM blend_members WHERE username = ?1 COLLATE NOCASE",
         params![username],
     )?;
     tx.execute(

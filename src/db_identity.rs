@@ -1086,6 +1086,11 @@ impl Db {
         )?;
         dump("handoff", "SELECT * FROM handoff_state WHERE user_id = ?1")?;
         dump(
+            "blend_memberships",
+            "SELECT playlist_id, state, invited_at FROM blend_members
+              WHERE username = ?1 COLLATE NOCASE",
+        )?;
+        dump(
             "jam_recaps",
             "SELECT id, created_at, payload_json FROM jam_recaps
               WHERE username = ?1 COLLATE NOCASE",

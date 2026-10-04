@@ -81,6 +81,14 @@ impl PlaylistRole {
 impl Db {
     /// What `viewer` may do with `playlist`.
     pub fn playlist_role(&self, playlist: &Playlist, viewer: &str) -> Result<PlaylistRole> {
+        // Agro writes a blend; everyone who can open it, its creator included, only reads it.
+        if playlist.is_generated() {
+            return Ok(if self.can_view_playlist(playlist, viewer)? {
+                PlaylistRole::Viewer
+            } else {
+                PlaylistRole::None
+            });
+        }
         if playlist.user_id == viewer {
             return Ok(PlaylistRole::Owner);
         }
