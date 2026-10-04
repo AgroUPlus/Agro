@@ -607,6 +607,7 @@ impl SocialQuery {
     ) -> async_graphql::Result<Vec<FriendNowPlaying>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::FriendPresence.require(db)?;
         let viewer_device = match device_id.as_deref() {
             Some(raw) => Some(bounded(raw, 128, "deviceId")?),
             None => None,
@@ -664,6 +665,7 @@ impl SocialQuery {
     ) -> async_graphql::Result<Option<ListenAlongPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::ListenAlong.require(db)?;
         let viewer_device = match device_id.as_deref() {
             Some(raw) => Some(bounded(raw, 128, "deviceId")?),
             None => None,
@@ -1271,6 +1273,7 @@ impl SocialMutation {
         let authed = caller(ctx)?;
         let subject = require_visible(ctx, &host, Surface::NowPlaying)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::ListenAlong.require(db)?;
         let viewer_device = match device_id.as_deref() {
             Some(raw) => Some(bounded(raw, 128, "deviceId")?),
             None => None,
@@ -1387,11 +1390,12 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
 
     // The subject's own flag decides. A friend who has not opted in is not merely omitted from a
     // list here — nothing about them is sent at all.
-    if db
-        .profile(user)
-        .ok()
-        .flatten()
-        .is_some_and(|p| p.shows_now_playing())
+    if crate::features::Feature::FriendPresence.is_on(db)
+        && db
+            .profile(user)
+            .ok()
+            .flatten()
+            .is_some_and(|p| p.shows_now_playing())
     {
         if let Ok(friends) = db.friends(user) {
             // One frame per friend rather than one broadcast, for the same reason the listener
@@ -1444,6 +1448,9 @@ pub fn fan_out_presence(db: &Db, ws_hub: &crate::ws::WsHub, user: &str) {
     // facts about this listener and this host together. Broadcasting one payload would hand every
     // listener the first one's answer — including a LAN address and a bearer token that were never
     // theirs.
+    if !crate::features::Feature::ListenAlong.is_on(db) {
+        return;
+    }
     if let Ok(listeners) = db.listeners_of(user) {
         for listener in listeners {
             let mut peer_lan_address = None;

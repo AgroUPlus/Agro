@@ -4,8 +4,7 @@ import {
   setToken,
   gql,
   consumeSsoFragment,
-  setEnrolmentRequiredHandler,
-  FALLBACK_RULES
+  setEnrolmentRequiredHandler
 } from './api.js';
 import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
@@ -16,13 +15,14 @@ import SocialTab from './tabs/SocialTab.jsx';
 import DevicesTab from './tabs/DevicesTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
 import PopularTab from './tabs/PopularTab.jsx';
-import LibraryBrowser from './tabs/LibraryBrowser.jsx';
+import LibraryTab from './tabs/LibraryTab.jsx';
 import LinksTab from './tabs/LinksTab.jsx';
 import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
 import ManagementTab from './tabs/ManagementTab.jsx';
 
 function getTabFromHash() {
-  const hash = window.location.hash.replace(/^#\/?/, '').trim();
+  // Only the first segment names the tab; the Library tab routes the rest itself.
+  const hash = window.location.hash.replace(/^#\/?/, '').trim().split('/')[0];
   const valid = ALL_TABS.map((item) => item.id);
   return valid.includes(hash) ? hash : 'social';
 }
@@ -55,7 +55,6 @@ export default function App() {
   const isAdmin = role === 'admin';
 
   const [nodes, setNodes] = useState([]);
-  const [rules, setRules] = useState(FALLBACK_RULES);
   const [lastHandoff, setLastHandoff] = useState({
     title: 'Wander Daemon Ready',
     artist: 'Kolb Audio Subsystem',
@@ -82,6 +81,10 @@ export default function App() {
     window.location.hash = `#/${tabId}`;
     if (tabId === 'social') setUnreadDrops(0);
   };
+
+  // Stable, because the Library pages fetch in effects that depend on it and this component
+  // re-renders on every poll.
+  const lockOut = useCallback(() => setLocked(true), []);
 
   const handleSignOut = () => {
     setToken('');
@@ -120,18 +123,6 @@ export default function App() {
         { time: new Date().toLocaleTimeString(), event: `[NODE] Removed device ${deviceId}` },
         ...prev
       ]);
-    } catch (e) {
-      if (e.unauthorized) setLocked(true);
-    }
-  };
-
-  const handleToggleRule = async (id) => {
-    const target = rules.find((r) => r.id === id);
-    if (!target) return;
-    const nextState = !target.isEnabled;
-    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, isEnabled: nextState } : r)));
-    try {
-      await gql(`mutation TogglePluginState { togglePlugin(pluginId: "${id}", isEnabled: ${nextState}) }`);
     } catch (e) {
       if (e.unauthorized) setLocked(true);
     }
@@ -254,7 +245,7 @@ export default function App() {
           )}
 
           {activeTab === 'library' && (
-            <LibraryBrowser username={username} devices={nodes} onUnauthorized={() => setLocked(true)} />
+            <LibraryTab username={username} devices={nodes} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'links' && (
@@ -268,8 +259,6 @@ export default function App() {
           {activeTab === 'management' && isAdmin && (
             <ManagementTab
               me={username}
-              rules={rules}
-              onToggleRule={handleToggleRule}
               logs={syncLogs}
               onUnauthorized={() => setLocked(true)}
             />

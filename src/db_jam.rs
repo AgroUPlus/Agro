@@ -195,7 +195,7 @@ impl Db {
 
     /// The live jam this account is in, if any. One at a time.
     pub fn jam_for_member(&self, username: &str) -> Result<Option<Jam>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {JAM_COLUMNS} FROM jams j
               WHERE j.ended_at IS NULL
@@ -208,7 +208,7 @@ impl Db {
     }
 
     pub fn jam_by_code(&self, code: &str) -> Result<Option<Jam>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {JAM_COLUMNS} FROM jams WHERE code = ?1 COLLATE NOCASE AND ended_at IS NULL"
         ))?;
@@ -217,7 +217,7 @@ impl Db {
     }
 
     pub fn jam_by_id(&self, id: &str) -> Result<Option<Jam>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {JAM_COLUMNS} FROM jams WHERE id = ?1 AND ended_at IS NULL"
         ))?;
@@ -249,7 +249,7 @@ impl Db {
     }
 
     pub fn is_jam_member(&self, jam_id: &str, username: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM jam_members WHERE jam_id = ?1 AND username = ?2 COLLATE NOCASE",
             params![jam_id, username.trim()],
@@ -259,7 +259,7 @@ impl Db {
     }
 
     pub fn jam_members(&self, jam_id: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT username FROM jam_members WHERE jam_id = ?1 ORDER BY joined_at")?;
         let rows = stmt.query_map(params![jam_id], |row| row.get(0))?;
@@ -353,7 +353,7 @@ impl Db {
 
     /// Who added a track, so "your own, or you run the room" can be applied.
     pub fn jam_track_owner(&self, jam_id: &str, track_id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt =
             conn.prepare("SELECT added_by FROM jam_tracks WHERE id = ?1 AND jam_id = ?2")?;
         let mut rows = stmt.query_map(params![track_id, jam_id], |row| row.get(0))?;
@@ -433,7 +433,7 @@ impl Db {
         viewer: &str,
     ) -> Result<Vec<JamTrack>> {
         let needed = self.jam_approvals_needed(jam_id)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT t.id, t.added_by, t.track_uri, t.title, t.artist, t.artwork_url,
                     t.added_at, t.duration_ms,
@@ -479,7 +479,7 @@ impl Db {
     /// Friendship *and* the switch, both. Being someone's friend is not consent to be pulled into
     /// their listening — it is the same rule the rest of the social surface follows.
     pub fn friend_jams(&self, username: &str) -> Result<Vec<Jam>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {JAM_COLUMNS} FROM jams j
               WHERE j.ended_at IS NULL
@@ -520,7 +520,7 @@ impl Db {
 
     /// Skip votes on one track, and whether this account is among them.
     pub fn jam_skip_state(&self, track_id: &str, viewer: &str) -> Result<(i64, bool)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let votes: i64 = conn.query_row(
             "SELECT COUNT(*) FROM jam_skips WHERE track_id = ?1",
             params![track_id],
@@ -539,7 +539,7 @@ impl Db {
         let (Some(track_id), Some(started_at)) = (&jam.now_playing_id, &jam.started_at) else {
             return Ok(None);
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT title, artist, artwork_url, duration_ms, is_live, added_by, added_by_device,
                     content_hash
@@ -614,7 +614,7 @@ impl Db {
 
     /// Every jam still running, for the clock to look at.
     pub fn live_jams(&self) -> Result<Vec<Jam>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {JAM_COLUMNS} FROM jams WHERE ended_at IS NULL"
         ))?;

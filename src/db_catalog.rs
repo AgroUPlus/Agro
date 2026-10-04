@@ -320,7 +320,7 @@ impl Db {
         model: &str,
         version: i64,
     ) -> Result<Vec<(String, Vec<f32>, usize)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT e.recording_id, e.mean, e.dim
              FROM catalog_embeddings e
@@ -347,7 +347,7 @@ impl Db {
     }
 
     fn embedding_blob(&self, recording_id: &str) -> Result<Option<Vec<u8>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT embedding FROM catalog_embeddings WHERE recording_id = ?1",
             params![recording_id],
@@ -361,7 +361,7 @@ impl Db {
     /// A plain timestamp cursor rather than a change log: the catalogue is a set of facts about
     /// audio, so a client that re-reads one it already has simply agrees with itself.
     pub fn catalog_since(&self, since: i64, limit: i64) -> Result<Vec<CatalogRecording>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT r.recording_id, e.embedding, e.dim, e.model, e.version,
                     r.duration_ms, r.title, r.artist, r.album, r.lyrics, r.lyrics_source,
@@ -393,7 +393,7 @@ impl Db {
 
     /// The source ids known to hold one recording.
     pub fn sources_for_recording(&self, recording_id: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT source_uri FROM catalog_sources WHERE recording_id = ?1 ORDER BY source_uri",
         )?;
@@ -403,7 +403,7 @@ impl Db {
 
     /// The recording a source id is known to hold, if any.
     pub fn recording_for_source(&self, source_uri: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT recording_id FROM catalog_sources WHERE source_uri = ?1",
             params![source_uri],

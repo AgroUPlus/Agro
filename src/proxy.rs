@@ -50,14 +50,6 @@ pub async fn proxy_handler(
     req: Request<Body>,
 ) -> Response {
     let db = &state.db;
-    let saved_states = db.get_plugin_states().unwrap_or_default();
-    if !saved_states.get("privacy-relay").copied().unwrap_or(true) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Privacy relay is disabled by the administrator",
-        )
-            .into_response();
-    }
 
     let target_url = match headers.get("X-Agro-Proxy-Url") {
         Some(v) => match v.to_str() {

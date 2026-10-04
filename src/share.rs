@@ -18,6 +18,13 @@ pub async fn share_handler(
     Path(token): Path<String>,
     State(state): State<AppState>,
 ) -> Html<String> {
+    // A page, not a JSON refusal: whoever opens a share link is holding a browser, not a client.
+    if !crate::features::Feature::ShareLinks.is_on(&state.db) {
+        return notice(
+            "Sharing is turned off",
+            "The owner of this server has switched share links off.",
+        );
+    }
     if let Ok(Some(share)) = state.db.get_ephemeral_share(&token) {
         // Aggregate only, as with short links: a count, never a visitor.
         state.db.record_share_click(&token);
@@ -89,17 +96,27 @@ pub async fn share_handler(
         );
         Html(html)
     } else {
-        Html(r#"<!DOCTYPE html>
+        notice(
+            "⏳ Shared Link Expired or Invalid",
+            "This 24-hour ephemeral music link is no longer available.",
+        )
+    }
+}
+
+/// A one-message page, for a link that cannot be played.
+fn notice(heading: &str, detail: &str) -> Html<String> {
+    Html(format!(
+        r#"<!DOCTYPE html>
 <html>
-<head><title>Link Expired - Agro</title></head>
+<head><title>Link unavailable - Agro</title></head>
 <body style="background:#090a0f;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
   <div style="text-align:center;">
-    <h1>⏳ Shared Link Expired or Invalid</h1>
-    <p style="color:#94a3b8;">This 24-hour ephemeral music link is no longer available.</p>
+    <h1>{heading}</h1>
+    <p style="color:#94a3b8;">{detail}</p>
   </div>
 </body>
-</html>"#.to_string())
-    }
+</html>"#
+    ))
 }
 
 #[cfg(test)]

@@ -1,3 +1,7 @@
+// `MergedObject` nests one future per merged object when it resolves a field, and the schema roots
+// merge over twenty each. The default limit of 128 is not deep enough to lay those futures out.
+#![recursion_limit = "256"]
+
 mod audit;
 mod auth;
 mod catalog_boundary_tests;
@@ -11,7 +15,12 @@ mod db_drops;
 mod db_feed;
 mod db_identity;
 mod db_jam;
+mod db_jam_recap;
 mod db_library;
+mod db_library_album;
+mod db_playlist_edits;
+mod db_playlist_followers;
+mod db_playlist_items;
 mod db_playlists;
 mod db_popularity;
 mod db_presence;
@@ -19,9 +28,13 @@ mod db_replay;
 mod db_short_links;
 mod db_social;
 mod embedded_dashboard;
+mod feature_toggle_tests;
+mod features;
 mod guest_boundary_tests;
 mod importer;
 mod jam_clock;
+mod jam_recap;
+mod jam_recap_forget;
 mod library;
 mod listen;
 mod listen_playlist;
@@ -32,6 +45,9 @@ mod offers;
 mod oidc;
 mod openapi;
 mod passphrase;
+mod playlist_access;
+mod playlist_boundary_tests;
+mod playlist_edit_tests;
 mod playlist_visibility;
 mod plugins;
 mod popular;
@@ -45,6 +61,7 @@ mod schema_catalog;
 mod schema_drops;
 mod schema_feed;
 mod schema_jam;
+mod schema_jam_recap;
 mod schema_playlists;
 mod schema_popularity;
 mod schema_replay;
@@ -56,6 +73,7 @@ mod stats_wrapped;
 mod storage;
 mod totp;
 mod ws;
+mod ws_channels;
 
 use async_graphql::Schema;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -66,6 +84,7 @@ use axum::{
     Router,
 };
 use db::Db;
+use features::Feature;
 use schema::{AgroSchema, Mutation, Query};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
@@ -224,6 +243,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
+        // Replay buffers expire on the scale of seconds, not of the storage sweep. Left to the
+        // fifteen-minute pass, an account that stopped receiving would hold its last burst of
+        // presence frames for that long.
+        {
+            let hub = ws_hub.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(ws_channels::REPLAY_TTL);
+                loop {
+                    ticker.tick().await;
+                    hub.channels.sweep();
+                }
+            });
+        }
+
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(SWEEP_SECS));
             loop {
@@ -255,28 +288,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Each switchable feature's routes refuse while it is off. See `features::gate`.
+    let gated = |feature: Feature| {
+        axum::middleware::from_fn_with_state((db.clone(), feature), features::gate)
+    };
+
     // Everything that exposes a user's data sits behind the token check; the dashboard's own
     // static files and the capability-URL share endpoint stay public.
     let protected = Router::new()
         .route("/graphql", post(graphql_handler))
         .route("/ws/sync", get(ws::ws_handler))
-        .route("/api/v1/library/upload", post(library::begin_upload))
+        .route(
+            "/api/v1/library/upload",
+            post(library::begin_upload).layer(gated(Feature::LibraryTransfers)),
+        )
         .route(
             "/api/v1/library/upload/{upload_id}",
-            put(library::put_upload).layer(DefaultBodyLimit::disable()),
+            put(library::put_upload)
+                .layer(DefaultBodyLimit::disable())
+                .layer(gated(Feature::LibraryTransfers)),
         )
-        .route("/api/v1/library/fetch/{content_hash}", get(library::fetch))
+        .route(
+            "/api/v1/library/fetch/{content_hash}",
+            get(library::fetch).layer(gated(Feature::LibraryTransfers)),
+        )
         .route("/api/v1/cover/{album_key}", get(library::cover))
-        .route("/api/v1/relay/open", post(relay::open_relay))
+        .route(
+            "/api/v1/relay/open",
+            post(relay::open_relay).layer(gated(Feature::AudioRelay)),
+        )
         .route(
             "/api/v1/relay/{session_id}/send",
-            post(relay::send_relay).layer(DefaultBodyLimit::disable()),
+            post(relay::send_relay)
+                .layer(DefaultBodyLimit::disable())
+                .layer(gated(Feature::AudioRelay)),
         )
         .route(
             "/api/v1/relay/{session_id}/receive",
-            get(relay::receive_relay),
+            get(relay::receive_relay).layer(gated(Feature::AudioRelay)),
         )
-        .route("/api/v1/proxy", axum::routing::any(proxy::proxy_handler))
+        .route(
+            "/api/v1/proxy",
+            axum::routing::any(proxy::proxy_handler).layer(gated(Feature::PrivacyProxy)),
+        )
         .route("/api/v1/oidc/link", get(oidc::start_link))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

@@ -262,6 +262,7 @@ impl JamQuery {
     async fn friend_jams(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<FriendJamPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let mut open = Vec::new();
         for jam in db.friend_jams(authed.username())? {
@@ -281,6 +282,7 @@ impl JamQuery {
     async fn jam(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<JamPayload>> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         match db.jam_for_member(authed.username())? {
             Some(jam) => Ok(Some(describe(
                 db,
@@ -309,9 +311,15 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
-            db.leave_jam(&existing.id, authed.username())?;
+            crate::schema_jam_recap::depart(
+                db,
+                ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                &existing,
+                authed.username(),
+            )?;
         }
 
         let mode = mode
@@ -332,6 +340,7 @@ impl JamMutation {
     async fn join_jam(&self, ctx: &Context<'_>, code: String) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         // The same words for a wrong code and an ended one. A code is a credential, and telling
         // the difference apart is how you find out which codes exist.
@@ -341,7 +350,12 @@ impl JamMutation {
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
             if existing.id != jam.id {
-                db.leave_jam(&existing.id, authed.username())?;
+                crate::schema_jam_recap::depart(
+                    db,
+                    ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                    &existing,
+                    authed.username(),
+                )?;
             }
         }
         db.join_jam(&jam.id, authed.username())?;
@@ -366,6 +380,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let jam = db
             .friend_jams(authed.username())?
@@ -375,7 +390,12 @@ impl JamMutation {
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
             if existing.id != jam.id {
-                db.leave_jam(&existing.id, authed.username())?;
+                crate::schema_jam_recap::depart(
+                    db,
+                    ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                    &existing,
+                    authed.username(),
+                )?;
             }
         }
         db.join_jam(&jam.id, authed.username())?;
@@ -396,6 +416,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         if !jam.host.eq_ignore_ascii_case(&me) {
             return Err(forbidden("only the creator can open the jam up"));
         }
@@ -418,6 +439,7 @@ impl JamMutation {
     async fn vote_skip_jam_track(&self, ctx: &Context<'_>) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let Some(track_id) = jam.now_playing_id.clone() else {
             return Err("Nothing is playing to skip".into());
@@ -448,9 +470,19 @@ impl JamMutation {
     async fn leave_jam(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
+        let hub = ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?;
         let creator_left = jam.host.eq_ignore_ascii_case(&me);
-        db.leave_jam(&jam.id, &me)?;
+        if creator_left {
+            // The room ends for everyone, so everyone's recap is written now, while the creator
+            // is still in the member list. Written after they had gone, the others' recaps would
+            // be missing the person whose room it was.
+            crate::schema_jam_recap::remember_everyone(db, hub, &jam)?;
+            db.leave_jam(&jam.id, &me)?;
+        } else {
+            crate::schema_jam_recap::depart(db, hub, &jam, &me)?;
+        }
         let remaining = db.jam_members(&jam.id)?;
 
         // Told before it is deleted, or there is nobody left to tell.
@@ -490,6 +522,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let title = title.trim();
         if title.is_empty() {
@@ -532,6 +565,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         if db.jam_track_owner(&jam.id, &track_id)?.is_none() {
             return Err(forbidden("that track is not in this jam"));
@@ -554,6 +588,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
 
         let owner = db
             .jam_track_owner(&jam.id, &track_id)?
@@ -585,6 +620,7 @@ impl JamMutation {
     ) -> async_graphql::Result<JamPayload> {
         let (jam, me) = current_jam(ctx)?;
         let db = ctx.data::<Db>()?;
+        crate::features::Feature::Jams.require(db)?;
         if !jam.host.eq_ignore_ascii_case(&me) {
             return Err(forbidden("only the host can change the mode"));
         }

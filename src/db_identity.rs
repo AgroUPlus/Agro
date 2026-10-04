@@ -315,7 +315,7 @@ impl Db {
     }
 
     pub fn account(&self, username: &str) -> Result<Option<Account>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             &format!("SELECT {ACCOUNT_COLUMNS} FROM users WHERE username = ?1 COLLATE NOCASE"),
             params![username.trim()],
@@ -399,7 +399,7 @@ impl Db {
             return Ok(None);
         }
         let stored: Option<String> = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.read();
             conn.query_row(
                 "SELECT passphrase_hash FROM users WHERE username = ?1 COLLATE NOCASE",
                 params![username.trim()],
@@ -469,7 +469,7 @@ impl Db {
             String,
         );
         let candidates: Vec<Candidate> = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.read();
             let mut stmt = conn.prepare(
                 "SELECT a.token_hash, u.username, a.last_used_at, a.label, a.expires_at,
                         a.created_at
@@ -745,7 +745,7 @@ impl Db {
 
     /// Whether this account has a *confirmed* second factor. A pending enrolment reads as `false`.
     pub fn totp_is_confirmed(&self, username: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let confirmed: Option<Option<String>> = conn
             .query_row(
                 "SELECT totp_confirmed_at FROM users WHERE username = ?1 COLLATE NOCASE",
@@ -758,7 +758,7 @@ impl Db {
 
     /// How many unused recovery codes are left, for the account screen to warn on.
     pub fn recovery_codes_remaining(&self, username: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT COUNT(*) FROM totp_recovery_codes
               WHERE user_id = (SELECT id FROM users WHERE username = ?1 COLLATE NOCASE)
@@ -849,7 +849,7 @@ impl Db {
         subject: &str,
     ) -> Result<Option<Account>> {
         let username: Option<String> = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.read();
             conn.query_row(
                 "SELECT u.username FROM federated_identities f
                    JOIN users u ON u.id = f.user_id
@@ -941,7 +941,7 @@ impl Db {
 
     /// The identities linked to an account, as `(issuer, subject, linked_at)`.
     pub fn federated_identities(&self, username: &str) -> Result<Vec<(String, String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT f.issuer, f.subject, f.linked_at FROM federated_identities f
                JOIN users u ON u.id = f.user_id
@@ -962,7 +962,7 @@ impl Db {
     /// only so the column is not empty. `passphrase_is_usable` records whether anyone has ever been
     /// told what it is — a hash alone cannot answer that.
     pub fn has_usable_passphrase(&self, username: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let usable: Option<i64> = conn
             .query_row(
                 "SELECT passphrase_is_usable FROM users WHERE username = ?1 COLLATE NOCASE",
@@ -1086,6 +1086,11 @@ impl Db {
         )?;
         dump("handoff", "SELECT * FROM handoff_state WHERE user_id = ?1")?;
         dump(
+            "jam_recaps",
+            "SELECT id, created_at, payload_json FROM jam_recaps
+              WHERE username = ?1 COLLATE NOCASE",
+        )?;
+        dump(
             "security_log",
             "SELECT at, kind, client_ip, device_label, detail FROM security_events
               WHERE user_id = ?1 COLLATE NOCASE",
@@ -1140,7 +1145,7 @@ impl Db {
         limit: i64,
     ) -> Result<Vec<SecurityEvent>> {
         let limit = limit.clamp(1, 500);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let read = |sql: &str, args: &[&dyn rusqlite::ToSql]| -> Result<Vec<SecurityEvent>> {
             let mut stmt = conn.prepare(sql)?;
             let rows = stmt
@@ -1365,7 +1370,7 @@ impl Db {
 
     /// How many admins the server has. Guards the last one against removal or demotion.
     pub fn admin_count(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         conn.query_row(
             "SELECT COUNT(*) FROM users WHERE role = 'admin'",
             [],

@@ -58,7 +58,7 @@ impl PopularityQuery {
 
         // Disabled fleet-wide: an empty chart rather than an error, so the dashboard can render its
         // ordinary "nothing to show" state instead of special-casing this query.
-        if !crate::plugins::is_enabled(&state.db, "popular-charts") {
+        if !crate::features::Feature::PopularCharts.is_on(&state.db) {
             return Ok(Vec::new());
         }
 
@@ -106,7 +106,7 @@ impl PopularityMutation {
         // this block, for the same reason nothing below it takes an account id at all.
         let authed = ctx.data::<AuthedUser>()?;
 
-        if !crate::plugins::is_enabled(&state.db, "popular-charts") {
+        if !crate::features::Feature::PopularCharts.is_on(&state.db) {
             return Ok(0);
         }
         let contributes = state

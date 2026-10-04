@@ -161,7 +161,7 @@ impl Profile {
 
 impl Db {
     pub fn profile(&self, username: &str) -> Result<Option<Profile>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let profile = conn
             .query_row(
                 &format!(
@@ -252,7 +252,7 @@ impl Db {
     /// `schema_social` gates on friendship, with the same message `dropTrack` uses, so that a key
     /// list cannot be used to probe for accounts.
     pub fn device_keys_for(&self, username: &str) -> Result<Vec<DeviceKey>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT device_id, public_key FROM user_device_keys
               WHERE user_id = ?1 COLLATE NOCASE
@@ -303,7 +303,7 @@ impl Db {
     /// difference between "they blocked me" and "we are not friends", so both must arrive here as
     /// the same answer to the only question that matters: no.
     pub fn friend_state(&self, viewer: &str, subject: &str) -> Result<Option<FriendState>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT state FROM friendships
               WHERE (user_id = ?1 COLLATE NOCASE AND friend_id = ?2 COLLATE NOCASE)
@@ -474,7 +474,7 @@ impl Db {
         predicate: &str,
         other_column: &str,
     ) -> Result<Vec<FriendEdge>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let sql = format!(
             "SELECT {columns}, f.state FROM friendships f
                JOIN users u ON u.username = {other_column} COLLATE NOCASE
@@ -595,7 +595,7 @@ impl Db {
     }
 
     pub fn listen_along_of(&self, listener: &str) -> Result<Option<ListenAlong>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let row = conn
             .query_row(
                 "SELECT listener_id, host_id, started_at FROM listen_along
@@ -784,7 +784,7 @@ impl Db {
     }
 
     pub fn list_invites(&self) -> Result<Vec<Invite>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT code, created_by, created_at, expires_at, max_uses, used_count, revoked
                FROM invites ORDER BY created_at DESC",
@@ -816,7 +816,7 @@ impl Db {
 
     /// Accounts waiting to be let in.
     pub fn pending_accounts(&self) -> Result<Vec<Profile>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(&format!(
             "SELECT {PROFILE_COLUMNS} FROM users WHERE state = 'pending' ORDER BY created_at"
         ))?;

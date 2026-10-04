@@ -195,7 +195,14 @@ pub async fn require_token(
             });
             next.run(request).await
         }
-        _ => unauthorized(),
+        Ok(None) => unauthorized(),
+        // Not a 401: clients take that to mean their token is dead and stop using it, and
+        // access-log bouncers count it toward a brute-force ban. A lookup that failed says
+        // nothing about the token.
+        Err(err) => {
+            tracing::error!("could not look up a device token: {err}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 

@@ -89,7 +89,7 @@ pub async fn popular_handler(
 
     // Disabled fleet-wide: an explicit `enabled: false` rather than an error, so the docs page can
     // render its "charts are turned off" state instead of special-casing this call.
-    if !crate::plugins::is_enabled(&state.db, "popular-charts") {
+    if !crate::features::Feature::PopularCharts.is_on(&state.db) {
         return Json(PopularResponse {
             enabled: false,
             days: 0,

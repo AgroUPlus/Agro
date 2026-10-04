@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 use crate::db::Db;
-use crate::db_playlists::NewPlaylistItem;
+use crate::db_playlist_items::NewPlaylistItem;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedPlaylist {

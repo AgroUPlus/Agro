@@ -1,9 +1,9 @@
 //! The GraphQL surface for Agro Replay.
 //!
-//! The recap itself is [`crate::schema::QueryRoot::agro_wrapped`], which predates this file and is
-//! friend-readable. What lives here is the one part of Replay that reads *across* accounts, and it
-//! is kept separate precisely because that is a different kind of disclosure and deserves to be
-//! reviewed as one — see [`crate::db_replay`] for the floor that makes it safe.
+//! The recap itself is [`crate::schema::stats::StatsQuery::agro_wrapped`], which predates this file
+//! and is friend-readable. What lives here is the one part of Replay that reads *across* accounts,
+//! and it is kept separate precisely because that is a different kind of disclosure and deserves to
+//! be reviewed as one — see [`crate::db_replay`] for the floor that makes it safe.
 
 use crate::db::Db;
 use crate::schema::caller;

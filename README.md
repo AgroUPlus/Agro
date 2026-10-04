@@ -89,6 +89,7 @@ PORT=1674 ./target/release/agro
 | `AGRO_ARCHIVE_HOOK` | Shell command run after a file is filed. Paths arrive via env, not argv. |
 | `AGRO_ALLOWED_ORIGIN` | CORS origin for the dashboard. No wildcard. |
 | `AGRO_SIGNUP` | `approval` (default), `invite`, or `closed`. |
+| `AGRO_DB_READERS` | Read-only SQLite connections beside the single writer. Default `4`. |
 
 **Archive hook example** (Nextcloud):
 ```ini
@@ -190,6 +191,27 @@ location /api/v1/relay/ {
 ### Sizing
 
 Building requires ~4 GB RAM and ~12 GB disk. The running server idles at 20–30 MB RSS. Use `cargo build --release -j2` if memory is tight.
+
+Measured with `scripts/loadtest/` on two pinned cores, every connected device sending a playback
+heartbeat every 30 s and ten friends per account:
+
+| Devices online at once | p95 latency | CPU (of 2 cores) | RSS |
+|---|---|---|---|
+| 5,000 | 8.5 ms | 0.6 | 189 MB |
+| 6,500 | 16 ms | 1.0 | 240 MB |
+| 8,000 | 145 ms | 1.5 | 295 MB |
+
+Relayed audio and uploads are bounded by bandwidth rather than CPU, and are not in these numbers.
+
+### Turning features off
+
+**Management → Plugins & Rules** in the dashboard lists every server feature that costs CPU, disk or
+bandwidth, with what each one costs, and lets an admin switch it off for the whole server:
+audio relay, library uploads & transfers, the privacy proxy, share links, friends' now playing,
+listen along, jams, acoustic search, Agro Wrapped and the popular chart. A feature that is off is
+refused — `403` with `"code": "FEATURE_DISABLED"` over HTTP, a GraphQL error with the same code —
+and clients can read the current state from `serverFeatures`. Everything is on until switched off,
+and switching a feature back on loses nothing.
 
 ---
 

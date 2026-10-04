@@ -170,7 +170,7 @@ impl Db {
     }
 
     pub fn subscribed_artists(&self, user_id: &str) -> Result<Vec<Artist>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT a.artist_id, a.norm_name, a.display_name, a.external_id
                FROM artist_subscriptions s
@@ -228,7 +228,7 @@ impl Db {
         since: i64,
         limit: i64,
     ) -> Result<Vec<ArtistRelease>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.read();
         let mut stmt = conn.prepare(
             "SELECT r.recording_id, r.artist_id, a.display_name, r.title, r.album, r.updated_at
                FROM catalog_recordings r
