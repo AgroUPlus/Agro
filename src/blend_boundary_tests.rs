@@ -304,3 +304,50 @@ async fn it_is_written_only_once_everyone_asked_has_answered() {
     .await;
     assert!(count(&h.ok(&h.alpha, &open_query(&id)).await) > 0);
 }
+
+#[test]
+fn a_blend_written_before_everyone_answered_is_emptied_until_they_have() {
+    let h = harness();
+    let blend = h
+        .db
+        .create_blend(
+            "alpha",
+            "Early",
+            &["beta".to_string()],
+            crate::blend_recipe::BlendSettings {
+                size: 25,
+                mix: 50,
+                window: crate::blend_recipe::BlendWindow::AllTime,
+                refresh: crate::blend_recipe::BlendRefresh::Weekly,
+            },
+        )
+        .unwrap();
+    // What a server before this rule left behind: alpha's half, stamped as written this week.
+    {
+        let conn = h.db.conn.lock().unwrap();
+        crate::db_playlist_items::insert_item(
+            &conn,
+            &blend.id,
+            0,
+            "alpha",
+            &crate::db_playlist_items::NewPlaylistItem {
+                title: "alpha song 0".into(),
+                artist: "alpha artist 0".into(),
+                album: None,
+                duration_ms: None,
+                artwork_url: None,
+                origin_uri: None,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE blends SET refreshed_at = ?2 WHERE playlist_id = ?1",
+            rusqlite::params![blend.id, chrono::Utc::now().to_rfc3339()],
+        )
+        .unwrap();
+    }
+
+    assert!(h.db.refresh_blend_if_due(&blend.id).unwrap().is_some(), "members are told");
+    assert!(h.db.get_playlist_items(&blend.id).unwrap().is_empty());
+    assert!(h.db.refresh_blend_if_due(&blend.id).unwrap().is_none(), "nothing left to remove");
+}

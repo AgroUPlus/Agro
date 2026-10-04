@@ -17,15 +17,18 @@ impl Db {
         let Some(blend) = self.blend(playlist_id)? else {
             return Ok(None);
         };
-        let now = chrono::Utc::now();
-        if !blend.is_due(now.timestamp()) {
-            return Ok(None);
-        }
         // Not written until everyone asked has answered. A blend written from whoever had joined so
         // far would be rewritten as each of the rest arrived, and the playlist people had started
         // listening to would change under them. It stays due, so the last answer writes it.
+        //
+        // Checked before whether it is due: one written before this rule existed is not due for a
+        // week, and is emptied here so it waits like any other.
         let members = self.blend_members(playlist_id)?;
         if members.iter().any(|m| !m.joined) {
+            return self.empty_waiting_blend(playlist_id);
+        }
+        let now = chrono::Utc::now();
+        if !blend.is_due(now.timestamp()) {
             return Ok(None);
         }
         let since = blend
@@ -76,6 +79,27 @@ impl Db {
         tx.execute(
             "UPDATE blends SET refreshed_at = ?2 WHERE playlist_id = ?1",
             params![playlist_id, now.to_rfc3339()],
+        )?;
+        let revision = bump_revision(&tx, playlist_id)?;
+        tx.commit()?;
+        Ok(Some(revision))
+    }
+
+    /// Takes a waiting blend's tracks away, if it has any, and leaves it due for the last answer.
+    /// The new revision when something was removed, so the members are told.
+    fn empty_waiting_blend(&self, playlist_id: &str) -> Result<Option<i64>> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let removed = tx.execute(
+            "DELETE FROM playlist_items WHERE playlist_id = ?1",
+            params![playlist_id],
+        )?;
+        if removed == 0 {
+            return Ok(None);
+        }
+        tx.execute(
+            "UPDATE blends SET refreshed_at = NULL WHERE playlist_id = ?1",
+            params![playlist_id],
         )?;
         let revision = bump_revision(&tx, playlist_id)?;
         tx.commit()?;
