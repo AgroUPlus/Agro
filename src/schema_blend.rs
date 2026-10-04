@@ -138,7 +138,8 @@ impl BlendMutation {
             consents(db, me)?;
         }
         let answered = db.answer_blend_invite(&playlist_id, me, accept)?;
-        if answered && accept {
+        // A decline can be the last answer the blend was waiting for, so it writes it too.
+        if answered {
             refresh_and_announce(ctx, db, &playlist_id)?;
         }
         Ok(answered)

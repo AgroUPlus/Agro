@@ -21,17 +21,20 @@ impl Db {
         if !blend.is_due(now.timestamp()) {
             return Ok(None);
         }
+        // Not written until everyone asked has answered. A blend written from whoever had joined so
+        // far would be rewritten as each of the rest arrived, and the playlist people had started
+        // listening to would change under them. It stays due, so the last answer writes it.
+        let members = self.blend_members(playlist_id)?;
+        if members.iter().any(|m| !m.joined) {
+            return Ok(None);
+        }
         let since = blend
             .window
             .days()
             .map(|d| (now - chrono::Duration::days(d)).to_rfc3339());
 
         let mut tastes = Vec::new();
-        for member in self
-            .blend_members(playlist_id)?
-            .into_iter()
-            .filter(|m| m.joined)
-        {
+        for member in members {
             let consents = self
                 .profile(&member.username)?
                 .is_some_and(|p| p.shows_stats());

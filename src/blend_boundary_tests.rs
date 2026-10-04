@@ -152,21 +152,17 @@ async fn nobody_is_read_before_they_accept_and_only_members_can_open_it() {
     let h = harness();
     let id = h.blend().await;
 
-    // Invited is not joined: beta cannot open it, and it holds only alpha's listening.
+    // Invited is not joined: beta cannot open it, and nothing is written until beta answers —
+    // not even alpha's half, which would only be rewritten the moment beta joined.
     h.refused(&h.beta, &open_query(&id), "an invitee opening it")
         .await;
     let invites = h.ok(&h.beta, "{ blendInvites { playlistId title } }").await;
     assert_eq!(invites["blendInvites"][0]["playlistId"], id.as_str());
     let before = h.ok(&h.alpha, &open_query(&id)).await;
-    let adders: Vec<_> = before["playlist"]["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i["addedBy"].clone())
-        .collect();
-    assert!(
-        adders.iter().all(|a| a == "alpha"),
-        "read before consent: {adders:?}"
+    assert_eq!(
+        before["playlist"]["items"].as_array().unwrap().len(),
+        0,
+        "written before everyone answered"
     );
 
     h.ok(
@@ -274,4 +270,37 @@ async fn leaving_takes_you_out_and_the_creator_leaving_ends_it() {
         h.db.blend(&id).unwrap().is_none(),
         "its recipe was left behind"
     );
+}
+
+#[tokio::test]
+async fn it_is_written_only_once_everyone_asked_has_answered() {
+    let h = harness();
+    let made = h
+        .ok(
+            &h.alpha,
+            r#"mutation { createBlend(title: "Three", members: ["beta", "gamma"], size: 25,
+                 mix: 50, window: ALL_TIME, refresh: WEEKLY) { playlistId } }"#,
+        )
+        .await;
+    let id = made["createBlend"]["playlistId"].as_str().unwrap().to_string();
+    let count = |data: &Value| data["playlist"]["items"].as_array().unwrap().len();
+
+    h.ok(
+        &h.beta,
+        &format!(r#"mutation {{ answerBlendInvite(playlistId: "{id}", accept: true) }}"#),
+    )
+    .await;
+    assert_eq!(
+        count(&h.ok(&h.alpha, &open_query(&id)).await),
+        0,
+        "gamma has not answered, so it would change again the moment they do"
+    );
+
+    // A decline is an answer too: it starts from whoever is in it.
+    h.ok(
+        &h.gamma,
+        &format!(r#"mutation {{ answerBlendInvite(playlistId: "{id}", accept: false) }}"#),
+    )
+    .await;
+    assert!(count(&h.ok(&h.alpha, &open_query(&id)).await) > 0);
 }
