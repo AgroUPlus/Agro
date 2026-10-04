@@ -2,6 +2,8 @@
  * Centralized API & Authentication Client for Agro Dashboard.
  */
 
+import { forgetPresence } from './vault.js';
+
 const TOKEN_KEY = 'agro.token';
 
 /**
@@ -35,6 +37,8 @@ export function setToken(value) {
   } else {
     localStorage.removeItem(TOKEN_KEY);
     document.cookie = `token=; path=/; max-age=0; SameSite=Strict`;
+    // Every way out of a session clears the token here, so the key that opens it goes with it.
+    forgetPresence();
   }
 }
 
