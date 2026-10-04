@@ -1086,6 +1086,11 @@ impl Db {
         )?;
         dump("handoff", "SELECT * FROM handoff_state WHERE user_id = ?1")?;
         dump(
+            "jam_recaps",
+            "SELECT id, created_at, payload_json FROM jam_recaps
+              WHERE username = ?1 COLLATE NOCASE",
+        )?;
+        dump(
             "security_log",
             "SELECT at, kind, client_ip, device_label, detail FROM security_events
               WHERE user_id = ?1 COLLATE NOCASE",

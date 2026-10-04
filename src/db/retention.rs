@@ -25,6 +25,10 @@ pub(super) const HANDOFF_ROW_TTL_DAYS: i64 = 30;
 /// long the unreadable bytes are tolerated before being removed.
 pub(super) const PRESENCE_CIPHERTEXT_TTL_SECS: i64 = 60 * 60;
 
+/// How long an undismissed jam recap is kept. Long enough to be seen after a weekend away from the
+/// app; past it, the summary is a record of who was in a room together and nothing else.
+pub(super) const JAM_RECAP_TTL_DAYS: i64 = 30;
+
 /// How long before an inactive registered node is purged from the database.
 pub(super) const INACTIVE_NODE_TTL_DAYS: i64 = 90;
 
@@ -135,6 +139,13 @@ impl Db {
                 params![cutoff],
             );
         }
+
+        let old_recaps = (now - chrono::Duration::days(JAM_RECAP_TTL_DAYS)).to_rfc3339();
+        run(
+            "jam recaps",
+            "DELETE FROM jam_recaps WHERE created_at < ?1",
+            params![old_recaps],
+        );
 
         let stale_nodes = (now - chrono::Duration::days(INACTIVE_NODE_TTL_DAYS)).to_rfc3339();
         run(

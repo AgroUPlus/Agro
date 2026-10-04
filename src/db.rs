@@ -49,6 +49,7 @@ fn restrict_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &Path) {}
 
+mod erasure;
 mod handoff;
 mod init_schema;
 mod links;

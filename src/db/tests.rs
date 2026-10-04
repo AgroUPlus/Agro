@@ -1,7 +1,9 @@
 //! Tests for the core `Db` methods, one file per subject.
 
 mod device_keys;
+mod erasure;
 mod handoff;
+mod jam_recaps;
 mod migration_order;
 mod node_naming;
 #[cfg(unix)]

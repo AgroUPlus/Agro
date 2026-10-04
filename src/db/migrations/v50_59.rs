@@ -45,4 +45,17 @@ pub(super) const ENTRIES: &[&str] = &[
          id         TEXT PRIMARY KEY,
          retired_at INTEGER NOT NULL
      );",
+    // 52 — what a jam was, kept for the people who were in it.
+    //
+    // A jam's own rows still go when it ends (`delete_jam`): a room is not a document. What
+    // survives is one summary per member, written as they leave and holding only what that member
+    // already saw in the room. It is theirs to dismiss, and the retention sweep removes whatever
+    // they never do — see `db_jam_recap`.
+    "CREATE TABLE IF NOT EXISTS jam_recaps (
+         id           TEXT PRIMARY KEY,
+         username     TEXT NOT NULL,
+         payload_json TEXT NOT NULL,
+         created_at   TEXT NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_jam_recaps_user ON jam_recaps(username);",
 ];
