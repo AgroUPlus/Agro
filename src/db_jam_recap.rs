@@ -112,3 +112,32 @@ impl Db {
         Ok(removed > 0)
     }
 }
+
+/// Strikes a deleted account from every recap that names it, inside the deletion's transaction.
+///
+/// Only rows that can mention the name are read: `instr` looks for it as a JSON string — quoted,
+/// so `sam` does not match `samantha` — in SQL, and only those few rows are decoded and rewritten.
+/// A row that matched but does not decode fails the whole deletion rather than keep the mention.
+pub(crate) fn forget_in_jam_recaps(conn: &rusqlite::Connection, username: &str) -> Result<()> {
+    let name = username.trim().to_lowercase();
+    let needle = serde_json::Value::String(name.clone()).to_string();
+    let candidates: Vec<(String, String)> = conn
+        .prepare("SELECT id, payload_json FROM jam_recaps WHERE instr(payload_json, ?1) > 0")?
+        .query_map(params![needle], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_>>()?;
+
+    for (id, payload) in candidates {
+        let mut recap: JamRecap = serde_json::from_str(&payload).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        if recap.forget(&name) {
+            let rewritten = serde_json::to_string(&recap)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            conn.execute(
+                "UPDATE jam_recaps SET payload_json = ?1 WHERE id = ?2",
+                params![rewritten, id],
+            )?;
+        }
+    }
+    Ok(())
+}

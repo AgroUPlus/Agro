@@ -114,11 +114,12 @@ impl JamRecap {
     }
 }
 
-/// The member with the most played tracks to their name; on a tie, the one alphabetically first,
+/// The member with the most played tracks to their name, if anyone named is left; on a tie, the one alphabetically first,
 /// so the answer never depends on row order.
-fn top_contributor(played: &[RecapTrack]) -> Option<RecapContributor> {
+pub(crate) fn top_contributor(played: &[RecapTrack]) -> Option<RecapContributor> {
     let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
-    for track in played {
+    // A blank name is a member whose account was deleted (see `forget`); they rank nowhere.
+    for track in played.iter().filter(|t| !t.added_by.trim().is_empty()) {
         *counts
             .entry(track.added_by.trim().to_lowercase())
             .or_default() += 1;

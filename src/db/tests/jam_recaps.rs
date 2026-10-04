@@ -115,3 +115,21 @@ fn the_sweep_removes_recaps_nobody_dismissed() {
     assert!(db.jam_recaps("sam").unwrap().is_empty());
     assert_eq!(db.jam_recaps("alex").unwrap()[0].id, fresh);
 }
+
+#[test]
+fn deleting_an_account_deletes_its_recaps() {
+    let db = db();
+    db.create_user("sam", "sam-pass").unwrap();
+    let jam = a_jam_in_progress(&db);
+    db.record_jam_recap(&jam, "sam").unwrap().unwrap();
+
+    let export = db.export_account_data("sam").unwrap();
+    assert_eq!(
+        export["jam_recaps"].as_array().map(Vec::len),
+        Some(1),
+        "missing from the export"
+    );
+
+    assert!(db.delete_user("sam").unwrap());
+    assert!(db.jam_recaps("sam").unwrap().is_empty());
+}

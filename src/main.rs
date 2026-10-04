@@ -34,6 +34,7 @@ mod guest_boundary_tests;
 mod importer;
 mod jam_clock;
 mod jam_recap;
+mod jam_recap_forget;
 mod library;
 mod listen;
 mod listen_playlist;
