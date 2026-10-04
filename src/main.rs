@@ -34,6 +34,7 @@ mod db_presence;
 mod db_replay;
 mod db_short_links;
 mod db_social;
+mod db_vault;
 mod embedded_dashboard;
 mod feature_toggle_tests;
 mod features;
@@ -74,12 +75,15 @@ mod schema_playlists;
 mod schema_popularity;
 mod schema_replay;
 mod schema_social;
+mod schema_vault;
 mod share;
 mod social_boundary_tests;
 mod stats;
 mod stats_wrapped;
 mod storage;
 mod totp;
+mod vault_contract_tests;
+mod vault_http;
 mod ws;
 mod ws_channels;
 
@@ -319,6 +323,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/api/v1/library/fetch/{content_hash}",
             get(library::fetch).layer(gated(Feature::LibraryTransfers)),
+        )
+        .route(
+            "/api/v1/vault/backups",
+            put(vault_http::put_backup)
+                // Room for the largest sealed backup and nothing else; the server-wide limit is
+                // for JSON and would refuse a real one.
+                .layer(DefaultBodyLimit::max(db_vault::MAX_SEALED_BYTES))
+                .layer(gated(Feature::CloudBackups)),
+        )
+        .route(
+            "/api/v1/vault/backups/{id}",
+            get(vault_http::get_backup).layer(gated(Feature::CloudBackups)),
         )
         .route("/api/v1/cover/{album_key}", get(library::cover))
         .route(

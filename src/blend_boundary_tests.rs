@@ -20,7 +20,7 @@ use crate::ws::WsHub;
 
 pub(crate) struct Harness {
     schema: AgroSchema,
-    db: Db,
+    pub(crate) db: Db,
     pub(crate) alpha: Account,
     pub(crate) beta: Account,
     /// alpha's friend, never asked into anything.

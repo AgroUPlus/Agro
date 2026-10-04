@@ -50,6 +50,8 @@ pub fn server_capabilities() -> Vec<String> {
         "catalog.batchPublish".to_string(),
         // Blends exist: the `blend*` API, and `isBlend` on a playlist.
         "playlists.blends".to_string(),
+        // The cloud vault: `vaultBackups`, and the byte routes under `/api/v1/vault/backups`.
+        "vault.backups".to_string(),
     ]
 }
 

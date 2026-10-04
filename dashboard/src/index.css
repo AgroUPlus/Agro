@@ -2467,3 +2467,61 @@ input:checked + .slider:before {
   line-height: 1.5;
   color: var(--status-error);
 }
+
+/* ── Backups: the cloud vault's labels ─────────────────────────────────────────────────────── */
+.vault-explainer {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary, inherit);
+}
+
+.vault-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vault-latest {
+  border-color: var(--accent-border);
+  background: linear-gradient(135deg, var(--accent-bg), transparent 60%);
+}
+
+.vault-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vault-when {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.vault-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vault-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--border-subtle);
+}
+
+.vault-chip strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-chip-warn,
+.vault-warn {
+  color: var(--status-warning, #F2B8B5);
+}

@@ -17,6 +17,7 @@ import StatsTab from './tabs/StatsTab.jsx';
 import PopularTab from './tabs/PopularTab.jsx';
 import LibraryTab from './tabs/LibraryTab.jsx';
 import LinksTab from './tabs/LinksTab.jsx';
+import BackupsTab from './tabs/BackupsTab.jsx';
 import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
 import ManagementTab from './tabs/ManagementTab.jsx';
 
@@ -250,6 +251,9 @@ export default function App() {
 
           {activeTab === 'links' && (
             <LinksTab username={username} onUnauthorized={() => setLocked(true)} />
+          )}
+          {activeTab === 'backups' && (
+            <BackupsTab onUnauthorized={() => setLocked(true)} />
           )}
 
           {activeTab === 'settings' && (

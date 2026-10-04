@@ -81,4 +81,28 @@ pub(super) const ENTRIES: &[&str] = &[
          PRIMARY KEY (playlist_id, username)
      );
      CREATE INDEX IF NOT EXISTS idx_blend_members_user ON blend_members(username);",
+    // 54 — the cloud vault: a device's backup, sealed before it left the device.
+    //
+    // `blob` is AES-256-GCM under a key derived from the account's vault key, which this server
+    // never holds; it is stored and handed back, never read. Everything else is the label on the
+    // envelope, written by the device so the dashboard can say what a backup is without opening
+    // it: when, from which device, how big, and which sections with how many records each — never
+    // a setting, a title or a name. `sha256` is of the sealed bytes, so a download can be checked.
+    // Only the newest few per account are kept — see `db_vault`.
+    "CREATE TABLE IF NOT EXISTS vault_backups (
+         id                TEXT PRIMARY KEY,
+         user_id           TEXT NOT NULL,
+         created_at        TEXT NOT NULL,
+         device_id         TEXT NOT NULL,
+         device_name       TEXT,
+         app_version       TEXT,
+         format            INTEGER NOT NULL,
+         plain_bytes       INTEGER NOT NULL,
+         sealed_bytes      INTEGER NOT NULL,
+         sections_json     TEXT NOT NULL,
+         includes_accounts INTEGER NOT NULL,
+         sha256            TEXT NOT NULL,
+         blob              BLOB NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_vault_backups_user ON vault_backups(user_id, created_at);",
 ];

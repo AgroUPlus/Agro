@@ -1085,6 +1085,14 @@ impl Db {
             "SELECT * FROM device_holdings WHERE user_id = ?1",
         )?;
         dump("handoff", "SELECT * FROM handoff_state WHERE user_id = ?1")?;
+        // The label of each backup, not its sealed bytes: those are the device's to open, and a
+        // copy is downloadable from the app or the dashboard's own route.
+        dump(
+            "vault_backups",
+            "SELECT id, created_at, device_id, device_name, app_version, plain_bytes, sealed_bytes,
+                    sections_json, includes_accounts, sha256
+               FROM vault_backups WHERE user_id = ?1",
+        )?;
         dump(
             "blend_memberships",
             "SELECT playlist_id, state, invited_at FROM blend_members

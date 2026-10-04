@@ -13,3 +13,4 @@ mod retention;
 mod scrobble_time;
 mod sealed_notes;
 mod settings_vault;
+mod vault;

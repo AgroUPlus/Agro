@@ -28,6 +28,7 @@ pub enum Feature {
     Wrapped,
     PopularCharts,
     Blends,
+    CloudBackups,
 }
 
 /// The machine-readable code a refused call carries, so a client can hide the feature rather than
@@ -45,7 +46,7 @@ struct Descriptor {
 }
 
 impl Feature {
-    pub const ALL: [Feature; 11] = [
+    pub const ALL: [Feature; 12] = [
         Feature::AudioRelay,
         Feature::LibraryTransfers,
         Feature::PrivacyProxy,
@@ -57,6 +58,7 @@ impl Feature {
         Feature::Wrapped,
         Feature::PopularCharts,
         Feature::Blends,
+        Feature::CloudBackups,
     ];
 
     fn describe(self) -> Descriptor {
@@ -148,6 +150,14 @@ impl Feature {
                 category: "Social",
                 endpoint: "/graphql",
                 cost: "One aggregate query per member each time a blend is rewritten, at most daily",
+            },
+            Feature::CloudBackups => Descriptor {
+                id: "cloud-backups",
+                name: "Cloud backups",
+                description: "Keeps each account's last three app backups, sealed on the device under a key this server never holds.",
+                category: "Storage",
+                endpoint: "/api/v1/vault/backups",
+                cost: "Disk: up to three backups of at most 8 MiB per account",
             },
         }
     }
