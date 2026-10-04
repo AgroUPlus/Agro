@@ -27,6 +27,7 @@ pub enum Feature {
     AcousticSearch,
     Wrapped,
     PopularCharts,
+    Blends,
 }
 
 /// The machine-readable code a refused call carries, so a client can hide the feature rather than
@@ -44,7 +45,7 @@ struct Descriptor {
 }
 
 impl Feature {
-    pub const ALL: [Feature; 10] = [
+    pub const ALL: [Feature; 11] = [
         Feature::AudioRelay,
         Feature::LibraryTransfers,
         Feature::PrivacyProxy,
@@ -55,6 +56,7 @@ impl Feature {
         Feature::AcousticSearch,
         Feature::Wrapped,
         Feature::PopularCharts,
+        Feature::Blends,
     ];
 
     fn describe(self) -> Descriptor {
@@ -138,6 +140,14 @@ impl Feature {
                 category: "Discovery",
                 endpoint: "/api/v1/popular",
                 cost: "Small: one counter per track per day",
+            },
+            Feature::Blends => Descriptor {
+                id: "blends",
+                name: "Blends",
+                description: "Playlists written from several friends' listening, refreshed when a member opens one and it is due.",
+                category: "Social",
+                endpoint: "/graphql",
+                cost: "One aggregate query per member each time a blend is rewritten, at most daily",
             },
         }
     }

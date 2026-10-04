@@ -8,6 +8,7 @@ use crate::importer;
 use crate::playlist_visibility::PlaylistVisibility;
 use crate::schema::{bounded, caller, forbidden};
 
+use super::generated::refuse_generated;
 use super::notify::{announce, announce_change, audience};
 use super::payload::{
     requested_visibility, to_item_payload, to_playlist_payload, PlaylistItemPayload,
@@ -55,6 +56,7 @@ impl PlaylistWriteMutation {
     ) -> async_graphql::Result<PlaylistItemPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
 
         let playlist = db
             .get_playlist(&playlist_id)?
@@ -77,6 +79,7 @@ impl PlaylistWriteMutation {
     ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
 
         let playlist = db
             .get_playlist(&playlist_id)?
@@ -103,6 +106,7 @@ impl PlaylistWriteMutation {
     ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
 
         if visibility.is_none() && is_public.is_none() {
             return Err(async_graphql::Error::new("give visibility or isPublic"));

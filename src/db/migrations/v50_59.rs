@@ -58,4 +58,27 @@ pub(super) const ENTRIES: &[&str] = &[
          created_at   TEXT NOT NULL
      );
      CREATE INDEX IF NOT EXISTS idx_jam_recaps_user ON jam_recaps(username);",
+    // 53 — Blends: playlists Agro writes from several friends' listening.
+    //
+    // `kind` marks a playlist nobody edits by hand; every existing one is 'manual'. A blend is a
+    // playlist row like any other — so sharing, following and revision polling work unchanged —
+    // plus its recipe in `blends` and who is in it in `blend_members`. A member is 'invited' until
+    // they accept: their listening is never read before then. See `blend` and `db_blend`.
+    "ALTER TABLE playlists ADD COLUMN kind TEXT NOT NULL DEFAULT 'manual';
+     CREATE TABLE IF NOT EXISTS blends (
+         playlist_id  TEXT PRIMARY KEY,
+         size         INTEGER NOT NULL,
+         mix          INTEGER NOT NULL,
+         time_window  TEXT NOT NULL,
+         refresh      TEXT NOT NULL,
+         refreshed_at TEXT
+     );
+     CREATE TABLE IF NOT EXISTS blend_members (
+         playlist_id TEXT NOT NULL,
+         username    TEXT NOT NULL,
+         state       TEXT NOT NULL,
+         invited_at  TEXT NOT NULL,
+         PRIMARY KEY (playlist_id, username)
+     );
+     CREATE INDEX IF NOT EXISTS idx_blend_members_user ON blend_members(username);",
 ];

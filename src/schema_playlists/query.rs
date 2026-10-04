@@ -75,6 +75,13 @@ impl PlaylistReadQuery {
                 "you do not have permission to view this playlist",
             ));
         }
+        // A blend due for a rewrite is rewritten by the read that finds it so.
+        let playlist = if playlist.is_generated() {
+            crate::schema_blend::refresh_and_announce(ctx, db, &id)?;
+            db.get_playlist(&id)?.unwrap_or(playlist)
+        } else {
+            playlist
+        };
         to_playlist_payload(db, playlist, authed.username())
     }
 
@@ -94,7 +101,14 @@ impl PlaylistReadQuery {
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             let open = match db.get_playlist(&id)? {
-                Some(p) if db.can_view_playlist(&p, authed.username())? => Some(p.revision),
+                Some(p) if db.can_view_playlist(&p, authed.username())? => {
+                    // Polling is how a follower notices a blend's daily rewrite, so a due one is
+                    // rewritten here and the new revision is what they see.
+                    if p.is_generated() {
+                        crate::schema_blend::refresh_and_announce(ctx, db, &p.id)?;
+                    }
+                    db.get_playlist(&id)?.map(|fresh| fresh.revision)
+                }
                 _ => None,
             };
             out.push(PlaylistRevision {

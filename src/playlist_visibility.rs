@@ -59,9 +59,15 @@ impl Db {
     /// Whether `viewer` may open `playlist`. The owner always may. A friends-only playlist is open
     /// to the owner's *accepted* friends: a pending request, a stranger, and anyone either side
     /// has blocked all get the same answer, no.
+    ///
+    /// A generated playlist ignores its visibility: a blend is open to whoever has joined it and
+    /// nobody else, because what it holds is its members' listening.
     pub fn can_view_playlist(&self, playlist: &Playlist, viewer: &str) -> Result<bool> {
         if playlist.user_id == viewer {
             return Ok(true);
+        }
+        if playlist.is_generated() {
+            return self.is_blend_member(&playlist.id, viewer);
         }
         match playlist.visibility() {
             PlaylistVisibility::Public => Ok(true),

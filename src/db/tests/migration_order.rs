@@ -113,6 +113,8 @@ const SHIPPED: &[&str] = &[
     "722e6f5d40e2e152",
     // Jam recaps.
     "6babe8292559a2ea",
+    // Blends.
+    "e96d5df36a9708a4",
 ];
 
 fn digest(migration: &str) -> String {

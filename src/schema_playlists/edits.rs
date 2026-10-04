@@ -8,6 +8,7 @@ use crate::db_playlist_edits::{EditError, PlaylistEdit};
 use crate::playlist_access::EditAccess;
 use crate::schema::{bounded, caller, forbidden};
 
+use super::generated::refuse_generated;
 use super::notify::announce_change;
 use super::payload::{to_playlist_payload, PlaylistPayload, PlaylistTrackInput};
 
@@ -97,6 +98,7 @@ impl PlaylistEditsMutation {
     ) -> async_graphql::Result<PlaylistPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
         let edits = edits
             .into_iter()
             .map(PlaylistEditInput::into_edit)
@@ -119,6 +121,7 @@ impl PlaylistEditsMutation {
     ) -> async_graphql::Result<PlaylistPayload> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
         let title = bounded(&title, 255, "title")?;
         if title.is_empty() {
             return Err(async_graphql::Error::new("a playlist needs a title"));
@@ -150,6 +153,7 @@ impl PlaylistEditsMutation {
     ) -> async_graphql::Result<EditAccess> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
+        refuse_generated(db, &playlist_id)?;
         let stored = db
             .update_playlist_edit_access(&playlist_id, authed.username(), edit_access)?
             .ok_or_else(|| forbidden("only the owner may change who can edit a playlist"))?;

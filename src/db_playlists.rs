@@ -28,11 +28,20 @@ pub struct Playlist {
     /// Counts every change, so an edit can name the version it was made against.
     pub revision: i64,
     pub edit_access: EditAccess,
+    /// `"manual"` for a playlist people write, `"blend"` for one Agro writes — see `blend`.
+    pub kind: String,
+}
+
+impl Playlist {
+    /// Whether Agro writes this playlist itself, so nobody may edit it by hand.
+    pub fn is_generated(&self) -> bool {
+        self.kind != "manual"
+    }
 }
 
 /// The one column order every playlist query selects, read back by [`playlist_from_row`].
 pub(crate) const PLAYLIST_COLUMNS: &str =
-    "id, user_id, title, description, is_public, friends_only, created_at, updated_at, revision, edit_access";
+    "id, user_id, title, description, is_public, friends_only, created_at, updated_at, revision, edit_access, kind";
 
 pub(crate) fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
     Ok(Playlist {
@@ -46,6 +55,7 @@ pub(crate) fn playlist_from_row(row: &rusqlite::Row<'_>) -> Result<Playlist> {
         updated_at: row.get(7)?,
         revision: row.get(8)?,
         edit_access: EditAccess::from_stored(row.get(9)?),
+        kind: row.get(10)?,
     })
 }
 
@@ -91,6 +101,7 @@ impl Db {
             updated_at: now,
             revision: 0,
             edit_access: EditAccess::Off,
+            kind: "manual".to_string(),
         })
     }
 
@@ -177,13 +188,31 @@ impl Db {
         Ok(true)
     }
 
-    /// Deletes a playlist and its items (cascaded).
+    /// Deletes a playlist with its items, its followers and, for a blend, its recipe and members.
+    ///
+    /// Each named, in one transaction: foreign keys are not enforced here, so the `ON DELETE
+    /// CASCADE` this once relied on never ran, and every deleted playlist left its tracks behind.
     pub fn delete_playlist(&self, playlist_id: &str, user_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let count = conn.execute(
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let count = tx.execute(
             "DELETE FROM playlists WHERE id = ?1 AND user_id = ?2",
             params![playlist_id, user_id],
         )?;
+        if count > 0 {
+            for table in [
+                "playlist_items",
+                "playlist_followers",
+                "blends",
+                "blend_members",
+            ] {
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE playlist_id = ?1"),
+                    params![playlist_id],
+                )?;
+            }
+        }
+        tx.commit()?;
         Ok(count > 0)
     }
 }

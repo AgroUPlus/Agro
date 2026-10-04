@@ -48,6 +48,8 @@ pub fn server_capabilities() -> Vec<String> {
         "catalog.lyricsSource".to_string(),
         // `publishRecordings` takes a list, so a client need not spend one request per recording.
         "catalog.batchPublish".to_string(),
+        // Blends exist: the `blend*` API, and `isBlend` on a playlist.
+        "playlists.blends".to_string(),
     ]
 }
 
