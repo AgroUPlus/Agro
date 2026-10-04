@@ -186,22 +186,62 @@ export function setEnrolmentRequiredHandler(handler) {
   onEnrolmentRequired = handler;
 }
 
+/** The token the server last accepted. Requests on it go out in parallel; any other waits. */
+let acceptedToken = '';
+/** The one request currently finding out whether an unproven token is still good. */
+let tokenCheck = null;
+
+function unauthorizedError() {
+  const error = new Error('Unauthorized');
+  error.unauthorized = true;
+  return error;
+}
+
+/**
+ * Runs a GraphQL document, sending nothing the server is certain to refuse.
+ *
+ * Every refused POST is a line an access-log bouncer counts, and CrowdSec's
+ * `http-generic-401-bf` bans an address after six in quick succession. A dead token used to
+ * produce them in a stream: it stayed in storage after the 401, so the four-second poll kept
+ * presenting it from behind the sign-in screen, and a page load fired every tab's queries with it
+ * at once. Now a 401 forgets the token, no token means no request, and an unproven token is tried
+ * by one request while the rest wait on its answer.
+ */
 export async function gql(query, variables = {}) {
-  const token = getToken();
-  const res = await fetch('/graphql', {
+  let token = getToken();
+  while (token && token !== acceptedToken && tokenCheck) {
+    await tokenCheck.catch(() => {});
+    token = getToken();
+  }
+  if (!token) throw unauthorizedError();
+
+  const request = fetch('/graphql', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query, variables }),
   });
-
-  if (res.status === 401) {
-    const error = new Error('Unauthorized');
-    error.unauthorized = true;
-    throw error;
+  const checking = token !== acceptedToken;
+  if (checking) tokenCheck = request;
+  let res;
+  try {
+    res = await request;
+  } finally {
+    if (checking && tokenCheck === request) tokenCheck = null;
   }
+
+  // 403 here only ever means the account was suspended (see `auth::not_active`). The token would be
+  // refused the same way on every poll, and `http-generic-403-bf` counts those just as the 401 rule
+  // does, so it is dropped the same way and the sign-in screen says why.
+  if (res.status === 401 || res.status === 403) {
+    // Only forget the token this request carried: a sign-in may have replaced it meanwhile.
+    if (getToken() === token) setToken('');
+    if (acceptedToken === token) acceptedToken = '';
+    throw unauthorizedError();
+  }
+  acceptedToken = token;
 
   // Peeked at without consuming the body: callers all read `res.json()` themselves, so this
   // clones rather than reading, and stays silent on anything that is not JSON.

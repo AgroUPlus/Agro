@@ -1354,9 +1354,29 @@ input:checked + .slider:before {
   box-shadow: 0 0 16px rgba(208, 188, 255, 0.15);
 }
 
+.user-badge-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  line-height: 1.25;
+}
+
 .user-badge-name {
   flex: 1;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Which build this server is running, for bug reports: the crate version, plus the commit when known. */
+.user-badge-version {
+  text-align: left;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1576,7 +1596,7 @@ input:checked + .slider:before {
   .app-shell { grid-template-columns: 64px 1fr; }
   .sidebar-brand span,
   .nav-item span,
-  .user-badge-name,
+  .user-badge-text,
   .role-chip { display: none; }
   .nav-item { justify-content: center; }
   .page-header, .page-content, .now-bar { padding-left: var(--space-md); padding-right: var(--space-md); }
