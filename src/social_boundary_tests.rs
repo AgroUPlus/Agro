@@ -1340,9 +1340,8 @@ async fn ending_a_jam_leaves_each_member_their_own_recap() {
     let h = harness();
     let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
     h.db.join_jam(&jam.id, "beta").unwrap();
-    let (track, _) = h
-        .db
-        .add_jam_track(
+    let (track, _) =
+        h.db.add_jam_track(
             &jam.id,
             "beta",
             "u:1",
