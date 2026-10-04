@@ -1,16 +1,18 @@
 import React, { useEffect, useRef } from 'react';
 import { Smartphone, Terminal, Radio } from 'lucide-react';
 import { formatDuration } from '../api.js';
+import NowBarUnlock from './NowBarUnlock.jsx';
 
-export default function NowBar({ lastHandoff, nodes = [] }) {
+export default function NowBar({ lastHandoff, nodes = [], onUnlocked }) {
   const isPlaying = !!lastHandoff?.isPlaying;
-  // A sealed handoff carries only an envelope this dashboard cannot open — the plaintext fields
-  // are a placeholder, so they are not shown.
+  // A sealed handoff's plain fields are a placeholder. Opened with this tab's key they are real;
+  // otherwise they are not shown, and the session can be unlocked from here.
   const isEncrypted = !!lastHandoff?.encryptedPayload;
-  const title = isEncrypted
+  const isLocked = isEncrypted && !lastHandoff?.opened;
+  const title = isLocked
     ? 'Private Session (E2EE)'
     : (lastHandoff?.title || 'No active playback');
-  const artist = isEncrypted ? '' : (lastHandoff?.artist || '');
+  const artist = isLocked ? '' : (lastHandoff?.artist || '');
   const album = lastHandoff?.album || '';
   const artworkUrl = lastHandoff?.artworkUrl || '';
   
@@ -120,6 +122,7 @@ export default function NowBar({ lastHandoff, nodes = [] }) {
 
       {/* Right: Device & status badge */}
       <div className="now-bar-meta-right">
+        {isLocked && <NowBarUnlock onUnlocked={onUnlocked} />}
         {isEncrypted && (
           <span className="quality-pill" style={{ background: '#3b82f6', color: '#fff' }}>E2EE</span>
         )}

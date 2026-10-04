@@ -8,6 +8,7 @@ import {
 } from './api.js';
 import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
+import { openPresence } from './vault.js';
 import AuthScreen from './AuthScreen.jsx';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
@@ -161,11 +162,14 @@ export default function App() {
         setNodes(data.activeNodes);
       }
       if (data?.playbackHandoff) {
+        // A sealed handoff's plain columns are a placeholder; the real ones are inside.
+        const opened = await openPresence(data.playbackHandoff.encryptedPayload);
         setLastHandoff({
-          title: data.playbackHandoff.trackTitle || 'Idle',
-          artist: data.playbackHandoff.artistName || '',
-          album: data.playbackHandoff.albumName || '',
-          artworkUrl: data.playbackHandoff.artworkUrl || '',
+          title: opened?.trackTitle || data.playbackHandoff.trackTitle || 'Idle',
+          artist: opened?.artistName || data.playbackHandoff.artistName || '',
+          album: opened?.albumName || data.playbackHandoff.albumName || '',
+          artworkUrl: opened?.artworkUrl || data.playbackHandoff.artworkUrl || '',
+          opened: !!opened,
           positionMs: data.playbackHandoff.positionMs || 0,
           durationMs: data.playbackHandoff.durationMs || 0,
           isPlaying: !!data.playbackHandoff.isPlaying,
@@ -273,6 +277,7 @@ export default function App() {
       <NowBar
         lastHandoff={lastHandoff}
         nodes={nodes}
+        onUnlocked={poll}
       />
     </div>
   );

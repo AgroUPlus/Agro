@@ -4,6 +4,7 @@ import { login, ssoConfig, TotpRequiredError } from './api.js';
 import Field from './components/form/Field.jsx';
 import TextInput from './components/form/TextInput.jsx';
 import AgroLogo from './components/AgroLogo.jsx';
+import { unlockPresence } from './vault.js';
 
 /**
  * The whole of the signed-out experience: signing in, and creating an account.
@@ -51,7 +52,13 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
     setBusy(true);
     setError('');
     try {
-      await login(username, passphrase, needsCode ? totpCode : undefined);
+      const session = await login(username, passphrase, needsCode ? totpCode : undefined);
+      // The passphrase is in hand only now, so this is when what your devices seal can be opened.
+      // A failure does not undo the sign-in: the dashboard works without it, as "Private Session".
+      if (session.vaultSalt && session.vaultKeyWrapped) {
+        await unlockPresence(passphrase, session.vaultSalt, session.vaultKeyWrapped)
+          .catch(() => console.error('The vault key did not open with this passphrase'));
+      }
       onSignedIn();
     } catch (err) {
       if (err instanceof TotpRequiredError) {
