@@ -68,6 +68,7 @@ impl FollowMutation {
             _ => return Err(async_graphql::Error::new("playlist not found")),
         };
         db.follow_playlist(&playlist.id, me)?;
+        super::notify::announce_follow(ctx, me, &playlist.id, true)?;
         to_playlist_payload(db, playlist, me)
     }
 
@@ -78,6 +79,10 @@ impl FollowMutation {
     ) -> async_graphql::Result<bool> {
         let authed = caller(ctx)?;
         let db = ctx.data::<Db>()?;
-        Ok(db.unfollow_playlist(&id, authed.username())?)
+        let unfollowed = db.unfollow_playlist(&id, authed.username())?;
+        if unfollowed {
+            super::notify::announce_follow(ctx, authed.username(), &id, false)?;
+        }
+        Ok(unfollowed)
     }
 }

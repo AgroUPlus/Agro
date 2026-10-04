@@ -268,3 +268,55 @@ async fn a_follower_who_loses_access_sees_it_as_revoked_not_its_contents() {
         serde_json::json!([id])
     );
 }
+
+/// A follow made in the dashboard has to reach the follower's phone, which is not the device that
+/// made it. Told to the follower alone: nobody else learns who follows what from this.
+#[tokio::test]
+async fn following_and_unfollowing_reach_the_followers_own_devices() {
+    let h = harness();
+    let id = h.playlist(PlaylistVisibility::Friends);
+    let pushes = |tap: &mut tokio::sync::broadcast::Receiver<crate::ws::WsMessage>| {
+        let mut seen = Vec::new();
+        while let Ok(msg) = tap.try_recv() {
+            if msg.msg_type == "PLAYLIST_FOLLOW" {
+                seen.push((msg.user_id.clone(), msg.payload["following"].clone()));
+            }
+        }
+        seen
+    };
+
+    let mut tap = h.hub.channels.tap.subscribe();
+    data(
+        h.run_as(
+            &h.beta,
+            &format!(r#"mutation {{ followPlaylist(id: "{id}") {{ id }} }}"#),
+        )
+        .await,
+    );
+    assert_eq!(
+        pushes(&mut tap),
+        [(Some("beta".to_string()), Value::Bool(true))]
+    );
+
+    data(
+        h.run_as(
+            &h.beta,
+            &format!(r#"mutation {{ unfollowPlaylist(id: "{id}") }}"#),
+        )
+        .await,
+    );
+    assert_eq!(
+        pushes(&mut tap),
+        [(Some("beta".to_string()), Value::Bool(false))]
+    );
+
+    // Unfollowing what was not followed changes nothing, and says nothing.
+    data(
+        h.run_as(
+            &h.beta,
+            &format!(r#"mutation {{ unfollowPlaylist(id: "{id}") }}"#),
+        )
+        .await,
+    );
+    assert!(pushes(&mut tap).is_empty());
+}

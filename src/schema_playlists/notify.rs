@@ -13,6 +13,25 @@ use crate::db::Db;
 use crate::ws::WsHub;
 
 pub const PLAYLIST_UPDATED: &str = "PLAYLIST_UPDATED";
+pub const PLAYLIST_FOLLOW: &str = "PLAYLIST_FOLLOW";
+
+/// Tells `user`'s own devices they started or stopped following `playlist_id`, so a follow made
+/// in the dashboard reaches the app without waiting for its next look. The id and the direction:
+/// a device that wants the playlist fetches it, and that fetch checks access as any other.
+pub fn announce_follow(
+    ctx: &Context<'_>,
+    user: &str,
+    playlist_id: &str,
+    following: bool,
+) -> async_graphql::Result<()> {
+    let hub = ctx.data::<Arc<WsHub>>()?;
+    hub.notify_user(
+        user,
+        PLAYLIST_FOLLOW,
+        json!({ "id": playlist_id, "following": following }),
+    );
+    Ok(())
+}
 
 /// Who to tell about `playlist_id`: its owner's other devices and everyone following it. Read
 /// *before* a delete, which takes the follower rows with it.
