@@ -56,3 +56,34 @@ async fn the_server_answers_what_the_dashboard_and_wanda_ask() {
     assert_eq!(stolen["deleteVaultBackup"], false);
     assert_eq!(h.db.vault_backups("alpha").unwrap().len(), 1);
 }
+
+/// A device paired by QR has a token but never saw the envelope login returns; it asks for it.
+#[tokio::test]
+async fn a_paired_device_reads_only_its_own_vault_key_envelope() {
+    let h = harness();
+    let none = h
+        .ok(
+            &h.alpha,
+            "{ vaultKeyEnvelope { vaultSalt vaultKeyWrapped } }",
+        )
+        .await;
+    assert_eq!(none["vaultKeyEnvelope"], serde_json::Value::Null);
+
+    h.db.enrol_vault_key("alpha", "salt-hex", "wrapped-key")
+        .unwrap();
+    let mine = h
+        .ok(
+            &h.alpha,
+            "{ vaultKeyEnvelope { vaultSalt vaultKeyWrapped } }",
+        )
+        .await;
+    assert_eq!(mine["vaultKeyEnvelope"]["vaultSalt"], "salt-hex");
+    assert_eq!(mine["vaultKeyEnvelope"]["vaultKeyWrapped"], "wrapped-key");
+
+    let theirs = h.ok(&h.beta, "{ vaultKeyEnvelope { vaultSalt } }").await;
+    assert_eq!(
+        theirs["vaultKeyEnvelope"],
+        serde_json::Value::Null,
+        "another account's vault key was handed out"
+    );
+}
