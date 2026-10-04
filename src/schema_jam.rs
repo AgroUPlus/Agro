@@ -314,7 +314,12 @@ impl JamMutation {
         crate::features::Feature::Jams.require(db)?;
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
-            db.leave_jam(&existing.id, authed.username())?;
+            crate::schema_jam_recap::depart(
+                db,
+                ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                &existing,
+                authed.username(),
+            )?;
         }
 
         let mode = mode
@@ -345,7 +350,12 @@ impl JamMutation {
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
             if existing.id != jam.id {
-                db.leave_jam(&existing.id, authed.username())?;
+                crate::schema_jam_recap::depart(
+                    db,
+                    ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                    &existing,
+                    authed.username(),
+                )?;
             }
         }
         db.join_jam(&jam.id, authed.username())?;
@@ -380,7 +390,12 @@ impl JamMutation {
 
         if let Some(existing) = db.jam_for_member(authed.username())? {
             if existing.id != jam.id {
-                db.leave_jam(&existing.id, authed.username())?;
+                crate::schema_jam_recap::depart(
+                    db,
+                    ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?,
+                    &existing,
+                    authed.username(),
+                )?;
             }
         }
         db.join_jam(&jam.id, authed.username())?;
@@ -457,8 +472,17 @@ impl JamMutation {
         let db = ctx.data::<Db>()?;
         crate::features::Feature::Jams.require(db)?;
 
+        let hub = ctx.data::<std::sync::Arc<crate::ws::WsHub>>()?;
         let creator_left = jam.host.eq_ignore_ascii_case(&me);
-        db.leave_jam(&jam.id, &me)?;
+        if creator_left {
+            // The room ends for everyone, so everyone's recap is written now, while the creator
+            // is still in the member list. Written after they had gone, the others' recaps would
+            // be missing the person whose room it was.
+            crate::schema_jam_recap::remember_everyone(db, hub, &jam)?;
+            db.leave_jam(&jam.id, &me)?;
+        } else {
+            crate::schema_jam_recap::depart(db, hub, &jam, &me)?;
+        }
         let remaining = db.jam_members(&jam.id)?;
 
         // Told before it is deleted, or there is nobody left to tell.

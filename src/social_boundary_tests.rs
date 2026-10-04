@@ -1334,6 +1334,65 @@ async fn ending_a_jam_clears_it_from_the_server() {
     );
 }
 
+/// Ending a jam leaves each member a recap of it — theirs alone — and a stranger gets none.
+#[tokio::test]
+async fn ending_a_jam_leaves_each_member_their_own_recap() {
+    let h = harness();
+    let jam = h.db.create_jam("alpha", JamMode::Open).unwrap();
+    h.db.join_jam(&jam.id, "beta").unwrap();
+    let (track, _) = h
+        .db
+        .add_jam_track(
+            &jam.id,
+            "beta",
+            "u:1",
+            "One",
+            "A",
+            None,
+            1000,
+            false,
+            JamMode::Open,
+            None,
+            None,
+        )
+        .unwrap();
+    h.db.set_jam_now_playing(&jam.id, &track).unwrap();
+
+    let left = h.run_as(&h.alpha, "mutation { leaveJam }").await;
+    assert_allowed(&left, "the creator leaving");
+
+    let query = "{ jamRecaps { id recap { people tracks { title addedBy } } } }";
+    for who in [&h.alpha, &h.beta] {
+        let read = h.run_as(who, query).await;
+        assert_allowed(&read, "reading your own recaps");
+        let recaps = read.data.into_json().unwrap()["jamRecaps"].clone();
+        assert_eq!(recaps.as_array().unwrap().len(), 1, "one recap per member");
+        assert_eq!(recaps[0]["recap"]["tracks"][0]["title"], "One");
+    }
+
+    let seen = h.run_as(&h.stranger, query).await;
+    assert_allowed(&seen, "a stranger reading recaps");
+    assert_eq!(
+        seen.data.into_json().unwrap()["jamRecaps"],
+        serde_json::json!([]),
+        "a stranger was shown a recap of a room they were never in"
+    );
+
+    let beta_recap = h.db.jam_recaps("beta").unwrap()[0].id.clone();
+    let stolen = h
+        .run_as(
+            &h.stranger,
+            &format!(r#"mutation {{ dismissJamRecap(id: "{beta_recap}") }}"#),
+        )
+        .await;
+    assert_eq!(
+        stolen.data.into_json().unwrap()["dismissJamRecap"],
+        false,
+        "a stranger dismissed someone else's recap"
+    );
+    assert_eq!(h.db.jam_recaps("beta").unwrap().len(), 1);
+}
+
 /// A wrong code and an ended jam are the same refusal — a code is a credential.
 #[tokio::test]
 async fn a_bad_join_code_reveals_nothing() {
@@ -2851,6 +2910,22 @@ mod wire_contract {
                  isPlaying updatedAt deviceId contentHash peerLanAddress peerLanToken
              } } }",
         )
+        .await;
+    }
+
+    /// Wanda's `AgroJamRecapApi.recaps` selection, field for field.
+    #[tokio::test]
+    async fn jam_recaps_select_what_wanda_reads() {
+        let track = "title artist artworkUrl trackUri addedBy durationMs approvals skipVotes";
+        assert_selects(&format!(
+            "{{ jamRecaps {{ id createdAt recap {{
+                 startedAt endedAt durationMs people tracksOmitted
+                 tracks {{ {track} }}
+                 topContributor {{ username tracks }}
+                 mostLoved {{ {track} }}
+                 mostSkipped {{ {track} }}
+             }} }} }}"
+        ))
         .await;
     }
 

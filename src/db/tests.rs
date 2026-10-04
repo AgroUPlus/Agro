@@ -2,6 +2,7 @@
 
 mod device_keys;
 mod handoff;
+mod jam_recaps;
 mod migration_order;
 mod node_naming;
 #[cfg(unix)]

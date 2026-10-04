@@ -111,6 +111,8 @@ const SHIPPED: &[&str] = &[
     "b57e6f29183a7c68",
     // Short-link reuse. Shipped on `main` as 50 and moved here: see the entry's own comment.
     "722e6f5d40e2e152",
+    // Jam recaps.
+    "6babe8292559a2ea",
 ];
 
 fn digest(migration: &str) -> String {
