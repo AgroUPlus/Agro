@@ -60,9 +60,9 @@ export default function LinksTab({ username, onUnauthorized }) {
       } else {
         if (body?.data?.deleteLink?.navidromeCleanupRequired) {
           setNotice(
-            'Removed from Agro. The underlying share still exists on Navidrome — Agro never ' +
-              'holds your Navidrome password, so it cannot revoke it for you. Delete it from ' +
-              'Navidrome to stop the audio being served.'
+            'Removed from Agro. The underlying share still exists on your music server — Agro never ' +
+              'holds its password, so it cannot revoke it for you. Delete it from ' +
+              'the server to stop the audio being served.'
           );
         }
         setLinks(current => current.filter(item => item.id !== link.id));

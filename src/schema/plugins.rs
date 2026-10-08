@@ -37,7 +37,7 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
             .count(),
         known_wander: nodes.iter().filter(|n| is_wander(n)).count(),
         known_wanda: nodes.iter().filter(|n| !is_wander(n)).count(),
-        navidrome_configured: settings.as_ref().is_some_and(|s| s.has_server_url),
+        subsonic_configured: settings.as_ref().is_some_and(|s| s.has_server_url),
         lyrics_online: settings
             .as_ref()
             .and_then(|s| s.lyrics_fetch_online)

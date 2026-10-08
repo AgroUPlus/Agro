@@ -32,7 +32,7 @@ pub struct ShareLink {
     /// How many times it has been opened. An aggregate and nothing else — see migration 6.
     pub click_count: i64,
     pub last_clicked_at: Option<i64>,
-    /// Which backend minted the underlying share, when known. `"navidrome"` matters at deletion.
+    /// Which backend minted the underlying share, when known. `"navidrome"` or `"subsonic"` matters at deletion.
     pub source: Option<String>,
 }
 
@@ -40,14 +40,16 @@ pub struct ShareLink {
 #[derive(SimpleObject, Clone)]
 pub struct DeleteLinkPayload {
     pub deleted: bool,
-    /// True when the link pointed at a Navidrome share that Agro cannot revoke on the user's
+    /// True when the link pointed at a Subsonic-server share that Agro cannot revoke on the user's
     /// behalf.
     ///
-    /// Agro holds a Navidrome address and username but deliberately never the password — see the
+    /// Agro holds a music-server address and username but deliberately never the password — see the
     /// encrypted fields on `synced_settings`, and the "the password stays on each device" rule the
     /// clients are built around. Revoking a share needs that password, so the honest answer is to
     /// remove Agro's own record and say plainly that the share still exists on the music server,
     /// rather than to start storing a credential the whole design avoids.
+    ///
+    /// The field keeps its original name: renaming it would break clients already in use.
     pub navidrome_cleanup_required: bool,
 }
 
@@ -118,8 +120,8 @@ impl LinksMutation {
     /// Creates a short UID for a share URL. Returns the short link UID (e.g. "aB3x9Q"), or the
     /// account's existing open-ended link to the same target — see `db_short_links`.
     ///
-    /// `source` records which backend minted the underlying share — `"navidrome"` when the link
-    /// points at a Navidrome share, so deleting it later can also revoke it there.
+    /// `source` records which backend minted the underlying share — `"navidrome"` or `"subsonic"` when the
+    /// link points at a share on the music server, so deleting it later can also revoke it there.
     async fn create_short_link(
         &self,
         ctx: &Context<'_>,
@@ -197,7 +199,7 @@ impl LinksMutation {
 
         Ok(DeleteLinkPayload {
             deleted: true,
-            navidrome_cleanup_required: source.as_deref() == Some("navidrome"),
+            navidrome_cleanup_required: needs_remote_cleanup(source.as_deref()),
         })
     }
 
@@ -244,5 +246,26 @@ impl LinksMutation {
             track_title,
             artist_name,
         })
+    }
+}
+
+/// Whether a link's `source` names a music server that holds a share Agro cannot revoke itself.
+///
+/// `"navidrome"` is what clients have always sent; `"subsonic"` is the same thing for any other
+/// Subsonic-compatible server.
+fn needs_remote_cleanup(source: Option<&str>) -> bool {
+    matches!(source, Some("navidrome" | "subsonic"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_remote_cleanup;
+
+    #[test]
+    fn only_music_server_shares_need_remote_cleanup() {
+        assert!(needs_remote_cleanup(Some("navidrome")));
+        assert!(needs_remote_cleanup(Some("subsonic")));
+        assert!(!needs_remote_cleanup(Some("ytm")));
+        assert!(!needs_remote_cleanup(None));
     }
 }
