@@ -20,6 +20,7 @@
   <a href="https://github.com/AgroUPlus/Wander">Wander (Desktop)</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="SHARE_LINKS.md">Share Links</a> ·
+  <a href="CLIENTS.md">Write a client</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a>
 </p>
