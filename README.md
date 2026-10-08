@@ -285,7 +285,7 @@ Search is prefix-anchored and returns only discoverable, active accounts. Blocki
 
 ## Share links
 
-With `AGRO_PUBLIC_URL` set and Share Links configured in the dashboard, Wanda and Wander replace server-specific URLs (Navidrome, YouTube) with `https://your-domain/listen?v=<id>`. Agro forwards whoever opens one to where the track actually lives.
+With `AGRO_PUBLIC_URL` set and Share Links configured in the dashboard, Wanda and Wander replace server-specific URLs (your music server, YouTube) with `https://your-domain/listen?v=<id>`. Agro forwards whoever opens one to where the track actually lives.
 
 Set up in the dashboard under **Share Links**:
 1. **Share Domain** — your domain, pointed at this server.

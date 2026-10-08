@@ -16,11 +16,11 @@ use super::library_payload::{to_library_payload_with_sources, LibraryTrackPayloa
 /// render it.
 #[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SyncMode {
-    /// A Navidrome is configured for this account and the server archives. Devices do not need
-    /// their own copies — they stream — so downloads are never offered and freeing space is
-    /// always safe.
+    /// A Subsonic-compatible server (Navidrome and the like) is configured for this account and
+    /// the server archives. Devices do not need their own copies — they stream — so downloads
+    /// are never offered and freeing space is always safe.
     Navidrome,
-    /// The server archives, but there is no Navidrome to stream from. A device that lacks a
+    /// The server archives, but there is no music server to stream from. A device that lacks a
     /// recording is offered the file itself.
     PeerToPeer,
     /// No library root: the server keeps the index and relays through the spool, but never keeps
@@ -60,7 +60,7 @@ impl SyncOffersQuery {
 
     /// How this account should sync — the one answer both clients branch on.
     ///
-    /// Derived rather than configured: a deployment that archives and has a Navidrome address on
+    /// Derived rather than configured: a deployment that archives and has a music-server address on
     /// file is a streaming setup whether or not anyone said so, and a deployment with no library
     /// root cannot be anything but index-only.
     async fn sync_mode(
@@ -75,12 +75,12 @@ impl SyncOffersQuery {
         // Presence is the whole question, and it is now the only part of the settings this server
         // can answer: the address itself is inside a blob it has no key for. The client states the
         // bit explicitly when it saves.
-        let has_navidrome = ctx
+        let has_music_server = ctx
             .data::<Db>()?
             .get_synced_settings(&user_id)?
             .is_some_and(|s| s.has_server_url);
 
-        Ok(if has_navidrome {
+        Ok(if has_music_server {
             SyncMode::Navidrome
         } else {
             SyncMode::PeerToPeer

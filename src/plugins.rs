@@ -33,10 +33,10 @@ pub struct PluginContext {
     pub online_wanda: usize,
     pub known_wander: usize,
     pub known_wanda: usize,
-    /// Whether the account has a Navidrome address on file. Only whether, not what: since
+    /// Whether the account has a Subsonic-compatible server address on file. Only whether, not what: since
     /// migration 27 the address lives inside a blob the server has no key for, so "Not set" and a
     /// full URL are the only two things it can still tell apart.
-    pub navidrome_configured: bool,
+    pub subsonic_configured: bool,
     pub lyrics_online: bool,
     /// Whether any session is currently stored for anyone.
     pub has_handoff: bool,
@@ -90,14 +90,14 @@ pub fn get_plugins(ctx: &PluginContext, db: &crate::db::Db) -> Vec<AgroPlugin> {
         },
         AgroPlugin {
             id: "subsonic-navidrome".to_string(),
-            name: "Navidrome address sync".to_string(),
-            description: "Carries the Navidrome server address and username between clients so a new device knows where to sign in. Credentials are never stored or forwarded.".to_string(),
+            name: "Subsonic server address sync".to_string(),
+            description: "Carries the Subsonic-compatible server address (Navidrome, Gonic, Airsonic and the like) and username between clients so a new device knows where to sign in. Credentials are never stored or forwarded.".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             category: "Backend".to_string(),
             target: "Core".to_string(),
             is_enabled: true,
             toggleable: false,
-            is_connected: ctx.navidrome_configured,
+            is_connected: ctx.subsonic_configured,
             latency_ms: None,
             // The server cannot name the endpoint it is syncing. It holds the address sealed and
             // hands it to the clients unopened, so there is nothing to display here but whether
@@ -107,7 +107,7 @@ pub fn get_plugins(ctx: &PluginContext, db: &crate::db::Db) -> Vec<AgroPlugin> {
             metadata: vec![
                 meta(
                     "Server",
-                    if ctx.navidrome_configured { "Set — readable only on your devices" } else { "Not set" },
+                    if ctx.subsonic_configured { "Set — readable only on your devices" } else { "Not set" },
                 ),
                 meta("Username", "Stored encrypted, alongside the address"),
                 meta("Password", "Never synced — entered on each device"),
