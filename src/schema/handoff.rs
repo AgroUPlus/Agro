@@ -176,13 +176,7 @@ impl HandoffMutation {
         // A handoff reports what is playing, not what the device is called: the name it already
         // has stands, and the invented one is only for a device seen here first.
         let petname = crate::passphrase::generate_random_petname();
-        let client_type = if input.device_id.to_lowercase().contains("android")
-            || input.device_id.to_lowercase().contains("wanda")
-        {
-            "wanda"
-        } else {
-            "wander"
-        };
+        let client_type = crate::db::inferred_client_type(&input.device_id);
         let _ = db.upsert_node(
             &input.device_id,
             &input.user_id,

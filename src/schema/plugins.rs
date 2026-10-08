@@ -22,7 +22,9 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
             .map(|dt| (now - dt.with_timezone(&chrono::Utc)).num_seconds() < NODE_ONLINE_SECONDS)
             .unwrap_or(false)
     };
+    // A third-party client is neither: it is left out of both counts rather than guessed into one.
     let is_wander = |n: &crate::db::NodeRecord| n.client_type == "wander";
+    let is_wanda = |n: &crate::db::NodeRecord| n.client_type == "wanda";
 
     let settings = db.get_synced_settings(caller).ok().flatten();
 
@@ -33,10 +35,10 @@ fn plugin_context(db: &Db, caller: &str) -> crate::plugins::PluginContext {
             .count(),
         online_wanda: nodes
             .iter()
-            .filter(|n| !is_wander(n) && online(&n.last_seen_at))
+            .filter(|n| is_wanda(n) && online(&n.last_seen_at))
             .count(),
         known_wander: nodes.iter().filter(|n| is_wander(n)).count(),
-        known_wanda: nodes.iter().filter(|n| !is_wander(n)).count(),
+        known_wanda: nodes.iter().filter(|n| is_wanda(n)).count(),
         subsonic_configured: settings.as_ref().is_some_and(|s| s.has_server_url),
         lyrics_online: settings
             .as_ref()

@@ -68,7 +68,7 @@ mod tokens;
 mod users;
 
 pub use links::LinkKind;
-pub use nodes::{NodeName, NodeRecord};
+pub use nodes::{declared_client_type, inferred_client_type, NodeName, NodeRecord};
 pub use scrobbles::{ScrobbleEntry, ScrobbleRow};
 pub use settings::ShareSettingsInput;
 

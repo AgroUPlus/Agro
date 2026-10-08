@@ -28,7 +28,7 @@ pub struct PluginMetaItem {
 /// Live facts the plugin list is built from, so what the dashboard shows is what the server
 /// actually knows rather than a fixed description of an ideal deployment.
 pub struct PluginContext {
-    /// Nodes seen within the online window, by client type ("wander" / "wanda").
+    /// Nodes seen within the online window, by client type ("wander" / "wanda"); any other client is not counted.
     pub online_wander: usize,
     pub online_wanda: usize,
     pub known_wander: usize,

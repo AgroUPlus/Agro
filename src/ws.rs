@@ -453,12 +453,7 @@ pub async fn ws_handler(
         // that has never been seen, or the socket would rename it on every reconnect — which is
         // every time the server is redeployed.
         let petname = crate::passphrase::generate_random_petname();
-        let client_type =
-            if d.to_lowercase().contains("android") || d.to_lowercase().contains("wanda") {
-                "wanda"
-            } else {
-                "wander"
-            };
+        let client_type = crate::db::inferred_client_type(d);
         let _ = state.db.upsert_node(
             d,
             u,
@@ -532,13 +527,7 @@ async fn handle_socket(
                                             let petname =
                                                 crate::passphrase::generate_random_petname();
                                             let client_type =
-                                                if dev_id.to_lowercase().contains("android")
-                                                    || dev_id.to_lowercase().contains("wanda")
-                                                {
-                                                    "wanda"
-                                                } else {
-                                                    "wander"
-                                                };
+                                                crate::db::inferred_client_type(dev_id);
                                             let _ = state.db.upsert_node(
                                                 dev_id,
                                                 &u,

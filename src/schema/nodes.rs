@@ -126,11 +126,7 @@ impl NodesMutation {
     ) -> async_graphql::Result<NodePayload> {
         authorize(ctx, &user_id)?;
         let db = ctx.data::<Db>()?;
-        let normalized_client = if client_type.to_lowercase().contains("wanda") {
-            "wanda".to_string()
-        } else {
-            "wander".to_string()
-        };
+        let normalized_client = crate::db::declared_client_type(&client_type)?;
 
         let existing_nodes = db.get_active_nodes(&user_id).unwrap_or_default();
         // Best name first. The invented one is the last resort, not the default: a device that was

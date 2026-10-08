@@ -17,13 +17,16 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         // The name is decided in SQL rather than by reading the row first, so a heartbeat that
-        // arrives while the user is renaming the device cannot write back the name it read.
+        // arrives while the user is renaming the device cannot write back the name it read. The
+        // client type follows the same rule: only a caller that names the device (`registerNode`)
+        // states what it is, while a heartbeat only guesses it from the device id and must not
+        // overwrite what the client declared.
         conn.execute(
             "INSERT INTO registered_nodes (device_id, user_id, petname, client_type, version, current_track, last_seen_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(user_id, device_id) DO UPDATE SET
              petname = CASE WHEN ?8 AND excluded.petname != '' THEN excluded.petname ELSE registered_nodes.petname END,
-             client_type = excluded.client_type,
+             client_type = CASE WHEN ?8 THEN excluded.client_type ELSE registered_nodes.client_type END,
              version = COALESCE(excluded.version, registered_nodes.version),
              current_track = COALESCE(excluded.current_track, registered_nodes.current_track),
              last_seen_at = excluded.last_seen_at",
@@ -162,6 +165,46 @@ impl NodeName<'_> {
 
     fn overwrites(&self) -> bool {
         matches!(self, NodeName::Set(_))
+    }
+}
+
+/// The longest client type worth storing.
+const MAX_CLIENT_TYPE: usize = 32;
+
+/// The client type a client declared when it registered, made safe to store and compare.
+///
+/// Clients are free to name themselves (`"myplayer"`), so the value is lowercased and limited to
+/// `a-z 0-9 . _ -`. The two spellings that predate this — anything containing `wanda` or `wander`
+/// — keep collapsing to those names, because the dashboard and the deployment overview count them.
+pub fn declared_client_type(raw: &str) -> Result<String, &'static str> {
+    let lowered = raw.trim().to_lowercase();
+    if lowered.contains("wander") {
+        return Ok("wander".to_string());
+    }
+    if lowered.contains("wanda") {
+        return Ok("wanda".to_string());
+    }
+    let valid = !lowered.is_empty()
+        && lowered.len() <= MAX_CLIENT_TYPE
+        && lowered
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'));
+    if valid {
+        Ok(lowered)
+    } else {
+        Err("clientType must be 1-32 characters from a-z, 0-9, '.', '_' or '-'")
+    }
+}
+
+/// The client type to assume for a device that has only been seen through a socket or a handoff.
+///
+/// A guess from the device id, used only for a device not registered yet; see [`Db::upsert_node`].
+pub fn inferred_client_type(device_id: &str) -> &'static str {
+    let id = device_id.to_lowercase();
+    if id.contains("android") || id.contains("wanda") {
+        "wanda"
+    } else {
+        "wander"
     }
 }
 
