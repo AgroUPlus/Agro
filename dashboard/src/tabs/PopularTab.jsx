@@ -15,7 +15,7 @@ const POPULAR_TRACKS_QUERY = `query PopularTracks($days: Int!, $limit: Int!) {
 }`;
 
 const WINDOWS = [
-  { label: '24 hours', days: 1 },
+  { label: 'Last day', days: 2 },
   { label: '7 days', days: 7 },
   { label: '30 days', days: 30 }
 ];
@@ -26,7 +26,7 @@ export default function PopularTab({ onUnauthorized }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await gql(POPULAR_TRACKS_QUERY, { days, limit: 25 });
+      const res = await gql(POPULAR_TRACKS_QUERY, { days, limit: 50 });
       const body = await res.json();
       setTracks(body?.data?.popularTracks ?? []);
     } catch (error) {
