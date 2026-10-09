@@ -1,9 +1,6 @@
 services:
   agro:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: agrouplus/agro:latest
+    image: ghcr.io/agrouplus/agro:latest
     container_name: agro
     restart: unless-stopped
     ports:

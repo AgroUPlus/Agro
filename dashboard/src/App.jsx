@@ -9,7 +9,9 @@ import {
 import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
 import { openPresence } from './vault.js';
-import AuthScreen from './AuthScreen.jsx';
+import SignedOut from './SignedOut.jsx';
+import SecurityNudge from './SecurityNudge.jsx';
+import './setup.css';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
 import SocialTab from './tabs/SocialTab.jsx';
@@ -57,16 +59,8 @@ export default function App() {
   const isAdmin = role === 'admin';
 
   const [nodes, setNodes] = useState([]);
-  const [lastHandoff, setLastHandoff] = useState({
-    title: 'Wander Daemon Ready',
-    artist: 'Kolb Audio Subsystem',
-    album: '',
-    artworkUrl: '',
-    positionMs: 0,
-    durationMs: 0,
-    isPlaying: false,
-    deviceId: 'fleet'
-  });
+  // Nothing is playing until the server says so; the now-playing bar shows its own idle text.
+  const [lastHandoff, setLastHandoff] = useState(null);
   const [syncLogs, setSyncLogs] = useState([]);
 
   // Hash-based URL routing
@@ -197,7 +191,7 @@ export default function App() {
 
   if (locked) {
     return (
-      <AuthScreen
+      <SignedOut
         ssoError={ssoError}
         onDismissSsoError={() => setSsoError('')}
         onSignedIn={() => {
@@ -226,9 +220,11 @@ export default function App() {
           <h1>{currentTabItem?.label ?? 'Agro'}</h1>
         </header>
 
+        <SecurityNudge isAdmin={isAdmin} onOpenSettings={() => handleTabSelect('settings')} />
+
         <div className="page-content" key={activeTab}>
           {activeTab === 'social' && (
-            <SocialTab me={username} onUnauthorized={() => setLocked(true)} />
+            <SocialTab me={username} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'devices' && (
@@ -237,16 +233,16 @@ export default function App() {
               nodes={nodes}
               onRenameNode={handleRenameNode}
               onDeleteNode={handleDeleteNode}
-              onUnauthorized={() => setLocked(true)}
+              onUnauthorized={lockOut}
             />
           )}
 
           {activeTab === 'stats' && (
-            <StatsTab username={username} nodes={nodes} onUnauthorized={() => setLocked(true)} />
+            <StatsTab username={username} nodes={nodes} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'popular' && (
-            <PopularTab onUnauthorized={() => setLocked(true)} />
+            <PopularTab onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'library' && (
@@ -254,21 +250,21 @@ export default function App() {
           )}
 
           {activeTab === 'links' && (
-            <LinksTab username={username} onUnauthorized={() => setLocked(true)} />
+            <LinksTab username={username} onUnauthorized={lockOut} />
           )}
           {activeTab === 'backups' && (
-            <BackupsTab onUnauthorized={() => setLocked(true)} />
+            <BackupsTab onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'settings' && (
-            <AccountSettingsTab username={username} onUnauthorized={() => setLocked(true)} />
+            <AccountSettingsTab username={username} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'management' && isAdmin && (
             <ManagementTab
               me={username}
               logs={syncLogs}
-              onUnauthorized={() => setLocked(true)}
+              onUnauthorized={lockOut}
             />
           )}
         </div>

@@ -30,6 +30,7 @@ mod db_playlist_followers;
 mod db_playlist_items;
 mod db_playlists;
 mod db_popularity;
+mod db_popularity_movement;
 mod db_presence;
 mod db_replay;
 mod db_short_links;
@@ -76,6 +77,8 @@ mod schema_popularity;
 mod schema_replay;
 mod schema_social;
 mod schema_vault;
+mod secret_key_file;
+mod setup_status;
 mod share;
 mod social_boundary_tests;
 mod stats;
@@ -142,6 +145,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "dump-openapi") {
         println!("{}", openapi::ApiDoc::openapi().to_pretty_json()?);
         return Ok(());
+    }
+
+    // Two-factor secrets need a key. An operator-supplied AGRO_SECRET_KEY always wins; otherwise one
+    // is generated beside the database the first time. A failure is reported, never papered over:
+    // two-factor then stays unavailable and the dashboard says why.
+    if std::env::var("AGRO_SECRET_KEY").map_or(true, |key| key.trim().is_empty()) {
+        match secret_key_file::provide(std::path::Path::new(secret_key_file::FILE_NAME)) {
+            Ok(true) => tracing::info!(
+                "Generated a two-factor key in {}. Keep it with your database backups.",
+                secret_key_file::FILE_NAME
+            ),
+            Ok(false) => {}
+            Err(err) => tracing::warn!("Two-factor is unavailable: {err}"),
+        }
     }
 
     let db = Db::new("agro_data.db")?;
@@ -371,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The only two routes that can be reached without a token: there has to be some way to
         // get one. Both are rate-limited; see `login`.
         .route("/api/v1/login", post(login::login))
+        .route("/api/v1/setup-status", get(setup_status::setup_status))
         .route("/api/v1/bootstrap", post(login::bootstrap))
         .route("/api/v1/signup", post(login::signup))
         // SSO. `config` and `start` have to be reachable by someone with no account yet, and

@@ -32,6 +32,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
     paths(
         crate::login::login,
         crate::login::bootstrap,
+        crate::setup_status::setup_status,
         crate::login::signup,
         crate::library::begin_upload,
         crate::library::put_upload,

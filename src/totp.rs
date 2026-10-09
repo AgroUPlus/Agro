@@ -178,9 +178,11 @@ fn secret_key() -> Result<Key<Aes256Gcm>, String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+        .or_else(|| crate::secret_key_file::loaded().map(str::to_string))
         .ok_or(
-            "AGRO_SECRET_KEY is not set, so two-factor secrets cannot be stored. Generate one with \
-             `openssl rand -base64 32` and set it in the server's environment.",
+            "No two-factor key is available: AGRO_SECRET_KEY is not set and the key file could not \
+             be created. Generate a key with `openssl rand -base64 32` and set it in the server's \
+             environment.",
         )?;
     if raw.len() < 16 {
         return Err("AGRO_SECRET_KEY is too short; use at least 16 characters".into());
