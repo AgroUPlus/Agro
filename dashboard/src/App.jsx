@@ -57,16 +57,8 @@ export default function App() {
   const isAdmin = role === 'admin';
 
   const [nodes, setNodes] = useState([]);
-  const [lastHandoff, setLastHandoff] = useState({
-    title: 'Wander Daemon Ready',
-    artist: 'Kolb Audio Subsystem',
-    album: '',
-    artworkUrl: '',
-    positionMs: 0,
-    durationMs: 0,
-    isPlaying: false,
-    deviceId: 'fleet'
-  });
+  // Nothing is playing until the server says so; the now-playing bar shows its own idle text.
+  const [lastHandoff, setLastHandoff] = useState(null);
   const [syncLogs, setSyncLogs] = useState([]);
 
   // Hash-based URL routing
