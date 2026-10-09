@@ -451,7 +451,7 @@ section { padding: 90px 0; }
 #getstarted { border-top: 2px dashed var(--md-sys-color-outline-variant); }
 .getstarted-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 40px; }
 .gs-card {
-  background: var(--md-sys-color-surface-container-low); border-radius: 36px 16px 36px 16px;
+  background: var(--md-sys-color-surface-container-low); border-radius: 28px;
   padding: 36px; border: 2px solid var(--md-sys-color-outline-variant); display: flex; flex-direction: column; gap: 18px;
   transition: border-color 0.25s ease;
 }
@@ -486,6 +486,8 @@ footer {
   padding: 64px 0 36px;
 }
 .footer-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px; margin-bottom: 40px; }
+/* Pins each card's action to the bottom so the two cards line up. */
+.gs-card > .btn { margin-top: auto; }
 .footer-brand-logo {
   display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 900;
   color: var(--md-sys-color-on-surface); margin-bottom: 12px;

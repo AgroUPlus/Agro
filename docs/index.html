@@ -318,18 +318,20 @@
             <div class="gs-card">
               <span class="gs-pill lemon">Self-host binary</span>
               <div class="gs-title">Run your own server</div>
-              <p class="gs-desc">One lightweight binary with embedded SQLite. Starts up in seconds under systemd, Docker, or behind a reverse proxy.</p>
+              <p class="gs-desc">One lightweight binary with embedded SQLite. Run it in Docker or install it natively, no build needed.</p>
               <div class="gs-code-block">
-                <pre><span class="cmt"># Build dashboard, then binary</span>
-cd dashboard &amp;&amp; npm ci &amp;&amp; npm run build
-cd .. &amp;&amp; cargo build --release
+                <pre><span class="cmt"># Docker</span>
+docker run -d --name agro -p <span class="val">8700</span>:8700 \
+  -v agro_data:/opt/agro/data \
+  -v ~/Music:/srv/music:ro \
+  ghcr.io/agrouplus/agro
 
-<span class="cmt"># Run</span>
-PORT=<span class="val">1674</span> AGRO_LIBRARY_ROOT=<span class="val">/srv/music</span> \
-  ./target/release/agro</pre>
+<span class="cmt"># Or native on Linux (no root)</span>
+curl -fsSL https://raw.githubusercontent.com/AgroUPlus/Agro/main/scripts/install.sh | sh</pre>
               </div>
+              <p class="gs-desc">Then open <code>localhost:8700</code> and paste the one-time setup token from the log (<code>docker logs agro</code>) to create your admin account.</p>
               <a href="https://github.com/AgroUPlus/Agro#readme" target="_blank" rel="noopener" class="btn btn-tonal" style="align-self:flex-start;">
-                Full setup guide &rarr;
+                Full guide &amp; building from source &rarr;
               </a>
             </div>
 
