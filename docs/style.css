@@ -486,6 +486,8 @@ section { padding: 90px 0; }
 .gs-pill.mint { background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); }
 
 .gs-title { font-size: 1.4rem; font-weight: 900; color: var(--md-sys-color-on-surface); }
+/* Pins each card's action to the bottom so the two cards line up. */
+.gs-card > .btn { margin-top: auto; }
 .gs-desc { color: var(--md-sys-color-on-surface-variant); font-size: 14px; }
 .gs-code-block {
   background: var(--md-sys-color-surface-container-lowest); border: 2px solid var(--md-sys-color-outline-variant);
@@ -505,8 +507,6 @@ footer {
   padding: 64px 0 36px;
 }
 .footer-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px; margin-bottom: 40px; }
-/* Pins each card's action to the bottom so the two cards line up. */
-.gs-card > .btn { margin-top: auto; }
 .footer-brand-logo {
   display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 900;
   color: var(--md-sys-color-on-surface); margin-bottom: 12px;
@@ -598,3 +598,20 @@ footer {
   .phone-slanted:hover { transform: rotate(-24deg) scale(0.85); }
   .phone-upright:hover { transform: scale(0.85); }
 }
+
+/* M3 Expressive cursor (see cursor.js). Only present when the script enabled it. */
+.has-custom-cursor, .has-custom-cursor * { cursor: none !important; }
+.cursor-ring, .cursor-dot { position: fixed; top: 0; left: 0; z-index: 9999; pointer-events: none; will-change: transform; }
+.cursor-ring {
+  border: 2px solid var(--md-sys-color-primary); background: rgba(208, 188, 255, 0.08);
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+/* Over a control: a soft state layer exactly the control's shape, no outline. */
+.cursor-ring.on-target { border-color: transparent; background: rgba(255, 255, 255, 0.14); }
+.cursor-ring.on-target.pressed { background: rgba(255, 255, 255, 0.26); }
+.cursor-ring.away { opacity: 0; }
+.cursor-dot {
+  width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%;
+  background: var(--md-sys-color-primary); transition: opacity 0.15s ease;
+}
+.cursor-dot.hidden { opacity: 0; }
