@@ -56,6 +56,29 @@ The screenshots below are from Wanda and Wander, showing what they can do once c
 
 ---
 
+## Install
+
+**Docker** (amd64 and arm64):
+
+```bash
+docker run -d --name agro -p 8700:8700 \
+  -v agro_data:/opt/agro/data -v ~/Music:/srv/music:ro \
+  ghcr.io/agrouplus/agro
+docker logs agro   # the one-time setup token is printed here
+```
+
+Or use [`docker-compose.yml`](docker-compose.yml).
+
+**Native binary** (Linux, amd64 and arm64, no root):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgroUPlus/Agro/main/scripts/install.sh | sh
+```
+
+Then open `http://localhost:8700` and use the setup token from the log to create the admin account. To build it yourself, read on.
+
+---
+
 ## Build
 
 The React dashboard is embedded into the Rust binary via `rust-embed`, so **build the dashboard first** — a fresh clone has no `dashboard/dist/` and `cargo build` will fail.
