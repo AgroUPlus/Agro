@@ -74,6 +74,7 @@ mod schema_jam;
 mod schema_jam_recap;
 mod schema_playlists;
 mod schema_popularity;
+mod setup_status;
 mod schema_replay;
 mod schema_social;
 mod schema_vault;
@@ -372,6 +373,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The only two routes that can be reached without a token: there has to be some way to
         // get one. Both are rate-limited; see `login`.
         .route("/api/v1/login", post(login::login))
+        .route("/api/v1/setup-status", get(setup_status::setup_status))
         .route("/api/v1/bootstrap", post(login::bootstrap))
         .route("/api/v1/signup", post(login::signup))
         // SSO. `config` and `start` have to be reachable by someone with no account yet, and

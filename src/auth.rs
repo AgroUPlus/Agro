@@ -48,12 +48,18 @@ pub struct SetupToken {
 
 impl SetupToken {
     /// Mints a setup token, or holds nothing when the server is already configured.
+    ///
+    /// The log gets a link with the token in the URL *fragment*, which a browser never sends to any
+    /// server and the dashboard strips from the address bar as soon as it has read it.
     pub fn for_fresh_server(user_count: i64) -> Arc<Self> {
         let secret = if user_count == 0 {
             let minted = credentials::mint_token().secret;
+            let base_url = dashboard_url();
             tracing::warn!(
-                "No accounts exist yet. Create the admin with this one-time setup token \
-                 (it is not stored, and a restart replaces it):\n\n    {minted}\n"
+                "No accounts exist yet. Open this link to create the admin account:\n\n    \
+                 {base_url}/#setup={minted}\n\n\
+                 Or paste the one-time setup token by hand (it is not stored, and a restart \
+                 replaces it):\n\n    {minted}\n"
             );
             Some(minted)
         } else {
@@ -72,10 +78,29 @@ impl SetupToken {
             .is_some_and(|s| credentials::secure_eq(s, presented.trim()))
     }
 
+    /// Whether a setup token is still waiting to be used.
+    pub fn is_live(&self) -> bool {
+        self.secret.lock().unwrap().is_some()
+    }
+
     /// Burns the token so it cannot be replayed.
     pub fn consume(&self) {
         *self.secret.lock().unwrap() = None;
     }
+}
+
+/// Where the operator opens the dashboard: the configured public URL, else this machine's port.
+fn dashboard_url() -> String {
+    std::env::var("AGRO_PUBLIC_URL")
+        .ok()
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "http://localhost:{}",
+                std::env::var("PORT").unwrap_or_else(|_| "8700".to_string())
+            )
+        })
 }
 
 /// Whether administrators on this server must have a second factor.
