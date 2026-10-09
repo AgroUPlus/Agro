@@ -228,7 +228,7 @@ export default function App() {
 
         <div className="page-content" key={activeTab}>
           {activeTab === 'social' && (
-            <SocialTab me={username} onUnauthorized={() => setLocked(true)} />
+            <SocialTab me={username} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'devices' && (
@@ -237,16 +237,16 @@ export default function App() {
               nodes={nodes}
               onRenameNode={handleRenameNode}
               onDeleteNode={handleDeleteNode}
-              onUnauthorized={() => setLocked(true)}
+              onUnauthorized={lockOut}
             />
           )}
 
           {activeTab === 'stats' && (
-            <StatsTab username={username} nodes={nodes} onUnauthorized={() => setLocked(true)} />
+            <StatsTab username={username} nodes={nodes} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'popular' && (
-            <PopularTab onUnauthorized={() => setLocked(true)} />
+            <PopularTab onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'library' && (
@@ -254,21 +254,21 @@ export default function App() {
           )}
 
           {activeTab === 'links' && (
-            <LinksTab username={username} onUnauthorized={() => setLocked(true)} />
+            <LinksTab username={username} onUnauthorized={lockOut} />
           )}
           {activeTab === 'backups' && (
-            <BackupsTab onUnauthorized={() => setLocked(true)} />
+            <BackupsTab onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'settings' && (
-            <AccountSettingsTab username={username} onUnauthorized={() => setLocked(true)} />
+            <AccountSettingsTab username={username} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'management' && isAdmin && (
             <ManagementTab
               me={username}
               logs={syncLogs}
-              onUnauthorized={() => setLocked(true)}
+              onUnauthorized={lockOut}
             />
           )}
         </div>
