@@ -1,0 +1,27 @@
+# Release image: packages the binaries the Release workflow already built (dist/agro-linux-<arch>)
+# instead of compiling again. To build from source, use the multi-stage `Dockerfile`.
+FROM debian:bookworm-slim
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r agro --gid 1000 \
+    && useradd -r -g agro --uid 1000 -d /opt/agro -s /sbin/nologin agro
+
+WORKDIR /opt/agro
+COPY --chmod=755 dist/agro-linux-${TARGETARCH} ./agro
+
+RUN mkdir -p /opt/agro/data /opt/agro/spool /srv/music && \
+    chown -R agro:agro /opt/agro /srv/music
+
+USER agro
+
+ENV PORT=8700 \
+    AGRO_LIBRARY_ROOT=/srv/music \
+    AGRO_SPOOL_ROOT=/opt/agro/spool
+
+WORKDIR /opt/agro/data
+EXPOSE 8700
+
+ENTRYPOINT ["/opt/agro/agro"]
