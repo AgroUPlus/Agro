@@ -615,3 +615,10 @@ footer {
   background: var(--md-sys-color-primary); transition: opacity 0.15s ease;
 }
 .cursor-dot.hidden { opacity: 0; }
+
+/* Lightbox (see lightbox.js). Sits below the custom cursor so the cursor stays visible. */
+.lightbox-backdrop {
+  position: fixed; inset: 0; z-index: 9000; background: rgba(4, 4, 6, 0.82);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.lightbox-img { position: fixed; object-fit: contain; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
