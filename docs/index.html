@@ -427,9 +427,9 @@ PORT=<span class="val">1674</span> AGRO_LIBRARY_ROOT=<span class="val">/srv/musi
     <script>
       const navbarWrapper = document.getElementById('navbar-wrapper');
       window.addEventListener('scroll', () => {
-        if (window.scrollY > 30) {
+        if (window.scrollY > 60) {
           navbarWrapper.classList.add('scrolled');
-        } else {
+        } else if (window.scrollY < 10) {
           navbarWrapper.classList.remove('scrolled');
         }
       }, { passive: true });
