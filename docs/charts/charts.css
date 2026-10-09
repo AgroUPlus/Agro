@@ -1,0 +1,78 @@
+/* Chart-specific markup with no equivalent in style.css — mirrors the dashboard's
+   PopularTab.jsx classes so the same visual language carries over to this public page. */
+.charts-page { padding: 140px 0 90px; min-height: 100vh; }
+.charts-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 28px; }
+.charts-back { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); margin-bottom: 14px; }
+.charts-back:hover { color: var(--md-sys-color-on-surface); }
+.charts-server { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--md-sys-color-outline); margin-top: 6px; }
+
+.card {
+  background: var(--md-sys-color-surface-container-low); border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: 28px; padding: 24px; margin-bottom: 16px;
+}
+.card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.card-title { font-size: 15.5px; font-weight: 800; color: var(--md-sys-color-on-surface); }
+.card-subtitle { font-size: 13px; color: var(--md-sys-color-on-surface-variant); margin-top: 2px; }
+
+.segmented { display: inline-flex; background: var(--md-sys-color-surface-container-lowest); border-radius: 9999px; padding: 4px; gap: 2px; }
+.segmented-btn { padding: 8px 16px; font-size: 12.5px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); border-radius: 9999px; transition: all 0.15s; }
+.segmented-btn.active { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.segmented-btn:not(.active):hover { color: var(--md-sys-color-on-surface); }
+
+.empty-hint { display: flex; align-items: center; padding: 32px 8px; font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); text-align: left; }
+
+.chart-list { display: flex; flex-direction: column; gap: 6px; }
+.chart-row {
+  position: relative; display: flex; align-items: center; gap: 14px; padding: 10px 18px 10px 10px;
+  border-radius: 16px; overflow: hidden; color: inherit; transition: background-color 0.15s, transform 0.25s var(--m3-spring-fast);
+}
+.chart-row:hover { background: var(--md-sys-color-surface-container-highest); }
+.chart-rank { position: relative; width: 32px; text-align: center; font-size: 13px; font-weight: 800; color: var(--md-sys-color-on-surface-variant); }
+.chart-cover {
+  position: relative; width: 56px; height: 56px; border-radius: 14px; flex-shrink: 0;
+  background: var(--md-sys-color-surface-container-highest); object-fit: cover;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.chart-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.chart-cover .material-symbols-rounded { font-size: 20px; color: var(--md-sys-color-on-surface-variant); }
+.chart-info { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chart-title { font-size: 15px; font-weight: 700; color: var(--md-sys-color-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-artist { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+.chart-row:hover { transform: scale(1.01); }
+.chart-row.enter { animation: chart-enter 0.5s var(--m3-spring-fast) backwards; animation-delay: calc(var(--i) * 24ms); }
+.chart-row.top .chart-rank { color: var(--md-sys-color-primary); font-size: 16px; font-weight: 900; }
+@keyframes chart-enter { from { opacity: 0; transform: translateY(16px) scale(0.97); } }
+
+.chart-skeleton { pointer-events: none; }
+.chart-skeleton .bone {
+  border-radius: 10px; background: linear-gradient(90deg, var(--md-sys-color-surface-container-highest) 25%,
+    var(--md-sys-color-surface-container) 50%, var(--md-sys-color-surface-container-highest) 75%);
+  background-size: 200% 100%; animation: chart-shimmer 1.3s linear infinite; animation-delay: calc(var(--i) * 60ms);
+}
+.chart-skeleton .bone-cover { width: 56px; height: 56px; border-radius: 14px; flex-shrink: 0; }
+.chart-skeleton .bone-line { height: 12px; }
+@keyframes chart-shimmer { to { background-position: -200% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-row.enter, .chart-skeleton .bone { animation: none; }
+  .chart-row:hover { transform: none; }
+}
+
+/* The window switcher sits bare above the ranking: a larger pill on a gray track. */
+#window-switcher { background: var(--md-sys-color-surface-container-highest); padding: 6px; margin-bottom: 16px; }
+#window-switcher .segmented-btn { padding: 10px 22px; font-size: 13.5px; }
+
+.cover-img { opacity: 0; transition: opacity 0.3s ease; }
+.cover-img.loaded { opacity: 1; }
+.chart-list.refreshing { opacity: 0.45; transform: scale(0.995); pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; }
+
+#window-switcher { position: relative; }
+#window-switcher .segmented-btn { position: relative; z-index: 1; transition: color 0.2s ease; }
+#window-switcher .segmented-btn.active { background: transparent; }
+.seg-thumb {
+  position: absolute; top: 6px; left: 0; border-radius: 9999px; background: var(--md-sys-color-primary);
+  /* Overshoots slightly on arrival: the M3 Expressive spring. */
+  transition: transform 0.5s var(--m3-spring-fast), width 0.5s var(--m3-spring-fast);
+}
+@media (prefers-reduced-motion: reduce) { .seg-thumb { transition: none; } }

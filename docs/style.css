@@ -616,6 +616,8 @@ footer {
 }
 .cursor-dot.hidden { opacity: 0; }
 
+.nav-link-current { color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container-highest); }
+
 /* Lightbox (see lightbox.js). Sits below the custom cursor so the cursor stays visible. */
 .lightbox-backdrop {
   position: fixed; inset: 0; z-index: 9000; background: rgba(4, 4, 6, 0.82);
