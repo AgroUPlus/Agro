@@ -457,8 +457,27 @@ section { padding: 90px 0; }
 }
 .gs-card:hover { border-color: var(--md-sys-color-primary); }
 .gs-card.featured {
-  background: var(--md-sys-color-surface-container); border: 2px solid var(--md-sys-color-primary); border-radius: 16px 36px 16px 36px;
+  position: relative; overflow: hidden; isolation: isolate;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(208, 188, 255, 0.28) 0%, transparent 60%),
+    radial-gradient(90% 70% at 0% 100%, rgba(125, 220, 185, 0.14) 0%, transparent 65%),
+    var(--md-sys-color-surface-container);
+  border: 2px solid var(--md-sys-color-primary);
+  box-shadow: 0 0 0 4px rgba(208, 188, 255, 0.1), 0 24px 60px -12px rgba(208, 188, 255, 0.35);
+  transition: transform 0.35s var(--m3-spring-fast), box-shadow 0.35s ease, border-color 0.25s ease;
 }
+.gs-card.featured:hover { transform: translateY(-6px); box-shadow: 0 0 0 6px rgba(208, 188, 255, 0.14), 0 32px 70px -12px rgba(208, 188, 255, 0.5); }
+/* A slow light sweep across the card, so it draws the eye without a looping flash. */
+.gs-card.featured::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.09) 50%, transparent 65%);
+  background-size: 250% 100%; animation: gs-sheen 6s ease-in-out infinite;
+}
+@keyframes gs-sheen { 0%, 40% { background-position: 150% 0; } 100% { background-position: -100% 0; } }
+.gs-card.featured .gs-title { font-size: 1.7rem; background: linear-gradient(90deg, #fff, var(--md-sys-color-primary)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.gs-card.featured .btn-filled { padding: 16px 30px; font-size: 15px; box-shadow: 0 8px 24px rgba(208, 188, 255, 0.4); }
+.gs-card.featured .gs-feature-row .material-symbols-rounded { color: var(--md-sys-color-tertiary); }
+.gs-pill.mint::before { content: '\2605\00a0'; }
 .gs-pill {
   display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px 8px 20px 8px;
   font-size: 12px; font-weight: 800; text-transform: uppercase; align-self: flex-start;
@@ -564,6 +583,8 @@ footer {
   .promo-card:hover .promo-img-wrapper img,
   .security-card:hover,
   .security-card:hover .security-icon,
+  .gs-card.featured::before { animation: none; }
+  .gs-card.featured:hover { transform: none; }
   .gs-card:hover,
   .footer-col-links a:hover, .footer-col-links button:hover { transform: none; }
 
