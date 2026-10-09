@@ -9,7 +9,7 @@ import {
 import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
 import { openPresence } from './vault.js';
-import AuthScreen from './AuthScreen.jsx';
+import SignedOut from './SignedOut.jsx';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
 import SocialTab from './tabs/SocialTab.jsx';
@@ -189,7 +189,7 @@ export default function App() {
 
   if (locked) {
     return (
-      <AuthScreen
+      <SignedOut
         ssoError={ssoError}
         onDismissSsoError={() => setSsoError('')}
         onSignedIn={() => {

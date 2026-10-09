@@ -272,7 +272,7 @@ export default function AuthScreen({ onSignedIn, ssoError, onDismissSsoError }) 
   );
 }
 
-function AuthShell({ subtitle, children }) {
+export function AuthShell({ subtitle, children }) {
   return (
     <div className="auth-page">
       <div className="auth-card">
