@@ -112,6 +112,8 @@ PORT=1674 ./target/release/agro
 | `AGRO_SPOOL_TTL_HOURS` | How long a spooled file waits to be collected. Default 72 h. |
 | `AGRO_ARCHIVE_HOOK` | Shell command run after a file is filed. Paths arrive via env, not argv. |
 | `AGRO_ALLOWED_ORIGIN` | CORS origin for the dashboard. No wildcard. |
+| `AGRO_SECRET_KEY` | Encrypts two-factor secrets at rest. Optional: unset, the server generates one into `agro_secret.key` beside the database (mode 0600), so keep that file with your backups. Set it to hold the key elsewhere. Never change it afterwards, or enrolled secrets stop opening. |
+| `AGRO_REQUIRE_TOTP_ADMIN` | `1` makes two-factor mandatory for administrators. Default off: it is recommended, never forced. |
 | `AGRO_SIGNUP` | `approval` (default), `invite`, or `closed`. |
 | `AGRO_DB_READERS` | Read-only SQLite connections beside the single writer. Default `4`. |
 
