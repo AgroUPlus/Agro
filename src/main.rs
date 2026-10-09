@@ -74,10 +74,11 @@ mod schema_jam;
 mod schema_jam_recap;
 mod schema_playlists;
 mod schema_popularity;
-mod setup_status;
 mod schema_replay;
 mod schema_social;
 mod schema_vault;
+mod secret_key_file;
+mod setup_status;
 mod share;
 mod social_boundary_tests;
 mod stats;
@@ -144,6 +145,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "dump-openapi") {
         println!("{}", openapi::ApiDoc::openapi().to_pretty_json()?);
         return Ok(());
+    }
+
+    // Two-factor secrets need a key. An operator-supplied AGRO_SECRET_KEY always wins; otherwise one
+    // is generated beside the database the first time. A failure is reported, never papered over:
+    // two-factor then stays unavailable and the dashboard says why.
+    if std::env::var("AGRO_SECRET_KEY").map_or(true, |key| key.trim().is_empty()) {
+        match secret_key_file::provide(std::path::Path::new(secret_key_file::FILE_NAME)) {
+            Ok(true) => tracing::info!(
+                "Generated a two-factor key in {}. Keep it with your database backups.",
+                secret_key_file::FILE_NAME
+            ),
+            Ok(false) => {}
+            Err(err) => tracing::warn!("Two-factor is unavailable: {err}"),
+        }
     }
 
     let db = Db::new("agro_data.db")?;
