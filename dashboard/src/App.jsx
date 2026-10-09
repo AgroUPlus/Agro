@@ -10,6 +10,8 @@ import Sidebar, { NAV_ITEMS, ALL_TABS } from './components/Sidebar.jsx';
 import NowBar from './components/NowBar.jsx';
 import { openPresence } from './vault.js';
 import SignedOut from './SignedOut.jsx';
+import SecurityNudge from './SecurityNudge.jsx';
+import './setup.css';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
 import SocialTab from './tabs/SocialTab.jsx';
@@ -217,6 +219,8 @@ export default function App() {
         <header className="page-header">
           <h1>{currentTabItem?.label ?? 'Agro'}</h1>
         </header>
+
+        <SecurityNudge isAdmin={isAdmin} onOpenSettings={() => handleTabSelect('settings')} />
 
         <div className="page-content" key={activeTab}>
           {activeTab === 'social' && (

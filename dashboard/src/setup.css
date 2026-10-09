@@ -21,3 +21,14 @@
 .setup-next svg { flex-shrink: 0; margin-top: 2px; color: var(--md-sys-color-primary); }
 
 @media (prefers-reduced-motion: reduce) { .setup-body { animation: none; } }
+
+/* Two-factor suggestion banner (SecurityNudge.jsx). */
+.nudge { display: flex; align-items: center; gap: 14px; margin: 0 0 20px; padding: 14px 16px; border-radius: var(--radius-lg);
+  background: linear-gradient(100deg, rgba(208, 188, 255, 0.16), rgba(125, 220, 185, 0.08)); border: 2px solid var(--accent-border); }
+.nudge-icon { flex-shrink: 0; color: var(--md-sys-color-primary); }
+.nudge-text { flex: 1; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+.nudge-text strong { color: var(--text-primary); }
+.nudge-text code { font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--md-sys-color-surface-container-high); }
+.nudge-action { flex-shrink: 0; }
+.nudge-close { flex-shrink: 0; padding: 6px; border-radius: 50%; color: var(--text-muted); background: none; border: none; cursor: pointer; }
+.nudge-close:hover { color: var(--text-primary); background: var(--md-sys-color-surface-container-high); }
