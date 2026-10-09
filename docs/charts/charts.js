@@ -135,7 +135,30 @@ function showSkeleton() {
   chartCard.replaceChildren(list);
 }
 
-function renderTrack(track, index) {
+// Rank movement versus the window before this one. Shown only when the server says the comparison
+// is meaningful; a missing previous rank then means the track is a new entry.
+function movementBadge(track, index) {
+  const badge = el('span', 'chart-move');
+  if (track.previous_rank == null) {
+    badge.classList.add('new');
+    badge.textContent = 'NEW';
+    badge.title = 'Not on the chart in the previous period';
+    return badge;
+  }
+  const delta = track.previous_rank - (index + 1);
+  if (delta === 0) {
+    badge.classList.add('same');
+    badge.textContent = '–';
+    badge.title = 'Same rank as the previous period';
+    return badge;
+  }
+  badge.classList.add(delta > 0 ? 'up' : 'down');
+  badge.textContent = `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}`;
+  badge.title = `${delta > 0 ? 'Up' : 'Down'} from #${track.previous_rank} in the previous period`;
+  return badge;
+}
+
+function renderTrack(track, index, compared) {
   const row = el('a', 'chart-row enter' + (index < 3 ? ' top' : ''));
   row.style.setProperty('--i', index);
   row.href = youtubeMusicSearchUrl(track.artist, track.title);
@@ -170,13 +193,14 @@ function renderTrack(track, index) {
   artist.title = artistLine;
   info.append(title, artist);
   row.append(info);
+  if (compared) row.append(movementBadge(track, index));
   return row;
 }
 
-function renderTracks(tracks) {
+function renderTracks(tracks, compared) {
   chartCard.setAttribute('aria-busy', 'false');
   const list = el('div', 'chart-list');
-  tracks.forEach((track, index) => list.append(renderTrack(track, index)));
+  tracks.forEach((track, index) => list.append(renderTrack(track, index, compared)));
   chartCard.replaceChildren(list);
 }
 
@@ -198,7 +222,7 @@ function loadChart() {
       if (!body) return setHint("Couldn't reach that server. Check the address and try again.");
       if (!body.enabled) return setHint('Charts are turned off on this server.');
       if (!body.tracks || body.tracks.length === 0) return setHint('Nothing charted yet.');
-      renderTracks(body.tracks);
+      renderTracks(body.tracks, body.compared === true);
     })
     .catch(() => {
       if (!stale()) setHint("Couldn't reach that server. Check the address and try again.");

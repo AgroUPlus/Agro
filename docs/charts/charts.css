@@ -76,3 +76,12 @@
   transition: transform 0.5s var(--m3-spring-fast), width 0.5s var(--m3-spring-fast);
 }
 @media (prefers-reduced-motion: reduce) { .seg-thumb { transition: none; } }
+
+.chart-move {
+  flex-shrink: 0; min-width: 52px; text-align: center; padding: 4px 10px; border-radius: 9999px;
+  font-size: 12px; font-weight: 800; background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.chart-move.up { color: var(--md-sys-color-on-tertiary); background: var(--md-sys-color-tertiary); }
+.chart-move.down { color: #410002; background: #FFB4A9; }
+.chart-move.new { color: var(--md-sys-color-on-lemon); background: var(--md-sys-color-lemon); }
