@@ -45,6 +45,9 @@ pub struct PopularTrackJson {
     /// Looked up from title and artist alone — see `crate::cover_lookup`'s module doc for why
     /// this is safe where a catalogue join would not be. Absent if nothing was found.
     cover_url: Option<String>,
+    /// Rank in the window just before this one. Absent when the response's `compared` is false,
+    /// and also for a recording that was not charting then — a new entry.
+    previous_rank: Option<usize>,
 }
 
 /// The whole response body.
@@ -54,6 +57,9 @@ pub struct PopularResponse {
     /// is a placeholder, not "nothing charted yet".
     enabled: bool,
     days: i64,
+    /// Whether `previous_rank` means anything: the earlier window must fit inside retention and
+    /// have charted something. When false, show no movement at all rather than "new" everywhere.
+    compared: bool,
     tracks: Vec<PopularTrackJson>,
 }
 
@@ -93,6 +99,7 @@ pub async fn popular_handler(
         return Json(PopularResponse {
             enabled: false,
             days: 0,
+            compared: false,
             tracks: Vec::new(),
         })
         .into_response();
@@ -104,8 +111,10 @@ pub async fn popular_handler(
         .clamp(1, crate::db_popularity::RETENTION_DAYS);
     let limit = params.limit.unwrap_or(20).clamp(1, 100) as usize;
 
-    match state.db.popular_tracks(today(), days, limit) {
-        Ok(tracks) => {
+    let chart = state.db.popular_tracks(today(), days, limit);
+    let previous = state.db.previous_popular_ranks(today(), days);
+    match chart.and_then(|tracks| previous.map(|previous| (tracks, previous))) {
+        Ok((tracks, previous)) => {
             // Bounded by `limit` (clamped above to at most 100) and, past the first request for a
             // given recording, answered from cache — see `cover_lookup`'s module doc.
             let covers = futures_util::future::join_all(tracks.iter().map(|track| {
@@ -120,17 +129,26 @@ pub async fn popular_handler(
             let tracks = tracks
                 .into_iter()
                 .zip(covers)
-                .map(|(track, cover_url)| PopularTrackJson {
-                    title: track.title,
-                    artist: track.artist,
-                    album: track.album,
-                    count: track.count,
-                    cover_url,
+                .map(|(track, cover_url)| {
+                    let key = crate::norm::recording_key(&track.artist, &track.title);
+                    let previous_rank = previous
+                        .as_ref()
+                        .and_then(|ranks| ranks.get(&(key.artist, key.title, key.variants)))
+                        .copied();
+                    PopularTrackJson {
+                        title: track.title,
+                        artist: track.artist,
+                        album: track.album,
+                        count: track.count,
+                        cover_url,
+                        previous_rank,
+                    }
                 })
                 .collect();
             Json(PopularResponse {
                 enabled: true,
                 days,
+                compared: previous.is_some(),
                 tracks,
             })
             .into_response()

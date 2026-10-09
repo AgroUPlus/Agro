@@ -30,6 +30,7 @@ mod db_playlist_followers;
 mod db_playlist_items;
 mod db_playlists;
 mod db_popularity;
+mod db_popularity_movement;
 mod db_presence;
 mod db_replay;
 mod db_short_links;
