@@ -103,21 +103,24 @@ fn dashboard_url() -> String {
         })
 }
 
-/// Whether administrators on this server must have a second factor.
+/// Whether administrators on this server *must* have a second factor.
 ///
-/// On by default. The environment variable is the escape hatch, and it exists for one specific
-/// situation: an operator whose own authenticator is gone, who has no recovery codes left, and who
-/// would otherwise be locked out of the deployment with no way back in — a setup token is only ever
-/// minted for a database with *no* accounts, so there is no other recovery path. Turning it off,
-/// signing in, and turning it back on is the intended sequence.
+/// Off by default: two-factor is strongly recommended (the dashboard keeps suggesting it) but never
+/// forced, because it needs `AGRO_SECRET_KEY` to store its secrets and a fresh server has none, so
+/// forcing it would trap the first administrator on a screen that cannot succeed. An operator who
+/// wants the stricter rule opts in with `AGRO_REQUIRE_TOTP_ADMIN=1`; administrators then cannot
+/// finish signing in, or switch the factor off, until they have one.
+///
+/// Turning it back off is also the way out for an operator whose authenticator is gone and who has
+/// no recovery codes left.
 pub fn admin_totp_required() -> bool {
-    !matches!(
+    matches!(
         std::env::var("AGRO_REQUIRE_TOTP_ADMIN")
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
             .as_str(),
-        "0" | "false" | "no" | "off"
+        "1" | "true" | "yes" | "on"
     )
 }
 
