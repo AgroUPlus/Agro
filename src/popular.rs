@@ -13,6 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -27,6 +28,9 @@ use crate::AppState;
 /// still bounded against naive scraping.
 const BUDGET: usize = 60;
 const WINDOW: Duration = Duration::from_secs(300);
+
+/// Concurrent iTunes lookups per chart request — see the call site.
+const COVER_LOOKUP_CONCURRENCY: usize = 4;
 
 #[derive(Deserialize)]
 pub struct PopularParams {
@@ -115,17 +119,24 @@ pub async fn popular_handler(
     let previous = state.db.previous_popular_ranks(today(), days);
     match chart.and_then(|tracks| previous.map(|previous| (tracks, previous))) {
         Ok((tracks, previous)) => {
-            // Bounded by `limit` (clamped above to at most 100) and, past the first request for a
-            // given recording, answered from cache — see `cover_lookup`'s module doc.
-            let covers = futures_util::future::join_all(tracks.iter().map(|track| {
-                crate::cover_lookup::find_cover(
-                    &state.http_client,
-                    &state.db,
-                    &track.artist,
-                    &track.title,
-                )
-            }))
-            .await;
+            // A few lookups at a time: iTunes throttles bursts, and a cold cache would otherwise
+            // send one search per track at once. Past the first request for a recording these are
+            // answered from cache — see `cover_lookup`'s module doc.
+            let lookups: Vec<_> = tracks
+                .iter()
+                .map(|track| {
+                    crate::cover_lookup::find_cover(
+                        &state.http_client,
+                        &state.db,
+                        &track.artist,
+                        &track.title,
+                    )
+                })
+                .collect();
+            let covers: Vec<_> = futures_util::stream::iter(lookups)
+                .buffered(COVER_LOOKUP_CONCURRENCY)
+                .collect()
+                .await;
             let tracks = tracks
                 .into_iter()
                 .zip(covers)
