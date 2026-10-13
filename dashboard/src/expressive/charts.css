@@ -1,0 +1,146 @@
+/* ── Everyone's chart (tabs/PopularTab, tabs/popular) ──────────────────────────────────────────
+   The promo site's Charts page in the dashboard: a podium of three covers cut to M3 Expressive
+   shapes, then a clean ranked list with covers and movement badges. */
+
+.podium {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 18px;
+}
+
+/* First place in the middle, raised. */
+.podium-1 { order: 2; }
+.podium-2 { order: 1; }
+.podium-3 { order: 3; }
+
+.podium-spot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-width: 0;
+  padding: 24px 18px 22px;
+  border-radius: 32px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  transition: transform 0.35s var(--m3-spring-fast), border-color 0.25s ease;
+}
+
+.podium-spot:hover { transform: translateY(-6px); border-color: var(--md-sys-color-primary); }
+
+.podium-1 {
+  padding-top: 34px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(208, 188, 255, 0.18) 0%, transparent 70%),
+    var(--md-sys-color-surface-container);
+  border-color: rgba(208, 188, 255, 0.5);
+}
+
+.podium-art { position: relative; width: 72%; max-width: 210px; margin-bottom: 16px; }
+.podium-1 .podium-art { width: 82%; max-width: 250px; }
+
+.podium-art .chart-cover { width: 100%; height: auto; aspect-ratio: 1; border-radius: 0; }
+.podium-spot:hover .chart-cover img { transform: scale(1.06); }
+
+.podium-rank {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--md-sys-color-surface-container-highest);
+  border: 3px solid var(--md-sys-color-surface-container-low);
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface);
+}
+
+.podium-1 .podium-rank {
+  width: 54px;
+  height: 54px;
+  font-size: 24px;
+  background: var(--md-sys-color-lemon);
+  color: var(--md-sys-color-on-lemon);
+  border-color: var(--md-sys-color-surface-container);
+}
+
+.podium-title {
+  max-width: 100%;
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-variation-settings: var(--round-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.podium-1 .podium-title { font-size: 1.4rem; }
+.podium-artist { color: var(--md-sys-color-on-surface-variant); font-weight: 500; }
+.podium-meta { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.podium-count { font-size: 13px; font-weight: 700; color: var(--md-sys-color-outline); }
+
+/* ── Covers ──────────────────────────────────────────────────────────────────────────────── */
+
+.chart-cover {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-outline);
+}
+
+.chart-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s var(--spring-soft); }
+
+/* ── Rows 4 and down ─────────────────────────────────────────────────────────────────────── */
+
+.chart-rows { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+
+.chart-line {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px 8px 8px;
+  border-radius: 20px;
+  transition: background-color 0.2s ease, transform 0.3s var(--m3-spring-fast);
+}
+
+.chart-line:hover { background: var(--md-sys-color-surface-container); transform: translateX(4px); }
+.chart-line-rank { width: 30px; text-align: center; font-size: 1.05rem; font-weight: 800; color: var(--md-sys-color-primary); font-variant-numeric: tabular-nums; }
+.chart-line-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.chart-line-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-line-artist { font-size: 13px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-line-count { min-width: 44px; text-align: right; font-weight: 700; color: var(--md-sys-color-outline); font-variant-numeric: tabular-nums; }
+
+/* ── Movement ────────────────────────────────────────────────────────────────────────────── */
+
+.move {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.move-new { background: var(--md-sys-color-lemon); color: var(--md-sys-color-on-lemon); text-transform: uppercase; letter-spacing: 0.04em; }
+.move-up { background: rgba(125, 220, 185, 0.16); color: var(--md-sys-color-tertiary); }
+.move-down { background: rgba(255, 180, 171, 0.14); color: var(--status-error); }
+.move-same { color: var(--md-sys-color-outline); }
+
+@media (max-width: 860px) {
+  .podium { grid-template-columns: minmax(0, 1fr); }
+  .podium-1, .podium-2, .podium-3 { order: 0; }
+  .podium-spot { flex-direction: row; text-align: left; gap: 16px; padding: 14px; }
+  .podium-art, .podium-1 .podium-art { width: 84px; margin: 0; }
+  .podium-rank { width: 30px; height: 30px; font-size: 14px; }
+  .podium-1 .podium-rank { width: 34px; height: 34px; font-size: 16px; }
+}

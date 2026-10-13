@@ -52,9 +52,9 @@ export default function SecurityNudge({ isAdmin, onOpenSettings }) {
     <div className="nudge" role="note">
       <ShieldCheck size={20} className="nudge-icon" />
       <div className="nudge-text">
-        <strong>Protect your account with two-factor sign-in.</strong>
+        <strong>Turn on two-factor sign-in.</strong>
         {status.isAvailable ? (
-          <span> It takes a minute and stops a leaked passphrase from being enough.</span>
+          <span> A leaked passphrase alone won't be enough.</span>
         ) : isAdmin ? (
           <span> The server could not create its key file. Check that its data folder is writable, or set <code>AGRO_SECRET_KEY</code> yourself.</span>
         ) : (

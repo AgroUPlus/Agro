@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Clock, Flame, Music2, Radio } from 'lucide-react';
+import { User, Users } from 'lucide-react';
 import { gql } from '../api.js';
+import StatsSummary from './stats/StatsSummary.jsx';
+import StatsCharts from './stats/StatsCharts.jsx';
+import StatsTopLists from './stats/StatsTopLists.jsx';
+import PopularTab from './PopularTab.jsx';
+import SubTabs from '../expressive/SubTabs.jsx';
+import { useSubPage } from '../expressive/useSubPage.js';
 
 /**
- * What the whole fleet has been listening to.
+ * What the whole fleet has been listening to, and — one switch over — what everyone on the server
+ * has. Both are listening charts, so they share a tab.
  *
  * Each player used to keep its own statistics — the desktop client from a local history file, the
  * phone from its own database — so neither ever showed a true total and the two disagreed with
@@ -12,19 +19,32 @@ import { gql } from '../api.js';
  */
 const STATS_QUERY = `query Stats($user: String!, $period: String, $device: String) {
   listeningStats(userId: $user, period: $period, deviceName: $device) {
-    secsToday secsWeek secsTotal playsTotal streak
+    secsToday secsTotal playsTotal streak firstPlayedAt
     topArtists { name value }
     topAlbums { name value }
     topTracks { name value }
-    byDay
+    topGenres { name value }
+    heatmap
     byHour
     byDevice { name value }
   }
 }`;
 
-const PERIODS = ['WEEK', 'MONTH', 'YEAR', 'ALL'];
+const PERIODS = [
+  { id: 'WEEK', label: 'This week' },
+  { id: 'MONTH', label: 'This month' },
+  { id: 'YEAR', label: 'This year' },
+  { id: 'ALL', label: 'All time' }
+];
+
+const SCOPES = [
+  { id: 'me', label: 'You', icon: User },
+  { id: 'everyone', label: 'Everyone', icon: Users }
+];
 
 export default function StatsTab({ username, nodes = [], onUnauthorized }) {
+  // `#/stats/everyone`, or the old `#/popular`, opens the server-wide chart.
+  const [scope, setScope] = useSubPage('stats', ['me', 'everyone'], { popular: 'everyone' });
   const [period, setPeriod] = useState('MONTH');
   const [device, setDevice] = useState('');
   const [stats, setStats] = useState(null);
@@ -37,223 +57,62 @@ export default function StatsTab({ username, nodes = [], onUnauthorized }) {
   // allowed to update this.
   const [deviceOptions, setDeviceOptions] = useState([]);
 
-  const getDisplayName = useCallback((rawName) => {
-    if (!rawName) return '';
+  const displayName = useCallback((rawName) => {
     const match = nodes.find(n => n.petname === rawName || n.deviceId === rawName);
     return match?.petname || rawName;
   }, [nodes]);
 
   const load = useCallback(async () => {
     try {
-      const res = await gql(STATS_QUERY, {
-        user: username,
-        period,
-        device: device || null
-      });
+      const res = await gql(STATS_QUERY, { user: username, period, device: device || null });
       const body = await res.json();
       const next = body?.data?.listeningStats ?? null;
       setStats(next);
-      if (!device && next) {
-        setDeviceOptions(next.byDevice.map(entry => entry.name));
-      }
+      if (!device && next) setDeviceOptions(next.byDevice.map(entry => entry.name));
     } catch (error) {
       if (error.unauthorized) onUnauthorized?.();
     }
   }, [username, period, device, onUnauthorized]);
 
   useEffect(() => {
+    if (scope !== 'me') return undefined;
     load();
     // Statistics move slowly. A minute is frequent enough to feel live and rare enough not to
     // re-aggregate somebody's whole history every few seconds.
     const timer = setInterval(load, 60000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, scope]);
 
-  const availableDevices = Array.from(
-    new Set([
-      ...nodes.map(n => n.petname).filter(Boolean),
-      ...deviceOptions.map(getDisplayName),
-      ...(stats?.byDevice?.map(e => getDisplayName(e.name)) || [])
-    ])
-  );
-
-  if (!stats) {
-    return (
-      <div className="card">
-        <div className="empty-hint">
-          No listening recorded yet. Play something in <strong>wander</strong> or{' '}
-          <strong>wanda</strong> and it will appear here.
-        </div>
-      </div>
-    );
-  }
+  const devices = Array.from(new Set([...nodes.map(n => n.petname).filter(Boolean), ...deviceOptions.map(displayName)]));
+  const shown = stats && { ...stats, byDevice: stats.byDevice.map(d => ({ ...d, name: displayName(d.name) })) };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">Listening</div>
-            <div className="card-subtitle">
-              {device ? `${getDisplayName(device)} only` : 'Every device on this account'}
-            </div>
-          </div>
-        </div>
-
-        <div className="browse-controls">
-          <div className="segmented">
-            {PERIODS.map(option => (
-              <button
-                key={option}
-                className={`segmented-btn ${period === option ? 'active' : ''}`}
-                onClick={() => setPeriod(option)}
-              >
-                {option[0] + option.slice(1).toLowerCase()}
-              </button>
-            ))}
-          </div>
-          <select
-            className="browse-select"
-            value={device}
-            onChange={event => setDevice(event.target.value)}
-          >
-            <option value="">All devices</option>
-            {availableDevices.map(name => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="stat-tiles">
-          <StatTile icon={<Clock size={15} />} label="Today" value={formatHours(stats.secsToday)} />
-          <StatTile icon={<Clock size={15} />} label="This week" value={formatHours(stats.secsWeek)} />
-          <StatTile icon={<Music2 size={15} />} label="Plays" value={stats.playsTotal} />
-          <StatTile
-            icon={<Flame size={15} />}
-            label="Streak"
-            value={`${stats.streak} ${stats.streak === 1 ? 'day' : 'days'}`}
-          />
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Last 14 days</div>
-        </div>
-        <Bars values={stats.byDay} labelFor={index => `${stats.byDay.length - index - 1}d ago`} />
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">By hour</div>
-            <div className="card-subtitle">UTC, so it will be offset from your clock</div>
-          </div>
-        </div>
-        <Bars values={stats.byHour} labelFor={index => `${String(index).padStart(2, '0')}:00`} />
-      </div>
-
-      <div className="stats-columns">
-        <TopList title="Top artists" entries={stats.topArtists} unit="plays" />
-        <TopList title="Top albums" entries={stats.topAlbums} unit="plays" />
-        <TopList title="Top tracks" entries={stats.topTracks} unit="plays" />
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">By device</div>
-        </div>
-        {stats.byDevice.length === 0 ? (
-          <div className="empty-hint">Nothing reported yet.</div>
-        ) : (
-          <div className="top-list">
-            {stats.byDevice.map(entry => (
-              <div key={entry.name} className="top-row">
-                <Radio size={13} />
-                <span className="top-name">{getDisplayName(entry.name)}</span>
-                <span className="top-value">{formatHours(entry.value)}</span>
-              </div>
-            ))}
+    <>
+      <SubTabs pages={SCOPES} active={scope} onOpen={setScope}>
+        {scope === 'me' && (
+          <div className="stats-filters">
+            <select className="pill-select pill-select-primary" value={period} onChange={e => setPeriod(e.target.value)} aria-label="Period">
+              {PERIODS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            <select className="pill-select" value={device} onChange={e => setDevice(e.target.value)} aria-label="Device">
+              <option value="">All devices</option>
+              {devices.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
+      </SubTabs>
 
-function StatTile({ icon, label, value }) {
-  return (
-    <div className="stat-tile">
-      <div className="stat-tile-head">
-        <span>{label}</span>
-        {icon}
-      </div>
-      <div className="stat-tile-value">{value}</div>
-    </div>
-  );
-}
+      {scope === 'everyone' && <PopularTab />}
 
-/**
- * Bars scaled to the largest value in the set.
- *
- * Scaled to the set rather than to a fixed ceiling because a quiet week and a heavy one are both
- * worth reading the *shape* of, and a fixed axis flattens the quiet one into nothing.
- */
-function Bars({ values, labelFor }) {
-  const peak = Math.max(1, ...values);
-  return (
-    <div className="bar-row">
-      {values.map((value, index) => (
-        <div
-          key={index}
-          className="bar-slot"
-          title={`${labelFor(index)} · ${formatHours(value)}`}
-        >
-          <div
-            className="bar-fill"
-            style={{
-              height: `${(value / peak) * 100}%`,
-              transitionDelay: `${index * 12}ms`
-            }}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
+      {scope === 'me' && !shown && <div className="empty-hint">Nothing played yet. Play something in Wanda or Wander.</div>}
 
-function TopList({ title, entries, unit }) {
-  return (
-    <div className="card">
-      <div className="card-header">
-        <div className="card-title">{title}</div>
-      </div>
-      {entries.length === 0 ? (
-        <div className="empty-hint">Nothing yet.</div>
-      ) : (
-        <div className="top-list">
-          {entries.map((entry, index) => (
-            <div key={entry.name} className="top-row">
-              <span className="top-rank">{index + 1}</span>
-              <span className="top-name" title={entry.name}>
-                {entry.name}
-              </span>
-              <span className="top-value">
-                {entry.value} {unit}
-              </span>
-            </div>
-          ))}
-        </div>
+      {scope === 'me' && shown && (
+        <>
+          <StatsSummary stats={shown} period={period} deviceName={device} />
+          <StatsCharts heatmap={shown.heatmap} byHour={shown.byHour} />
+          <StatsTopLists stats={shown} />
+        </>
       )}
-    </div>
+    </>
   );
-}
-
-function formatHours(seconds) {
-  if (!seconds) return '0m';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.round((seconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }

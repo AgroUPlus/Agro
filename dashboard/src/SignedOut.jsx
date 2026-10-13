@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import AuthScreen from './AuthScreen.jsx';
 import SetupScreen from './SetupScreen.jsx';
+import AuthStage from './expressive/AuthStage.jsx';
 import { setupStatus, readSetupFragment, clearSetupFragment } from './setup.js';
 
 /**
@@ -25,8 +26,11 @@ export default function SignedOut(props) {
       </div>
     );
   }
-  if (needsSetup) {
-    return <SetupScreen initialToken={linkedToken} onSignedIn={props.onSignedIn} />;
-  }
-  return <AuthScreen {...props} />;
+  return (
+    <AuthStage>
+      {needsSetup
+        ? <SetupScreen initialToken={linkedToken} onSignedIn={props.onSignedIn} />
+        : <AuthScreen {...props} />}
+    </AuthStage>
+  );
 }

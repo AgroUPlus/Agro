@@ -21,13 +21,13 @@ export default function SecuritySection({
     <div className="card">
       <div className="card-header">
         <div>
-          <div className="card-title">Security & Two-Factor Authentication (2FA)</div>
-          <div className="card-subtitle">RFC 6238 TOTP authenticator protection for your account</div>
+          <div className="card-title">Two-factor sign-in</div>
+          <div className="card-subtitle">A code from your authenticator app, on top of your passphrase.</div>
         </div>
         {hasTotp ? null : (
           <button className="btn btn-secondary" onClick={onBeginTotp} disabled={!!totpEnrolment}>
             <Shield size={14} />
-            <span>Setup 2FA</span>
+            <span>Turn on</span>
           </button>
         )}
       </div>

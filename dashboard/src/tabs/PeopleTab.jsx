@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { UserCheck, UserX, Ticket, Copy, Ban, Trash2 } from 'lucide-react';
+import { UserCheck, UserX, Ticket, Copy, Check, Ban, Trash2, Plus, Hourglass } from 'lucide-react';
 import { gql } from '../api.js';
 import AccountsPanel from './AccountsPanel.jsx';
 import Avatar from '../Avatar.jsx';
@@ -87,127 +87,111 @@ export default function PeopleTab({ me, onUnauthorized }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {notice && <div className="card" style={{ color: 'var(--danger, #f66)' }}>{notice}</div>}
+    <>
+      {notice && <div className="empty-hint backup-notice">{notice}</div>}
 
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Waiting for approval ({pending.length})</div>
-        </div>
-        {pending.length === 0 ? (
-          <p style={{ opacity: 0.6 }}>Nobody is waiting. New signups appear here.</p>
-        ) : (
-          pending.map((account) => (
-            <div
-              key={account.username}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                padding: '8px 0'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Avatar username={account.username} size={36} />
-                <div>
-                  <strong>{account.username}</strong>
-                  <div style={{ opacity: 0.6, fontSize: '12px' }}>
-                    signed up {new Date(account.createdAt).toLocaleString()}
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+      {/* Shown only while someone is waiting: an empty queue needs no card saying so. */}
+      {pending.length > 0 && (
+        <div className="card queue-card">
+          <div className="card-header">
+            <div className="card-title"><Hourglass size={18} />Waiting to join</div>
+            <span className="feature-count">{pending.length}</span>
+          </div>
+          <ul className="key-rows">
+            {pending.map((account) => (
+              <li key={account.username} className="key-row">
+                <Avatar username={account.username} size={44} />
+                <span className="key-text">
+                  <span className="key-label">{account.username}</span>
+                  <span className="key-sub">Signed up {new Date(account.createdAt).toLocaleString()}</span>
+                </span>
                 <button
-                  className="btn"
+                  className="btn btn-primary"
                   disabled={busy === account.username}
                   onClick={() => decide(account.username, 'active')}
                 >
-                  <UserCheck size={14} /> Let in
+                  <UserCheck size={15} /> Let in
                 </button>
                 {/* Suspended rather than deleted: the account keeps its name, so approving
                     somebody by mistake is undoable and the name cannot be re-registered. */}
                 <button
-                  className="btn"
+                  className="icon-btn danger"
                   disabled={busy === account.username}
                   onClick={() => decide(account.username, 'suspended')}
+                  aria-label="Refuse"
+                  title="Refuse"
                 >
-                  <UserX size={14} /> Refuse
+                  <UserX size={16} />
                 </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Invite codes</div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button className="btn" disabled={busy === 'new-invite'} onClick={() => mintInvite(1, null)}>
-              <Ticket size={14} /> One-time code
+          <div className="card-title"><Ticket size={18} />Invites</div>
+          <div className="invite-make">
+            <button className="btn btn-secondary" disabled={busy === 'new-invite'} onClick={() => mintInvite(1, null)}>
+              <Plus size={15} /> Single use
             </button>
-            <button className="btn" disabled={busy === 'new-invite'} onClick={() => mintInvite(25, 168)}>
-              <Ticket size={14} /> 25 uses, 7 days
+            <button className="btn btn-secondary" disabled={busy === 'new-invite'} onClick={() => mintInvite(25, 168)}>
+              <Plus size={15} /> 25 people, 7 days
             </button>
           </div>
         </div>
-        <p style={{ opacity: 0.6, fontSize: '12px' }}>
-          Invite codes allow new users to bypass the approval queue and join immediately. Newly
-          generated codes are automatically copied to your clipboard.
-        </p>
-        {invites.map((invite) => (
-          <div
-            key={invite.code}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              padding: '8px 0',
-              opacity: invite.revoked || invite.usedCount >= invite.maxUses ? 0.4 : 1
-            }}
-          >
-            <div>
-              <code>{invite.code}</code>
-              <div style={{ opacity: 0.6, fontSize: '12px' }}>
-                {invite.usedCount}/{invite.maxUses} used
-                {invite.expiresAt && ` · expires ${new Date(invite.expiresAt).toLocaleString()}`}
-                {invite.revoked && ' · revoked'}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="btn" onClick={() => copy(invite.code)}>
-                <Copy size={14} /> {copied === invite.code ? 'Copied' : 'Copy'}
-              </button>
-              {!invite.revoked && (
-                <button
-                  className="btn"
-                  disabled={busy === invite.code}
-                  onClick={() => run(invite.code, REVOKE_INVITE, { code: invite.code })}
-                >
-                  <Ban size={14} /> Revoke
-                </button>
-              )}
-              {/* Revoking stops a code working and keeps the record; deleting is the tidying-up
-                  once it is spent or dead. Offered only then, so a live code cannot be removed
-                  from the list while it still lets people in. */}
-              {(invite.revoked || invite.usedCount >= invite.maxUses) && (
-                <button
-                  className="btn"
-                  disabled={busy === invite.code}
-                  onClick={() => run(invite.code, DELETE_INVITE, { code: invite.code })}
-                  title="Remove this code from the list"
-                >
-                  <Trash2 size={14} /> Delete
-                </button>
-              )}
-            </div>
+        <p className="card-subtitle">A code skips the approval queue. New codes are copied for you.</p>
+        {invites.length > 0 && (
+          <div className="ticket-grid">
+            {invites.map((invite) => {
+              const spent = invite.revoked || invite.usedCount >= invite.maxUses;
+              return (
+                <div key={invite.code} className={`ticket ${spent ? 'is-spent' : ''}`}>
+                  <code className="ticket-code">{invite.code}</code>
+                  <span className="ticket-meter"><span style={{ width: `${(invite.usedCount / invite.maxUses) * 100}%` }} /></span>
+                  <span className="ticket-sub">
+                    {invite.usedCount}/{invite.maxUses} used
+                    {invite.revoked ? ' · revoked' : invite.expiresAt ? ` · until ${new Date(invite.expiresAt).toLocaleDateString()}` : ''}
+                  </span>
+                  <span className="ticket-actions">
+                    <button className="icon-btn" onClick={() => copy(invite.code)} aria-label="Copy code">
+                      {copied === invite.code ? <Check size={15} /> : <Copy size={15} />}
+                    </button>
+                    {!invite.revoked && (
+                      <button
+                        className="icon-btn"
+                        disabled={busy === invite.code}
+                        onClick={() => run(invite.code, REVOKE_INVITE, { code: invite.code })}
+                        aria-label="Revoke"
+                        title="Revoke"
+                      >
+                        <Ban size={15} />
+                      </button>
+                    )}
+                    {/* Revoking stops a code working and keeps the record; deleting is the tidying-up
+                        once it is spent or dead. Offered only then, so a live code cannot be removed
+                        from the list while it still lets people in. */}
+                    {spent && (
+                      <button
+                        className="icon-btn danger"
+                        disabled={busy === invite.code}
+                        onClick={() => run(invite.code, DELETE_INVITE, { code: invite.code })}
+                        aria-label="Remove"
+                        title="Remove this code from the list"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
-        ))}
+        )}
       </div>
 
       <AccountsPanel me={me} onUnauthorized={onUnauthorized} />
-    </div>
+    </>
   );
 }

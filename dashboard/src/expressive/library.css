@@ -1,0 +1,88 @@
+/* ── Library (tabs/Library*, PlaylistDetail, AlbumDetail) ──────────────────────────────────────
+   Covers as the content: larger tiles that lift and round off on hover, section titles in the
+   rounded face, and detail pages with the cover's own colours behind them. */
+
+.lib-section-title { font-size: 1.5rem; font-weight: 800; font-variation-settings: var(--round-title); letter-spacing: -0.015em; }
+
+.cover-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 20px; }
+
+.cover-tile { gap: 4px; transition: transform 0.35s var(--m3-spring-fast); }
+.cover-tile.clickable:hover { transform: translateY(-5px); }
+
+.cover-art {
+  border-radius: 24px;
+  border: none;
+  background:
+    radial-gradient(120% 100% at 100% 0%, rgba(208, 188, 255, 0.22) 0%, transparent 60%),
+    var(--md-sys-color-surface-container-high);
+  transition: border-radius 0.45s var(--m3-spring-fast), box-shadow 0.3s ease;
+}
+
+.cover-tile.clickable:hover .cover-art { border-radius: 40px 16px 40px 16px; box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.8); }
+.cover-art img { transition: transform 0.5s var(--spring-soft); }
+.cover-tile.clickable:hover .cover-art img { transform: scale(1.05); }
+
+.cover-badge {
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-tertiary);
+  color: var(--md-sys-color-on-tertiary);
+  font-weight: 800;
+  border: none;
+}
+
+.cover-title { margin-top: 8px; font-size: 15px; font-weight: 700; }
+.cover-sub { font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+
+/* ── Detail pages ────────────────────────────────────────────────────────────────────────── */
+
+.detail-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  padding: 32px;
+  border-radius: 32px;
+  border: 2px solid var(--md-sys-color-outline-variant);
+  background:
+    radial-gradient(90% 120% at 0% 0%, rgba(208, 188, 255, 0.24) 0%, transparent 60%),
+    var(--md-sys-color-surface-container-low);
+}
+
+.detail-cover {
+  width: 220px;
+  border-radius: 32px 14px 32px 14px;
+  box-shadow: 0 24px 50px -20px rgba(0, 0, 0, 0.9);
+}
+
+.detail-title { font-weight: 800; font-variation-settings: var(--round-title); letter-spacing: -0.025em; }
+.detail-kind { letter-spacing: 0.08em; font-weight: 700; }
+
+.detail-back { margin-bottom: 14px; }
+
+.detail-kind, .sync-chip, .detail-select { font-family: inherit; }
+.sync-chip { border-radius: var(--radius-pill); font-weight: 700; }
+
+.detail-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 40px;
+  padding: 0 36px 0 16px;
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23E5E1E9' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 14px center;
+  color: var(--md-sys-color-on-surface);
+  font-weight: 700;
+}
+
+.detail-select:hover { border-color: var(--md-sys-color-primary); }
+
+.track-table { border-collapse: separate; border-spacing: 0 4px; }
+.track-table th { font-weight: 700; color: var(--md-sys-color-outline); }
+.track-table tbody tr { transition: background-color 0.2s ease; }
+.track-table tbody tr:hover td { background: var(--md-sys-color-surface-container); }
+.track-table tbody td:first-child { border-radius: 16px 0 0 16px; }
+.track-table tbody td:last-child { border-radius: 0 16px 16px 0; }
+
+@media (max-width: 860px) {
+  .cover-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; }
+  .detail-cover { width: 140px; }
+}

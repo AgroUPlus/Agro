@@ -12,21 +12,24 @@ import { openPresence } from './vault.js';
 import SignedOut from './SignedOut.jsx';
 import SecurityNudge from './SecurityNudge.jsx';
 import './setup.css';
+import Ambient from './expressive/Ambient.jsx';
+import PageHeader from './expressive/PageHeader.jsx';
 import EnrolTotpScreen from './EnrolTotpScreen.jsx';
 
 import SocialTab from './tabs/SocialTab.jsx';
 import DevicesTab from './tabs/DevicesTab.jsx';
 import StatsTab from './tabs/StatsTab.jsx';
-import PopularTab from './tabs/PopularTab.jsx';
 import LibraryTab from './tabs/LibraryTab.jsx';
-import LinksTab from './tabs/LinksTab.jsx';
-import BackupsTab from './tabs/BackupsTab.jsx';
-import AccountSettingsTab from './tabs/AccountSettingsTab.jsx';
+import SettingsTab from './tabs/SettingsTab.jsx';
 import ManagementTab from './tabs/ManagementTab.jsx';
+
+const MOVED_TABS = { popular: 'stats', backups: 'devices', links: 'settings' };
 
 function getTabFromHash() {
   // Only the first segment names the tab; the Library tab routes the rest itself.
-  const hash = window.location.hash.replace(/^#\/?/, '').trim().split('/')[0];
+  const first = window.location.hash.replace(/^#\/?/, '').trim().split('/')[0];
+  // Tabs that moved into another one: the tab it lives in now reads the old link to open its page.
+  const hash = MOVED_TABS[first] ?? first;
   const valid = ALL_TABS.map((item) => item.id);
   return valid.includes(hash) ? hash : 'social';
 }
@@ -186,26 +189,39 @@ export default function App() {
   // Checked before `locked`, and before any tab renders: the account is authenticated but may do
   // nothing until it enrols, so every other screen would be empty.
   if (needsEnrolment && !locked) {
-    return <EnrolTotpScreen onEnrolled={() => window.location.reload()} />;
+    return (
+      <>
+        <Ambient />
+        <EnrolTotpScreen onEnrolled={() => window.location.reload()} />
+      </>
+    );
   }
 
   if (locked) {
     return (
-      <SignedOut
-        ssoError={ssoError}
-        onDismissSsoError={() => setSsoError('')}
-        onSignedIn={() => {
-          setLocked(false);
-          window.location.reload();
-        }}
-      />
+      <>
+        <Ambient />
+        <SignedOut
+          ssoError={ssoError}
+          onDismissSsoError={() => setSsoError('')}
+          onSignedIn={() => {
+            setLocked(false);
+            window.location.reload();
+          }}
+        />
+      </>
     );
   }
 
   const currentTabItem = ALL_TABS.find((item) => item.id === activeTab);
+  // A sealed session this tab could not open has only a placeholder cover, so nothing is washed in.
+  const sealed = !!lastHandoff?.encryptedPayload && !lastHandoff?.opened;
+  const ambientArt = lastHandoff?.isPlaying && !sealed ? lastHandoff.artworkUrl : '';
 
   return (
     <div className="app-shell">
+      {/* Fixed-position, so it takes no cell in the shell's grid. */}
+      <Ambient artworkUrl={ambientArt} />
       <Sidebar
         activeTab={activeTab}
         onTabSelect={handleTabSelect}
@@ -216,9 +232,7 @@ export default function App() {
       />
 
       <main className="main-area">
-        <header className="page-header">
-          <h1>{currentTabItem?.label ?? 'Agro'}</h1>
-        </header>
+        <PageHeader tab={currentTabItem} username={username} />
 
         <SecurityNudge isAdmin={isAdmin} onOpenSettings={() => handleTabSelect('settings')} />
 
@@ -241,23 +255,13 @@ export default function App() {
             <StatsTab username={username} nodes={nodes} onUnauthorized={lockOut} />
           )}
 
-          {activeTab === 'popular' && (
-            <PopularTab onUnauthorized={lockOut} />
-          )}
-
           {activeTab === 'library' && (
             <LibraryTab username={username} devices={nodes} onUnauthorized={lockOut} />
           )}
 
-          {activeTab === 'links' && (
-            <LinksTab username={username} onUnauthorized={lockOut} />
-          )}
-          {activeTab === 'backups' && (
-            <BackupsTab onUnauthorized={lockOut} />
-          )}
 
           {activeTab === 'settings' && (
-            <AccountSettingsTab username={username} onUnauthorized={lockOut} />
+            <SettingsTab username={username} onUnauthorized={lockOut} />
           )}
 
           {activeTab === 'management' && isAdmin && (

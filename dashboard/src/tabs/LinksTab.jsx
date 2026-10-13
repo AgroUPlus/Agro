@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link2, Trash2, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
+import { Link2, Share2, Trash2, ExternalLink, Copy, AlertTriangle } from 'lucide-react';
 import { gql } from '../api.js';
+import Cookie from '../expressive/Cookie.jsx';
 
 /**
  * Every link this account has minted, with its hit count and a way to remove it.
@@ -14,7 +15,7 @@ import { gql } from '../api.js';
  */
 const LIST_QUERY = `query Links($user: String!) {
   links(userId: $user) {
-    id kind target url label createdAt expiresAt clickCount lastClickedAt source
+    id kind target url label expiresAt clickCount lastClickedAt
   }
 }`;
 
@@ -76,97 +77,49 @@ export default function LinksTab({ username, onUnauthorized }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {notice && (
-        <div className="card" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div style={{ fontSize: '13px' }}>{notice}</div>
+    <>
+      {notice && <div className="empty-hint backup-notice"><AlertTriangle size={16} />{notice}</div>}
+
+      {links.length === 0 ? (
+        <div className="empty-hint">No links yet. Share a track from Wanda or Wander.</div>
+      ) : (
+        <div className="card">
+          <ul className="link-rows">
+            {links.map(link => {
+              const forwarding = link.kind === 'SHORT';
+              return (
+                <li key={`${link.kind}:${link.id}`} className="link-row">
+                  <Cookie shape={forwarding ? 'clover' : 'cookie'} size={48} className="link-shape">
+                    {forwarding ? <Link2 size={20} /> : <Share2 size={20} />}
+                  </Cookie>
+                  <span className="link-text">
+                    <span className="link-label">{link.label || link.id}</span>
+                    <span className="link-target" title={link.target}>{link.target}</span>
+                  </span>
+                  <span className={`link-expiry ${link.expiresAt && link.expiresAt * 1000 < Date.now() ? 'is-expired' : ''}`}>
+                    {formatExpiry(link.expiresAt)}
+                  </span>
+                  <span className="link-clicks" title={link.lastClickedAt ? `Last opened ${formatWhen(link.lastClickedAt)}` : 'Never opened'}>
+                    <b>{link.clickCount}</b>clicks
+                  </span>
+                  <span className="link-actions">
+                    <button className="icon-btn" aria-label="Copy link" onClick={() => navigator.clipboard?.writeText(link.url)}>
+                      <Copy size={15} />
+                    </button>
+                    <a className="icon-btn" aria-label="Open link" href={link.url} target="_blank" rel="noreferrer noopener">
+                      <ExternalLink size={15} />
+                    </a>
+                    <button className="icon-btn danger" aria-label="Delete link" disabled={busy === link.id} onClick={() => remove(link)}>
+                      <Trash2 size={15} />
+                    </button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
-
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">Links ({links.length})</div>
-        </div>
-
-        {links.length === 0 ? (
-          <div className="empty-hint">
-            No links yet. Share a track from <strong>wander</strong> or <strong>wanda</strong> and
-            it will appear here.
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Link</th>
-                  <th>Goes to</th>
-                  <th>Clicks</th>
-                  <th>Created</th>
-                  <th>Expires</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {links.map(link => (
-                  <tr key={`${link.kind}:${link.id}`}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Link2 size={13} />
-                        <span>{link.label || link.id}</span>
-                      </div>
-                      <div className="row-sub">
-                        {link.kind === 'SHORT' ? 'Forwarding link' : 'Hosted share'}
-                        {link.source ? ` · ${link.source}` : ''}
-                      </div>
-                    </td>
-                    <td className="truncate" title={link.target}>
-                      {link.target}
-                    </td>
-                    <td>
-                      {link.clickCount}
-                      {link.lastClickedAt ? (
-                        <div className="row-sub">last {formatWhen(link.lastClickedAt)}</div>
-                      ) : null}
-                    </td>
-                    <td>{formatWhen(link.createdAt)}</td>
-                    <td>{formatExpiry(link.expiresAt)}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
-                        <button
-                          className="icon-btn"
-                          title="Copy link"
-                          onClick={() => navigator.clipboard?.writeText(link.url)}
-                        >
-                          <Copy size={14} />
-                        </button>
-                        <a
-                          className="icon-btn"
-                          title="Open link"
-                          href={link.url}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                        >
-                          <ExternalLink size={14} />
-                        </a>
-                        <button
-                          className="icon-btn danger"
-                          title="Delete link"
-                          disabled={busy === link.id}
-                          onClick={() => remove(link)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -176,6 +129,7 @@ function formatWhen(unixSeconds) {
 }
 
 function formatExpiry(unixSeconds) {
-  if (!unixSeconds) return 'Never';
-  return unixSeconds * 1000 < Date.now() ? 'Expired' : formatWhen(unixSeconds);
+  if (!unixSeconds) return 'Never expires';
+  if (unixSeconds * 1000 < Date.now()) return 'Expired';
+  return `Until ${new Date(unixSeconds * 1000).toLocaleDateString()}`;
 }

@@ -1,0 +1,203 @@
+/* ── Signed-out stage (AuthStage.jsx) ──────────────────────────────────────────────────────────
+   The promo site's hero beside the sign-in card, the card held in an orbit of devices, and a
+   quiet footer pointing at the project. */
+
+.auth-stage {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  column-gap: 56px;
+  max-width: 1240px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 48px 40px 24px;
+}
+
+.auth-hero { position: relative; z-index: 2; }
+.auth-hero > * { animation: header-rise 0.7s var(--spring-soft) both; }
+.auth-hero > :nth-child(2) { animation-delay: 0.08s; }
+
+.auth-hero-title {
+  margin-bottom: 24px;
+  font-size: clamp(2.8rem, 5vw, 4.6rem);
+  font-weight: 800;
+  font-variation-settings: var(--round-title);
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: var(--md-sys-color-on-surface);
+}
+
+.auth-hero-title span {
+  background: linear-gradient(100deg, var(--md-sys-color-primary) 10%, #E2B6EE 55%, var(--md-sys-color-tertiary) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-hero-sub {
+  max-width: 34rem;
+  font-size: 1.15rem;
+  line-height: 1.6;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* ── The orbit ───────────────────────────────────────────────────────────────────────────── */
+
+.auth-orbit-stage { position: relative; display: grid; place-items: center; }
+
+.auth-orbit {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.auth-orbit::before {
+  content: '';
+  position: absolute;
+  width: 640px;
+  height: 640px;
+  margin: -320px 0 0 -320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(124, 92, 224, 0.22) 0%, transparent 62%);
+  filter: blur(20px);
+}
+
+.orbit-ring {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  animation: orbit-spin var(--spin) linear infinite;
+}
+
+.orbit-ring.inner { --size: 660px; --spin: 46s; }
+.orbit-ring.middle { --size: 800px; --spin: 70s; animation-direction: reverse; }
+.orbit-ring.outer { --size: 940px; --spin: 96s; }
+
+.orbit-wave { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.orbit-wave path { fill: none; stroke: var(--md-sys-color-outline-variant); stroke-width: 0.25; vector-effect: non-scaling-stroke; }
+.orbit-ring.inner .orbit-wave path { stroke: rgba(208, 188, 255, 0.35); stroke-width: 2; }
+.orbit-ring.middle .orbit-wave path, .orbit-ring.outer .orbit-wave path { stroke-width: 2; }
+
+.orbit-node {
+  position: absolute;
+  left: calc(50% + 50% * cos(var(--at)));
+  top: calc(50% + 50% * sin(var(--at)));
+  /* Counter-rotates with its ring, so the icon stays upright as it travels. */
+  animation: orbit-node-upright var(--spin) linear infinite;
+}
+
+.orbit-ring.middle .orbit-node { animation-direction: reverse; }
+
+/* The shape itself turns slowly under the upright icon, and swells on its own beat. */
+.orbit-node .m3-shape-bg { animation: shape-turn 14s linear infinite, orbit-breathe 5s ease-in-out infinite; }
+.orbit-node:nth-child(odd) .m3-shape-bg { animation-direction: reverse, normal; animation-delay: 0s, -2.5s; }
+
+@keyframes orbit-breathe { 50% { scale: 1.12; } }
+
+.orbit-node.orbit-primary .m3-shape-bg { fill: var(--md-sys-color-primary-container); }
+.orbit-node.orbit-primary { color: var(--md-sys-color-on-primary-container); }
+.orbit-node.orbit-tertiary .m3-shape-bg { fill: var(--md-sys-color-tertiary); }
+.orbit-node.orbit-tertiary .m3-shape > :not(.m3-shape-bg) { color: var(--md-sys-color-on-tertiary); }
+.orbit-node.orbit-lemon .m3-shape-bg { fill: var(--md-sys-color-lemon); }
+.orbit-node.orbit-lemon .m3-shape > :not(.m3-shape-bg) { color: var(--md-sys-color-on-lemon); }
+.orbit-node.orbit-pink .m3-shape-bg { fill: #FFAFD7; }
+.orbit-node.orbit-pink .m3-shape > :not(.m3-shape-bg) { color: #5C1140; }
+.orbit-node.orbit-secondary .m3-shape-bg { fill: var(--md-sys-color-secondary-container); }
+.orbit-node.orbit-secondary .m3-shape > :not(.m3-shape-bg) { color: var(--md-sys-color-on-secondary-container); }
+
+@keyframes orbit-spin { to { transform: rotate(360deg); } }
+@keyframes orbit-node-upright {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(-360deg); }
+}
+
+/* ── The card inside the stage ───────────────────────────────────────────────────────────── */
+
+.auth-stage .auth-page {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 0;
+  background: none;
+}
+
+.auth-card {
+  max-width: 430px;
+  background: var(--md-sys-color-surface-container);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: 40px 16px 40px 16px;
+  box-shadow: 0 30px 70px -24px rgba(0, 0, 0, 0.8);
+  animation: card-rise 0.8s var(--spring-soft) 0.1s both;
+}
+
+.auth-brand { font-weight: 800; letter-spacing: -0.02em; }
+
+.auth-card input {
+  background: var(--md-sys-color-surface-container-lowest);
+  border-radius: 16px;
+  border-width: 2px;
+  transition: border-color 0.2s ease;
+}
+
+.auth-card input:focus { outline: none; border-color: var(--md-sys-color-primary); box-shadow: none; }
+
+.auth-submit {
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+  box-shadow: none;
+  transition: transform 0.25s var(--m3-spring-fast), border-radius 0.3s var(--m3-spring-fast), background-color 0.15s ease;
+}
+
+.auth-submit:hover:not(:disabled) { transform: scale(1.03) translateY(-1px); background: #E2D4FF; }
+.auth-submit:active:not(:disabled) { transform: scale(0.96); border-radius: 14px; }
+
+/* ── Footer ──────────────────────────────────────────────────────────────────────────────── */
+
+.auth-stage-footer {
+  grid-column: 1 / -1;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 24px;
+}
+
+.auth-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  color: var(--md-sys-color-outline);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.auth-footer-link:hover { color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container-high); }
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-ring, .orbit-node, .orbit-node .m3-shape-bg, .auth-hero > *, .auth-card { animation: none; }
+  .orbit-node { transform: translate(-50%, -50%); }
+}
+
+@media (max-width: 1000px) {
+  .auth-stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; row-gap: 36px; padding: 40px 16px 20px; }
+  .auth-hero { text-align: center; }
+  .auth-hero-sub { margin: 0 auto; }
+  .orbit-ring.outer { display: none; }
+}
+
+@media (max-width: 560px) {
+  .auth-hero-sub { display: none; }
+  .orbit-ring.middle { display: none; }
+}

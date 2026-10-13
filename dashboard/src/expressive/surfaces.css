@@ -1,0 +1,210 @@
+/* ── Expressive surfaces ───────────────────────────────────────────────────────────────────────
+   Cards, tabs, tiles and fields in the promo site's language: solid tonal surfaces, 2px outlines
+   that turn lavender on hover, heavy rounded type, pill controls and spring motion. */
+
+.card {
+  background: var(--md-sys-color-surface-container-low);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: 28px;
+  padding: 26px;
+  box-shadow: none;
+  transition: border-color 0.25s ease;
+}
+
+.card:hover { border-color: rgba(208, 188, 255, 0.4); }
+
+.card-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  color: var(--md-sys-color-on-surface);
+}
+
+.card-title svg { color: var(--md-sys-color-primary); }
+
+.card-subtitle {
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* A card holding only a tab bar is a wrapper, not a surface: the bar carries itself. */
+.card:has(> .segmented:only-child) {
+  padding: 0 !important;
+  background: none;
+  border: none;
+}
+
+/* ── M3 Expressive shape (Cookie.jsx) ────────────────────────────────────────────────────── */
+
+.m3-shape {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.m3-shape-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: var(--md-sys-color-primary-container);
+  transition: scale 0.7s var(--spring-soft);
+}
+
+.m3-shape > :not(.m3-shape-bg) { position: relative; color: var(--md-sys-color-on-primary-container); }
+
+.page-shape .m3-shape-bg { animation: shape-turn 24s linear infinite; }
+.page-title-row:hover .page-shape .m3-shape-bg { scale: 1.1; }
+
+@keyframes shape-turn { to { rotate: 360deg; } }
+
+/* ── Tabs & pills ────────────────────────────────────────────────────────────────────────── */
+
+/* A tab's sub-pages (SubTabs.jsx), with that page's own controls pushed to the right. */
+.subtabs-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-pill);
+  overflow: visible;
+}
+
+.segmented-btn,
+.pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 16px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.2s ease, color 0.2s ease, border-radius 0.3s var(--m3-spring-fast), transform 0.25s var(--m3-spring-fast);
+}
+
+.segmented-btn:hover { background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-on-surface); }
+.segmented-btn:active { transform: scale(0.94); border-radius: 12px; }
+
+.segmented-btn.active {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-weight: 700;
+}
+
+.pill-btn {
+  padding: 7px 14px;
+  border: 2px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container);
+}
+
+.pill-btn:hover:not(:disabled) { border-color: var(--md-sys-color-primary); color: var(--md-sys-color-on-surface); }
+
+/* M3 Expressive buttons square off a little while pressed. */
+.btn { transition: transform 0.25s var(--m3-spring-fast), border-radius 0.3s var(--m3-spring-fast), background-color 0.15s ease, border-color 0.15s ease; }
+.btn:active:not(:disabled) { border-radius: 14px; }
+
+/* ── Stat tiles ──────────────────────────────────────────────────────────────────────────── */
+
+.stat-tiles { gap: 14px; }
+
+.stat-tile {
+  padding: 18px 20px;
+  background:
+    radial-gradient(120% 100% at 100% 0%, rgba(208, 188, 255, 0.13) 0%, transparent 55%),
+    var(--md-sys-color-surface-container);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--leaf-lg);
+  transition: transform 0.35s var(--m3-spring-fast), border-color 0.25s ease;
+}
+
+.stat-tile:nth-child(2) { background-image: radial-gradient(120% 100% at 100% 0%, rgba(125, 220, 185, 0.12) 0%, transparent 55%); }
+.stat-tile:nth-child(3) { background-image: radial-gradient(120% 100% at 100% 0%, rgba(240, 224, 131, 0.1) 0%, transparent 55%); }
+.stat-tile:nth-child(4) { background-image: radial-gradient(120% 100% at 100% 0%, rgba(230, 95, 180, 0.12) 0%, transparent 55%); }
+
+.stat-tile:hover { transform: translateY(-4px); border-color: var(--md-sys-color-primary); }
+
+.stat-tile-head { font-weight: 700; letter-spacing: 0.06em; color: var(--md-sys-color-outline); }
+.stat-tile-head svg { color: var(--md-sys-color-primary); }
+
+.stat-tile-value {
+  font-family: inherit;
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  color: var(--md-sys-color-on-surface);
+}
+
+/* ── Charts ──────────────────────────────────────────────────────────────────────────────── */
+
+.bar-slot { background: var(--md-sys-color-surface-container); border-radius: 10px; overflow: hidden; }
+
+.bar-fill {
+  border-radius: 10px 10px 4px 4px;
+  background: linear-gradient(180deg, var(--md-sys-color-primary) 0%, #8F72E8 100%);
+}
+
+.chart-row { border-radius: 16px; background: var(--md-sys-color-surface-container); border: 2px solid transparent; transition: border-color 0.2s ease, transform 0.3s var(--m3-spring-fast); }
+.chart-row:hover { border-color: var(--md-sys-color-outline-variant); transform: translateX(4px); }
+.chart-row-fill { background: linear-gradient(90deg, rgba(208, 188, 255, 0.16), rgba(125, 220, 185, 0.1)); }
+.chart-rank { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* ── Fields, empties, banners ────────────────────────────────────────────────────────────── */
+
+.form-input,
+.card input[type="text"],
+.card input[type="password"],
+.card input[type="number"],
+.card textarea {
+  background: var(--md-sys-color-surface-container-lowest);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: 16px;
+  transition: border-color 0.2s ease;
+}
+
+.form-input:focus,
+.card input:focus,
+.card textarea:focus,
+.card select:focus {
+  outline: none;
+  border-color: var(--md-sys-color-primary);
+  box-shadow: none;
+}
+
+.empty-hint {
+  padding: 30px 24px;
+  background: transparent;
+  border: 2px dashed var(--md-sys-color-outline-variant);
+  border-radius: 22px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* The site's featured card: a lavender wash from one corner, mint from the other. */
+.nudge {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: var(--leaf-lg);
+  background:
+    radial-gradient(120% 140% at 100% 0%, rgba(208, 188, 255, 0.2) 0%, transparent 60%),
+    radial-gradient(90% 120% at 0% 100%, rgba(125, 220, 185, 0.1) 0%, transparent 65%),
+    var(--md-sys-color-surface-container);
+  border: 2px solid var(--md-sys-color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-shape .m3-shape-bg { animation: none; }
+  .stat-tile:hover, .chart-row:hover { transform: none; }
+}

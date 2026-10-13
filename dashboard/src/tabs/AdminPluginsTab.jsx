@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { gql } from '../api.js';
+import { ConnectorRow, FeatureTile } from './admin/FeatureTiles.jsx';
 
 /**
  * What this server does, and the switches for the parts that cost something.
@@ -32,14 +33,6 @@ function groupByCategory(features) {
     return index === -1 ? CATEGORY_ORDER.length : index;
   };
   return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b));
-}
-
-function Metadata({ items }) {
-  return items.map((m) => (
-    <div key={m.key} className="rule-desc" style={{ opacity: 0.75 }}>
-      <strong>{m.key}:</strong> {m.value}
-    </div>
-  ));
 }
 
 export default function AdminPluginsTab({ onUnauthorized }) {
@@ -87,87 +80,41 @@ export default function AdminPluginsTab({ onUnauthorized }) {
   }
 
   if (plugins === null) {
-    return (
-      <div className="card">
-        {error
-          ? <p style={{ color: 'var(--danger, #f66)' }}>{error}</p>
-          : <p style={{ opacity: 0.6 }}>Loading…</p>}
-      </div>
-    );
+    return <div className="empty-hint">{error || 'Loading…'}</div>;
   }
 
   const features = plugins.filter((p) => p.toggleable);
   const connectors = plugins.filter((p) => !p.toggleable);
+  const on = features.filter((f) => f.isEnabled).length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {error && <div className="card" style={{ color: 'var(--danger, #f66)' }}>{error}</div>}
+    <>
+      {error && <div className="empty-hint backup-notice">{error}</div>}
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title">Server features</div>
+          <div className="card-title">Features</div>
+          <span className="feature-count">{on} of {features.length} on</span>
         </div>
-        <p style={{ opacity: 0.7, marginTop: 0 }}>
-          Switch off what this machine cannot afford. A feature that is off is refused for every
-          account, and clients are told so rather than left retrying. Nothing is deleted:
-          switching it back on picks up where it left off.
-        </p>
-
+        <p className="card-subtitle">A feature that is off is refused for everyone. Turning it back on loses nothing.</p>
         {groupByCategory(features).map(([category, group]) => (
-          <div key={category} style={{ marginTop: '12px' }}>
-            <div className="rule-tag" style={{ display: 'inline-block', marginBottom: '6px' }}>
-              {category}
-            </div>
-            <div className="rules-list">
+          <section key={category} className="feature-group">
+            <span className="stats-overline">{category}</span>
+            <div className="feature-grid">
               {group.map((feature) => (
-                <div
-                  key={feature.id}
-                  className={`rule-row ${!feature.isEnabled ? 'disabled' : ''}`}
-                >
-                  <div className="rule-info">
-                    <div className="rule-title">{feature.name}</div>
-                    <div className="rule-desc">{feature.description}</div>
-                    <Metadata items={feature.metadata} />
-                  </div>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      aria-label={`${feature.name}: ${feature.isEnabled ? 'on' : 'off'}`}
-                      checked={feature.isEnabled}
-                      disabled={busy === feature.id}
-                      onChange={() => toggle(feature)}
-                    />
-                    <span className="slider" />
-                  </label>
-                </div>
+                <FeatureTile key={feature.id} feature={feature} busy={busy === feature.id} onToggle={toggle} />
               ))}
             </div>
-          </div>
+          </section>
         ))}
       </div>
 
       <div className="card">
-        <div className="card-header">
-          <div className="card-title">Clients & connectors</div>
-        </div>
-        <div className="rules-list">
-          {connectors.map((plugin) => (
-            <div key={plugin.id} className="rule-row">
-              <div className="rule-info">
-                <div className="rule-title">
-                  {plugin.name}
-                  <span className="rule-tag">{plugin.target}</span>
-                </div>
-                <div className="rule-desc">{plugin.description}</div>
-                <Metadata items={plugin.metadata} />
-              </div>
-              <span className="rule-tag">
-                {plugin.isConnected ? 'Connected' : 'Not connected'}
-              </span>
-            </div>
-          ))}
-        </div>
+        <div className="card-title">Clients & connectors</div>
+        <ul className="connector-rows">
+          {connectors.map((plugin) => <ConnectorRow key={plugin.id} plugin={plugin} />)}
+        </ul>
       </div>
-    </div>
+    </>
   );
 }

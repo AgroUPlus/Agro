@@ -29,8 +29,7 @@ const MB = 1024 * 1024;
 
 /** "Unlimited" is what a zero means, and an admin is never capped whatever the number says. */
 function describeQuota(account) {
-  if (account.role === 'admin') return 'unlimited (admin)';
-  if (!account.quotaBytes) return 'unlimited';
+  if (account.role === 'admin' || !account.quotaBytes) return 'Unlimited';
   return `${Math.round(account.quotaBytes / MB)} MB`;
 }
 
@@ -103,47 +102,41 @@ export default function AccountsPanel({ me, onUnauthorized }) {
   return (
     <div className="card">
       <div className="card-header">
-        <div>
-          <div className="card-title">Accounts ({accounts.length})</div>
-          <div className="card-subtitle">Everyone on this instance</div>
-        </div>
+        <div className="card-title">Accounts</div>
+        <span className="feature-count">{accounts.length}</span>
       </div>
 
-      {notice && <div className="empty-hint" style={{ padding: '10px 0' }}>{notice}</div>}
+      {notice && <div className="inline-notice">{notice}</div>}
 
-      <div className="rules-list">
+      <div className="person-grid">
         {accounts.map((account) => {
           const isSelf = account.username === me;
           const suspended = account.state === 'suspended';
           return (
-            <div key={account.username} className="rule-row" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Avatar username={account.username} size={36} />
-              <div className="rule-info" style={{ flex: 1 }}>
-                <div className="rule-title">
-                  {account.username}
-                  {account.role === 'admin' && <span className="rule-tag">admin</span>}
-                  {suspended && <span className="rule-tag">suspended</span>}
-                  {account.state === 'pending' && <span className="rule-tag">pending</span>}
-                </div>
-                <div className="rule-desc">Quota: {describeQuota(account)}</div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '8px' }}>
+            <div key={account.username} className={`person-card ${suspended ? 'is-suspended' : ''}`}>
+              <Avatar username={account.username} size={56} />
+              <span className="person-name">{account.username}</span>
+              <span className="person-chips">
+                {account.role === 'admin' && <span className="chip chip-primary">Admin</span>}
+                {suspended && <span className="chip chip-error">Suspended</span>}
+                {account.state === 'pending' && <span className="chip chip-lemon">Pending</span>}
+                {isSelf && <span className="chip">You</span>}
+              </span>
+              <span className="person-quota"><HardDrive size={13} />{describeQuota(account)}</span>
+              <div className="person-actions">
                 <button
-                  className="btn btn-secondary"
+                  className="icon-btn"
                   disabled={busy === account.username || account.role === 'admin'}
                   onClick={() => changeQuota(account)}
-                  title={account.role === 'admin'
-                    ? 'An administrator is never capped'
-                    : 'Change the storage quota'}
+                  aria-label="Change quota"
+                  title={account.role === 'admin' ? 'An administrator is never capped' : 'Change the storage quota'}
                 >
-                  <HardDrive size={14} /> Quota
+                  <HardDrive size={16} />
                 </button>
-
                 {/* You cannot suspend or delete yourself: locking the only administrator out of
                     their own server is not a mistake worth making reachable in one click. */}
                 <button
-                  className="btn btn-secondary"
+                  className="icon-btn"
                   disabled={busy === account.username || isSelf}
                   onClick={() => run(
                     account.username,
@@ -151,18 +144,19 @@ export default function AccountsPanel({ me, onUnauthorized }) {
                     { user: account.username, state: suspended ? 'active' : 'suspended' },
                     suspended ? `${account.username} restored.` : `${account.username} suspended.`
                   )}
-                  title={isSelf ? 'You cannot suspend yourself' : ''}
+                  aria-label={suspended ? 'Restore' : 'Suspend'}
+                  title={isSelf ? 'You cannot suspend yourself' : suspended ? 'Restore' : 'Suspend'}
                 >
-                  {suspended ? <><UserCheck size={14} /> Restore</> : <><UserX size={14} /> Suspend</>}
+                  {suspended ? <UserCheck size={16} /> : <UserX size={16} />}
                 </button>
-
                 <button
-                  className="btn btn-secondary btn-danger"
+                  className="icon-btn danger"
                   disabled={busy === account.username || isSelf}
                   onClick={() => remove(account)}
+                  aria-label="Delete account"
                   title={isSelf ? 'You cannot delete yourself here' : 'Delete this account'}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={16} />
                 </button>
               </div>
             </div>
