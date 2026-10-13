@@ -1,0 +1,37 @@
+/* ── Type ──────────────────────────────────────────────────────────────────────────────────────
+   Wanda's face: Google Sans Flex, the variable font Material 3 Expressive's rounded style is built
+   on. Bundled (public/fonts, OFL) rather than requested from a font CDN, so opening the dashboard
+   tells no third party anything. Titles sit at ROND 65, as in Wanda's Type.kt: noticeably
+   rounder, short of cartoonish. */
+
+@font-face {
+  font-family: 'Google Sans Flex';
+  src: url('/fonts/google-sans-flex.ttf') format('truetype');
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-ui: 'Google Sans Flex', 'Roboto Flex', system-ui, sans-serif;
+  --round-title: 'ROND' 65;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-ui);
+}
+
+/* Every heading is rounded; body text keeps the family's default, sharper instance. */
+h1, h2, h3,
+.card-title,
+.sidebar-brand,
+.auth-brand,
+.stat-tile-value,
+.now-bar-track-title,
+.lib-section-head h2 {
+  font-variation-settings: var(--round-title);
+}
