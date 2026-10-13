@@ -1,0 +1,135 @@
+/* ── Social (tabs/social) ──────────────────────────────────────────────────────────────────────
+   Friends as cards washed in what they play, the activity feed as a timeline of shaped badges,
+   and the circle's recap as an anthem, a trophy and taste-match meters. */
+
+/* Shared empty state: a big shape, a title and one line. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 24px;
+  border: 2px dashed var(--md-sys-color-outline-variant);
+  border-radius: 32px;
+  text-align: center;
+}
+
+.empty-state .m3-shape-bg { animation: shape-turn 30s linear infinite; }
+.empty-state-title { margin-top: 6px; font-size: 1.3rem; font-weight: 800; font-variation-settings: var(--round-title); }
+.empty-state-sub { max-width: 40ch; color: var(--md-sys-color-on-surface-variant); }
+
+/* ── Friends ─────────────────────────────────────────────────────────────────────────────── */
+
+.friend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+
+.friend-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  border-radius: 28px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  transition: transform 0.35s var(--m3-spring-fast), border-color 0.25s ease;
+}
+
+.friend-card:hover { transform: translateY(-4px); border-color: var(--md-sys-color-primary); }
+.friend-card.is-playing { border-color: rgba(125, 220, 185, 0.45); }
+
+/* What they play, as colour behind the card's top half. */
+.friend-art {
+  position: absolute;
+  inset: 0 0 45% 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  filter: blur(36px) saturate(1.4);
+  opacity: 0.45;
+  transform: scale(1.3);
+}
+
+.friend-head { display: flex; align-items: center; gap: 14px; }
+.friend-who { display: flex; flex-direction: column; min-width: 0; }
+.friend-name { font-size: 1.2rem; font-weight: 800; font-variation-settings: var(--round-title); }
+.friend-handle { font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.friend-bio { color: var(--md-sys-color-on-surface-variant); font-size: 14px; }
+
+.friend-now {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.friend-now .audio-pulse-indicator.is-playing .wave-bar { background: var(--md-sys-color-tertiary); }
+.friend-now-text { display: flex; flex-direction: column; min-width: 0; }
+.friend-now-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.friend-now-artist { font-size: 13px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.friend-idle { display: flex; align-items: center; gap: 8px; margin-top: auto; font-size: 13px; color: var(--md-sys-color-outline); }
+
+/* ── Activity ────────────────────────────────────────────────────────────────────────────── */
+
+.feed-timeline { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+
+.feed-event {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
+  border-radius: 20px;
+  transition: background-color 0.2s ease;
+}
+
+.feed-event:hover { background: var(--md-sys-color-surface-container); }
+.feed-avatar { position: relative; flex-shrink: 0; }
+.feed-badge { position: absolute; right: -6px; bottom: -6px; }
+.feed-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.feed-text b { font-weight: 800; }
+.feed-when { font-size: 13px; color: var(--md-sys-color-outline); }
+
+.tone-shape-lemon .m3-shape-bg { fill: var(--md-sys-color-lemon); }
+.tone-shape-lemon > :not(.m3-shape-bg) { color: var(--md-sys-color-on-lemon); }
+.tone-shape-tertiary .m3-shape-bg { fill: var(--md-sys-color-tertiary); }
+.tone-shape-tertiary > :not(.m3-shape-bg) { color: var(--md-sys-color-on-tertiary); }
+.tone-shape-pink .m3-shape-bg { fill: #FFAFD7; }
+.tone-shape-pink > :not(.m3-shape-bg) { color: #5C1140; }
+
+/* ── Circle ──────────────────────────────────────────────────────────────────────────────── */
+
+.circle-top { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 18px; }
+.circle-anthem { gap: 16px; }
+
+.circle-members { display: flex; align-items: center; }
+.circle-member { margin-right: -8px; border-radius: 50%; box-shadow: 0 0 0 3px var(--md-sys-color-surface-container-low); line-height: 0; }
+.circle-count { margin-left: 20px; font-size: 13.5px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+
+.circle-trend { align-items: center; justify-content: center; text-align: center; gap: 6px; }
+.trend-shape { margin-bottom: 8px; }
+.trend-shape .m3-shape-bg { fill: var(--md-sys-color-lemon); animation: shape-turn 26s linear infinite; }
+.trend-shape > :not(.m3-shape-bg) { color: var(--md-sys-color-on-lemon); }
+.circle-trend-name { font-size: 1.5rem; font-weight: 800; font-variation-settings: var(--round-title); }
+.circle-trend-sub { font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); }
+
+.circle-lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+
+.match-list { display: flex; flex-direction: column; gap: 10px; list-style: none; }
+.match-row { display: flex; align-items: center; gap: 12px; }
+.match-pair { display: flex; }
+.match-pair > :last-child { margin-left: -10px; }
+.match-bar { flex: 1; height: 10px; border-radius: 5px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
+.match-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--md-sys-color-primary), var(--md-sys-color-tertiary)); }
+.match-score { min-width: 44px; text-align: right; font-weight: 800; color: var(--md-sys-color-tertiary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-state .m3-shape-bg, .trend-shape .m3-shape-bg { animation: none; }
+}
+
+@media (max-width: 1100px) {
+  .circle-top, .circle-lists { grid-template-columns: minmax(0, 1fr); }
+}
