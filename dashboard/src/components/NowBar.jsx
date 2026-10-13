@@ -74,7 +74,7 @@ export default function NowBar({ lastHandoff, nodes = [], onUnlocked }) {
   }, [basePositionMs, durationMs, isPlaying]);
 
   return (
-    <footer className="modern-now-bar">
+    <footer className={`modern-now-bar ${isPlaying ? 'is-playing' : ''}`}>
       {/* Left: Animated Pulse/Wave + Cover + Track details */}
       <div className="now-bar-media">
         <div className={`audio-pulse-indicator ${isPlaying ? 'is-playing' : ''}`}>
@@ -84,13 +84,19 @@ export default function NowBar({ lastHandoff, nodes = [], onUnlocked }) {
           <span className="wave-bar bar-4" />
         </div>
 
-        {artworkUrl ? (
-          <img src={artworkUrl} alt={title} className="now-bar-art" />
-        ) : (
-          <div className="now-bar-art-placeholder">
-            <Radio size={16} />
-          </div>
-        )}
+        {/* A record: the cover turns while it plays, with its own colour glowing beneath it. */}
+        <div className={`now-bar-disc ${isPlaying ? 'is-spinning' : ''}`}>
+          {artworkUrl ? (
+            <>
+              <img src={artworkUrl} alt="" className="now-bar-art-glow" aria-hidden="true" />
+              <img src={artworkUrl} alt={title} className="now-bar-art" />
+            </>
+          ) : (
+            <div className="now-bar-art-placeholder">
+              <Radio size={16} />
+            </div>
+          )}
+        </div>
 
         <div className="now-bar-info">
           <div className="now-bar-track-title">{title}</div>
@@ -124,7 +130,7 @@ export default function NowBar({ lastHandoff, nodes = [], onUnlocked }) {
       <div className="now-bar-meta-right">
         {isLocked && <NowBarUnlock onUnlocked={onUnlocked} />}
         {isEncrypted && (
-          <span className="quality-pill" style={{ background: '#3b82f6', color: '#fff' }}>E2EE</span>
+          <span className="quality-pill e2ee">E2EE</span>
         )}
         <div className="device-indicator-pill">
           {isMobile ? <Smartphone size={12} /> : <Terminal size={12} />}

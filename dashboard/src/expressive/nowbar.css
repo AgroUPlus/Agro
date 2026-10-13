@@ -1,0 +1,170 @@
+/* ── Now-playing pill ──────────────────────────────────────────────────────────────────────────
+   The promo site's navbar pill, docked at the bottom: a solid tonal surface with a 2px outline.
+   The cover turns like a record with its own colours behind it, and progress is drawn as
+   Material 3 Expressive's wavy indicator, which ripples while playing and lies flat when paused. */
+
+.modern-now-bar {
+  left: var(--shell-gap);
+  right: var(--shell-gap);
+  bottom: var(--shell-gap);
+  height: var(--now-bar-height);
+  padding: 0 22px 0 14px;
+  gap: 24px;
+  background: var(--md-sys-color-surface-container);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.7);
+}
+
+.now-bar-media { gap: 14px; min-width: 0; flex: 0 1 340px; }
+
+.now-bar-disc {
+  position: relative;
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+}
+
+.now-bar-art,
+.now-bar-art-placeholder {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid var(--md-sys-color-outline-variant);
+}
+
+/* The spindle hole, so a cover reads as a record. */
+.now-bar-disc:has(.now-bar-art)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--md-sys-color-surface-container);
+}
+
+/* The cover's own colours, softly behind it. */
+.now-bar-art-glow {
+  position: absolute;
+  inset: 4px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  filter: blur(12px) saturate(1.3);
+  opacity: 0.55;
+  transform: scale(1.25);
+}
+
+.now-bar-disc.is-spinning .now-bar-art { animation: disc-spin 9s linear infinite; }
+
+@keyframes disc-spin { to { transform: rotate(360deg); } }
+
+.now-bar-art-placeholder { background: var(--md-sys-color-surface-container-high); }
+
+.now-bar-info { min-width: 0; }
+
+.now-bar-track-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.now-bar-subtext { overflow: hidden; white-space: nowrap; color: var(--md-sys-color-on-surface-variant); }
+.now-bar-album { color: var(--md-sys-color-outline); }
+.now-bar-album::before { content: '·'; margin-right: 6px; }
+
+.audio-pulse-indicator { height: 22px; width: 22px; gap: 3px; }
+.wave-bar { width: 3.5px; border-radius: 3px; }
+.audio-pulse-indicator.is-playing .wave-bar { background: var(--md-sys-color-tertiary); }
+
+@keyframes pulseEqualizer {
+  0% { height: 4px; }
+  50% { height: 22px; }
+  100% { height: 9px; }
+}
+
+.now-bar-center { max-width: 620px; }
+
+.time-display { font-variant-numeric: tabular-nums; color: var(--md-sys-color-on-surface-variant); }
+
+/* ── Wavy progress ───────────────────────────────────────────────────────────────────────── */
+
+.now-bar-progress-track {
+  height: 12px;
+  overflow: visible;
+  background: none;
+}
+
+/* The remaining time: a flat, thin track. */
+.now-bar-progress-track::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 4px;
+  background: var(--md-sys-color-surface-container-highest);
+}
+
+.now-bar-progress-fill {
+  position: relative;
+  height: 100%;
+  border-radius: 0;
+  background: linear-gradient(90deg, #8F72E8, var(--md-sys-color-primary) 70%, var(--md-sys-color-tertiary));
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12'%3E%3Cpath d='M0 6h24' stroke='%23000' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center / 24px 12px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12'%3E%3Cpath d='M0 6h24' stroke='%23000' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center / 24px 12px;
+}
+
+.modern-now-bar.is-playing .now-bar-progress-fill {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12'%3E%3Cpath d='M0 6 Q6 1.5 12 6 T24 6' fill='none' stroke='%23000' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='12'%3E%3Cpath d='M0 6 Q6 1.5 12 6 T24 6' fill='none' stroke='%23000' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  animation: wave-travel 1.1s linear infinite;
+}
+
+@keyframes wave-travel {
+  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
+  to { -webkit-mask-position: 24px center; mask-position: 24px center; }
+}
+
+/* ── Device pill ─────────────────────────────────────────────────────────────────────────── */
+
+.device-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container-high);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface);
+}
+
+.live-dot.active { background: var(--md-sys-color-tertiary); }
+
+.quality-pill.e2ee {
+  background: var(--md-sys-color-tertiary);
+  color: var(--md-sys-color-on-tertiary);
+  font-weight: 800;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .now-bar-disc.is-spinning .now-bar-art, .modern-now-bar.is-playing .now-bar-progress-fill { animation: none; }
+}
+
+@media (max-width: 860px) {
+  .modern-now-bar { padding: 0 12px 0 10px; gap: 12px; }
+  .now-bar-center { display: none; }
+  .audio-pulse-indicator { display: none; }
+}
