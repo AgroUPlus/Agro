@@ -266,6 +266,7 @@ export function formatBytes(bytes) {
   const gb = 1024 ** 3;
   const mb = 1024 ** 2;
   if (bytes >= gb) return `${(bytes / gb).toFixed(1)} GB`;
+  if (bytes < mb) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${Math.round(bytes / mb)} MB`;
 }
 

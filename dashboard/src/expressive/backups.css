@@ -1,0 +1,87 @@
+/* ── Backups (tabs/backups) ────────────────────────────────────────────────────────────────────
+   The latest backup as a hero, how many of the kept slots are used as scalloped pips, and every
+   earlier one on a single line. */
+
+.backup-top { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; }
+
+.backup-hero { gap: 22px; }
+.backup-hero-head { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.backup-hero-shape .m3-shape-bg { animation: shape-turn 30s linear infinite; }
+.backup-hero-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 200px; }
+
+.backup-hero-when {
+  font-size: clamp(1.8rem, 2.8vw, 2.4rem);
+  font-weight: 800;
+  font-variation-settings: var(--round-title);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.backup-hero-meta { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--md-sys-color-on-surface-variant); font-weight: 500; }
+.backup-actions { display: flex; align-items: center; gap: 8px; }
+
+.backup-sections { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+
+.backup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border-radius: 22px 10px 22px 10px;
+  background: var(--md-sys-color-surface-container);
+  transition: transform 0.3s var(--m3-spring-fast), background-color 0.2s ease;
+}
+
+.backup-section:hover { transform: translateY(-3px); background: var(--md-sys-color-surface-container-high); }
+.backup-section svg { color: var(--md-sys-color-primary); margin-bottom: 6px; }
+.backup-section-count { font-size: 1.5rem; font-weight: 800; font-variation-settings: var(--round-title); line-height: 1; font-variant-numeric: tabular-nums; }
+.backup-section-label { font-size: 13px; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+
+.backup-section.is-sensitive { background: rgba(240, 224, 131, 0.1); }
+.backup-section.is-sensitive svg { color: var(--md-sys-color-lemon); }
+
+.backup-note { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.backup-note svg { color: var(--md-sys-color-lemon); flex-shrink: 0; }
+
+/* ── Slots ───────────────────────────────────────────────────────────────────────────────── */
+
+.backup-slots { align-items: flex-start; justify-content: center; gap: 10px; }
+.backup-pips { display: flex; gap: 8px; }
+.backup-pips .pip-on .m3-shape-bg { fill: var(--md-sys-color-tertiary); }
+.backup-pips .pip-off .m3-shape-bg { fill: var(--md-sys-color-surface-container-highest); }
+.backup-pips .m3-shape { transition: transform 0.4s var(--m3-spring-fast); }
+.backup-pips .m3-shape:hover { transform: rotate(30deg) scale(1.15); }
+.backup-slots-label { font-size: 1.4rem; font-weight: 800; font-variation-settings: var(--round-title); }
+.backup-slots-sub { font-size: 13px; line-height: 1.5; color: var(--md-sys-color-on-surface-variant); }
+.backup-slots-sub svg { vertical-align: -2px; color: var(--md-sys-color-primary); }
+
+/* ── Earlier ─────────────────────────────────────────────────────────────────────────────── */
+
+.backup-rows { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+
+.backup-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 10px 10px 16px;
+  border-radius: 20px;
+  transition: background-color 0.2s ease;
+}
+
+.backup-row:hover { background: var(--md-sys-color-surface-container); }
+.backup-row > svg { color: var(--md-sys-color-primary); flex-shrink: 0; }
+.backup-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.backup-row-when { font-weight: 700; }
+.backup-row-sub { font-size: 13px; color: var(--md-sys-color-on-surface-variant); }
+.backup-row-icons { display: flex; gap: 8px; color: var(--md-sys-color-outline); }
+
+.backup-notice { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .backup-hero-shape .m3-shape-bg { animation: none; }
+}
+
+@media (max-width: 1000px) {
+  .backup-top { grid-template-columns: minmax(0, 1fr); }
+  .backup-row-icons { display: none; }
+}

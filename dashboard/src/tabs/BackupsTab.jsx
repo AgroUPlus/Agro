@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArchiveRestore, Download, Trash2, Lock, KeyRound, AlertTriangle, Smartphone } from 'lucide-react';
-import { gql, getToken, formatBytes } from '../api.js';
+import { AlertTriangle } from 'lucide-react';
+import { gql, getToken } from '../api.js';
+import { BackupHero, BackupRow, BackupSlots } from './vault/BackupViews.jsx';
 
 /**
  * The account's cloud backups, as far as this server can see them.
@@ -12,38 +13,13 @@ import { gql, getToken, formatBytes } from '../api.js';
  */
 const LIST_QUERY = `query Backups {
   vaultBackups {
-    id createdAt deviceId deviceName appVersion plainBytes sealedBytes includesAccounts sha256
+    id createdAt deviceId deviceName appVersion sealedBytes includesAccounts
     sections { name count }
   }
   vaultLimits { keepPerAccount maxSealedBytes }
 }`;
 
 const DELETE_MUTATION = `mutation DeleteBackup($id: String!) { deleteVaultBackup(id: $id) }`;
-
-/** What each section the app sends is called here. An unknown one is shown by its own name. */
-const SECTION_NAMES = {
-  SETTINGS: 'Settings',
-  ACCOUNTS: 'Sign-ins',
-  HISTORY: 'Listening history',
-  LIBRARY: 'Library & playlists',
-  MERGES: 'Track merges',
-  EPISODES: 'Podcast progress'
-};
-
-function sectionName(name) {
-  return SECTION_NAMES[name] ?? name.charAt(0) + name.slice(1).toLowerCase();
-}
-
-function ago(iso) {
-  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 90) return 'just now';
-  const units = [['day', 86400], ['hour', 3600], ['minute', 60]];
-  for (const [unit, size] of units) {
-    const n = Math.floor(seconds / size);
-    if (n >= 1) return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
-  }
-  return 'just now';
-}
 
 export default function BackupsTab({ onUnauthorized }) {
   const [backups, setBackups] = useState(null);
@@ -121,97 +97,34 @@ export default function BackupsTab({ onUnauthorized }) {
   const [latest, ...older] = backups ?? [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <>
       {notice && (
-        <div className="card" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-          <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
-          <div style={{ fontSize: '13px' }}>{notice}</div>
-        </div>
+        <div className="empty-hint backup-notice"><AlertTriangle size={16} />{notice}</div>
       )}
 
-      <div className="card vault-explainer">
-        <Lock size={18} />
-        <div>
-          Sealed on your phone with your vault key before it is sent. This server stores it and cannot
-          open it — what you see here is only the label the app wrote on it.
-          {limits && (
-            <span className="row-sub">
-              {' '}Your last {limits.keepPerAccount} backups are kept, up to {formatBytes(limits.maxSealedBytes)} each.
-            </span>
-          )}
-        </div>
-      </div>
-
-      {backups && !latest && (
-        <div className="card empty-hint">
-          No backups yet. In Wanda, open <strong>Settings → Backup</strong> and turn on
-          <strong> Back up to Agro</strong>.
+      {backups && !latest && !notice && (
+        <div className="empty-hint">
+          No backups yet. In Wanda: <strong>Settings → Backup → Back up to Agro</strong>.
         </div>
       )}
 
       {latest && (
-        <BackupCard backup={latest} latest busy={busy === latest.id} onDownload={download} onDelete={remove} />
+        <div className="backup-top">
+          <BackupHero backup={latest} busy={busy === latest.id} onDownload={download} onDelete={remove} />
+          <BackupSlots used={backups.length} limits={limits} />
+        </div>
       )}
 
       {older.length > 0 && (
         <div className="card">
-          <div className="card-header"><div className="card-title">Earlier backups</div></div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div className="card-title">Earlier</div>
+          <ol className="backup-rows">
             {older.map(b => (
-              <BackupCard key={b.id} backup={b} busy={busy === b.id} onDownload={download} onDelete={remove} />
+              <BackupRow key={b.id} backup={b} busy={busy === b.id} onDownload={download} onDelete={remove} />
             ))}
-          </div>
+          </ol>
         </div>
       )}
-    </div>
-  );
-}
-
-function BackupCard({ backup, latest = false, busy, onDownload, onDelete }) {
-  const saved = backup.plainBytes > 0 ? Math.round((1 - backup.sealedBytes / backup.plainBytes) * 100) : 0;
-  return (
-    <div className={latest ? 'card vault-card vault-latest' : 'vault-card'}>
-      <div className="vault-head">
-        <ArchiveRestore size={latest ? 22 : 16} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className={latest ? 'vault-when' : 'card-title'}>
-            {latest ? 'Latest backup · ' : ''}{ago(backup.createdAt)}
-          </div>
-          <div className="row-sub">
-            {new Date(backup.createdAt).toLocaleString()}
-            {' · '}<Smartphone size={11} /> {backup.deviceName || backup.deviceId}
-            {backup.appVersion ? ` · Wanda ${backup.appVersion}` : ''}
-          </div>
-        </div>
-        <button className="btn btn-secondary" disabled={busy} onClick={() => onDownload(backup)} title="Download the sealed file">
-          <Download size={14} />
-        </button>
-        <button className="btn btn-danger" disabled={busy} onClick={() => onDelete(backup)} title="Delete">
-          <Trash2 size={14} />
-        </button>
-      </div>
-
-      <div className="vault-chips">
-        {backup.sections.map(section => (
-          <span key={section.name} className={`vault-chip ${section.name === 'ACCOUNTS' ? 'vault-chip-warn' : ''}`}>
-            {section.name === 'ACCOUNTS' && <KeyRound size={11} />}
-            {sectionName(section.name)}
-            <strong>{section.count.toLocaleString()}</strong>
-          </span>
-        ))}
-      </div>
-
-      <div className="row-sub">
-        {formatBytes(backup.sealedBytes)} stored
-        {backup.plainBytes > 0 && ` · ${formatBytes(backup.plainBytes)} before compression (${saved}% smaller)`}
-        {' · '}<code title={backup.sha256}>{backup.sha256.slice(0, 12)}</code>
-      </div>
-      {backup.includesAccounts && (
-        <div className="row-sub vault-warn">
-          Includes sign-ins. They are sealed like everything else, but your passphrase is what protects
-          them if this server's database is ever copied.
-        </div>
-      )}
-    </div>
+    </>
   );
 }
