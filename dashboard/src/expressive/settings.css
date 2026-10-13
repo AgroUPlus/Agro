@@ -1,0 +1,117 @@
+/* ── Settings (tabs/settings) and the M3 switch ─────────────────────────────────────────────── */
+
+.settings-page { display: flex; flex-direction: column; gap: 18px; }
+
+.profile-card { gap: 22px; }
+.profile-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
+
+.profile-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  border-radius: 28px 12px 28px 12px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(208, 188, 255, 0.18) 0%, transparent 70%),
+    var(--md-sys-color-surface-container);
+  text-align: center;
+}
+
+.profile-preview > :first-child { margin-bottom: 8px; }
+.profile-preview-name { font-size: 1.25rem; font-weight: 800; font-variation-settings: var(--round-title); }
+.profile-preview-bio { font-size: 13px; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+
+.profile-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-wide { grid-column: 1 / -1; }
+.form-label { font-size: 13px; font-weight: 700; color: var(--md-sys-color-on-surface-variant); }
+.form-actions { display: flex; justify-content: flex-end; }
+
+/* ── Privacy tiles ───────────────────────────────────────────────────────────────────────── */
+
+.privacy-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; }
+
+.privacy-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  background: var(--md-sys-color-surface-container);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.privacy-tile:hover { border-color: var(--md-sys-color-outline-variant); }
+.privacy-tile.is-on { background: var(--md-sys-color-secondary-container); }
+
+.privacy-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  transition: border-radius 0.4s var(--m3-spring-fast), background-color 0.25s ease, color 0.25s ease;
+}
+
+.privacy-tile.is-on .privacy-icon { border-radius: 50%; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.privacy-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.privacy-title { font-weight: 700; }
+.privacy-line { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); }
+
+/* ── M3 switch ───────────────────────────────────────────────────────────────────────────────
+   A 52×32 track; the thumb grows from small to large when it turns on, as Material 3 draws it.
+   `.m3-switch` is the markup PrivacyTiles uses; `.switch` + `.slider` is the older markup the
+   plugins list uses, restyled to match. */
+
+.m3-switch, .switch { position: relative; display: inline-block; flex-shrink: 0; width: 52px; height: 32px; }
+.m3-switch input, .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+
+.m3-switch-track, .slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: var(--md-sys-color-surface-container-highest);
+  border: 2px solid var(--md-sys-color-outline);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.m3-switch-thumb, .slider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: var(--md-sys-color-outline);
+  transition: transform 0.35s var(--m3-spring-fast), width 0.25s ease, height 0.25s ease, margin 0.25s ease, background-color 0.25s ease;
+}
+
+.m3-switch input:checked + .m3-switch-track,
+.switch input:checked + .slider {
+  background: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
+.m3-switch input:checked + .m3-switch-track .m3-switch-thumb,
+.switch input:checked + .slider::before {
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  background: var(--md-sys-color-on-primary);
+  transform: translateX(16px);
+}
+
+.m3-switch input:focus-visible + .m3-switch-track,
+.switch input:focus-visible + .slider { outline: 3px solid rgba(208, 188, 255, 0.4); outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .profile-row, .profile-fields { grid-template-columns: minmax(0, 1fr); }
+}

@@ -11,8 +11,8 @@ export default function DataRetentionSection({
     <div className="card">
       <div className="card-header">
         <div>
-          <div className="card-title">Data Minimization & History Purge</div>
-          <div className="card-subtitle">Wipe recorded scrobbles and listening telemetry from Agro</div>
+          <div className="card-title">Your history</div>
+          <div className="card-subtitle">Delete listening history from this server.</div>
         </div>
       </div>
 
@@ -33,7 +33,7 @@ export default function DataRetentionSection({
 
         <button className="btn btn-secondary" onClick={onPurgeScrobbles}>
           <Trash2 size={13} color="var(--status-danger)" />
-          <span>Purge Scrobbles</span>
+          <span>Delete history</span>
         </button>
       </div>
     </div>
