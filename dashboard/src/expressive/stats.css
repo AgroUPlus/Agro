@@ -1,0 +1,192 @@
+/* ── Stats (tabs/stats) ────────────────────────────────────────────────────────────────────────
+   After Wanda's stats screen: one huge figure, square tiles with a scalloped one among them,
+   a heatmap and an hour chart side by side, and short ranked lists. */
+
+.stats-filters { display: flex; gap: 8px; }
+
+.pill-select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 42px;
+  padding: 0 38px 0 18px;
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23E5E1E9' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 15px center;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  transition: border-color 0.2s ease, transform 0.25s var(--m3-spring-fast);
+}
+
+.pill-select:hover { border-color: var(--md-sys-color-primary); }
+.pill-select:active { transform: scale(0.97); }
+
+.pill-select-primary {
+  border-color: var(--md-sys-color-primary);
+  background-color: var(--md-sys-color-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23381E72' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  color: var(--md-sys-color-on-primary);
+}
+
+/* ── Summary ─────────────────────────────────────────────────────────────────────────────── */
+
+.stats-summary { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 18px; }
+
+.stats-hero { gap: 22px; }
+
+.stats-big { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+
+.stats-big-number {
+  font-size: clamp(3.6rem, 6vw, 5.4rem);
+  font-weight: 800;
+  font-variation-settings: var(--round-title);
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+  color: var(--md-sys-color-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-big-label { font-size: 1.15rem; font-weight: 600; color: var(--md-sys-color-on-surface-variant); }
+
+.stats-overline {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-outline);
+}
+
+.stats-top-song {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px 12px 12px;
+  border-radius: 24px;
+  background: var(--md-sys-color-surface-container);
+}
+
+.stats-top-song .m3-shape-bg { animation: shape-turn 30s linear infinite; }
+.stats-top-song-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.stats-top-title { font-size: 1.3rem; font-weight: 800; font-variation-settings: var(--round-title); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stats-top-artist { color: var(--md-sys-color-on-surface-variant); font-weight: 500; }
+.stats-top-count { font-size: 1.1rem; font-weight: 800; color: var(--md-sys-color-primary); }
+
+.stats-facts { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.stats-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px 7px 11px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container-high);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.stats-fact svg { color: var(--md-sys-color-primary); }
+
+/* The device split: one bar, one tone per device. */
+.device-split-bar { display: flex; gap: 4px; height: 14px; }
+.device-split-bar span { border-radius: 7px; min-width: 6px; transition: flex-grow 0.6s var(--spring-soft); }
+.device-split-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--md-sys-color-on-surface-variant); }
+.device-split-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.device-split-legend i { width: 10px; height: 10px; border-radius: 50%; }
+.device-split-legend b { color: var(--md-sys-color-on-surface); font-weight: 700; }
+
+.tone-primary { background: var(--md-sys-color-primary); }
+.tone-tertiary { background: var(--md-sys-color-tertiary); }
+.tone-lemon { background: var(--md-sys-color-lemon); }
+.tone-pink { background: #FFAFD7; }
+.tone-outline { background: var(--md-sys-color-outline); }
+
+/* Two squares: time on the tonal one, the daily average on the scalloped one. */
+.stats-tiles-square { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-content: start; }
+
+.stats-square {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 22px;
+  border-radius: 32px;
+}
+
+.stats-square-time { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.stats-square-value { display: block; font-size: clamp(2rem, 3vw, 2.8rem); font-weight: 800; font-variation-settings: var(--round-title); line-height: 1; }
+.stats-square-label { display: block; margin-top: 6px; font-size: 14px; font-weight: 600; opacity: 0.85; }
+
+.stats-square-sunny { justify-content: center; align-items: center; padding: 0; text-align: center; color: var(--md-sys-color-on-tertiary); }
+.stats-sunny-shape { position: absolute; inset: 0; }
+.stats-sunny-shape .m3-shape-bg { fill: var(--md-sys-color-tertiary); animation: shape-turn 40s linear infinite reverse; }
+.stats-sunny-text { position: relative; }
+
+/* ── Charts ──────────────────────────────────────────────────────────────────────────────── */
+
+.stats-charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 18px; }
+
+.heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 1fr);
+  grid-template-columns: repeat(var(--weeks), 1fr);
+  gap: 5px;
+  max-width: 360px;
+}
+
+.heat { aspect-ratio: 1; border-radius: 6px; background: var(--md-sys-color-surface-container-high); transition: transform 0.25s var(--m3-spring-fast); }
+.heat:hover { transform: scale(1.25); }
+.heat-1 { background: rgba(208, 188, 255, 0.28); }
+.heat-2 { background: rgba(208, 188, 255, 0.5); }
+.heat-3 { background: rgba(208, 188, 255, 0.75); }
+.heat-4 { background: var(--md-sys-color-primary); }
+.heat-today { border-radius: 50%; outline: 2px solid var(--md-sys-color-tertiary); outline-offset: 1px; }
+
+.hour-chart { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.hour-bars { display: flex; align-items: flex-end; gap: 4px; height: 150px; }
+
+.hour-bar {
+  flex: 1;
+  border-radius: 6px 6px 3px 3px;
+  background: var(--md-sys-color-surface-container-highest);
+  transition: height 0.6s var(--spring-soft), background-color 0.2s ease;
+}
+
+.hour-bar:hover { background: var(--md-sys-color-primary); }
+.hour-bar.is-peak { background: var(--md-sys-color-tertiary); }
+.hour-axis { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--md-sys-color-outline); }
+
+/* ── Top lists ───────────────────────────────────────────────────────────────────────────── */
+
+.stats-top-lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.rank-list { display: flex; flex-direction: column; gap: 6px; list-style: none; }
+
+.rank-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.rank-fill { position: absolute; inset: 0 auto 0 0; background: var(--md-sys-color-surface-container); border-radius: inherit; }
+.rank-row:first-child .rank-fill { background: var(--md-sys-color-secondary-container); }
+.rank-row > :not(.rank-fill) { position: relative; }
+.rank-n { width: 16px; font-weight: 800; color: var(--md-sys-color-primary); font-variant-numeric: tabular-nums; }
+.rank-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.rank-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-sub { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-value { font-weight: 700; color: var(--md-sys-color-on-surface-variant); font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stats-top-song .m3-shape-bg, .stats-sunny-shape .m3-shape-bg { animation: none; }
+}
+
+@media (max-width: 1100px) {
+  .stats-summary, .stats-charts { grid-template-columns: minmax(0, 1fr); }
+  .stats-top-lists { grid-template-columns: minmax(0, 1fr); }
+}
