@@ -1,0 +1,146 @@
+/* ── Management (PeopleTab, AccountsPanel, AdminPluginsTab, LogsTab) ────────────────────────── */
+
+.feature-count {
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container-high);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container-highest);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.chip-primary { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.chip-error { background: rgba(255, 180, 171, 0.16); color: var(--status-error); }
+.chip-lemon { background: var(--md-sys-color-lemon); color: var(--md-sys-color-on-lemon); }
+
+/* ── Features ────────────────────────────────────────────────────────────────────────────── */
+
+.feature-group { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+
+.feature-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 24px 10px 24px 10px;
+  background: var(--md-sys-color-surface-container);
+  border: 2px solid transparent;
+  transition: border-color 0.25s ease, opacity 0.25s ease, transform 0.3s var(--m3-spring-fast);
+}
+
+.feature-tile:hover { border-color: var(--md-sys-color-outline-variant); transform: translateY(-3px); }
+.feature-tile.is-off { opacity: 0.6; }
+.feature-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+
+.feature-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  transition: border-radius 0.45s var(--m3-spring-fast), background-color 0.25s ease, color 0.25s ease;
+}
+
+.feature-tile.is-on .feature-icon { border-radius: 50%; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.feature-name { font-weight: 800; font-size: 1.05rem; font-variation-settings: var(--round-title); }
+
+.feature-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.feature-cost {
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: auto;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-surface-container-highest);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connector-rows { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+.connector-row { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 20px; }
+.connector-row:hover { background: var(--md-sys-color-surface-container); }
+.connector-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--md-sys-color-surface-container-highest); color: var(--md-sys-color-outline); }
+.connector-icon.is-on { border-radius: 50%; background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); }
+.connector-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.connector-name { font-weight: 700; }
+.connector-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--md-sys-color-outline); }
+.connector-meta b { color: var(--md-sys-color-on-surface-variant); font-weight: 600; }
+.connector-state { font-size: 12.5px; font-weight: 700; color: var(--md-sys-color-outline); }
+.connector-state.is-on { color: var(--md-sys-color-tertiary); }
+
+/* ── People ──────────────────────────────────────────────────────────────────────────────── */
+
+.queue-card { border-color: var(--md-sys-color-lemon); }
+.queue-card .card-title svg { color: var(--md-sys-color-lemon); }
+.invite-make { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.ticket-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+
+.ticket {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: var(--md-sys-color-surface-container);
+  border: 2px dashed var(--md-sys-color-outline-variant);
+}
+
+.ticket.is-spent { opacity: 0.45; }
+.ticket-code { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.04em; color: var(--md-sys-color-primary); }
+.ticket-meter { height: 6px; border-radius: 3px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
+.ticket-meter span { display: block; height: 100%; background: var(--md-sys-color-tertiary); border-radius: inherit; }
+.ticket-sub { font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); }
+.ticket-actions { display: flex; gap: 6px; }
+
+.person-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+
+.person-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 14px 16px;
+  border-radius: 28px 12px 28px 12px;
+  background: var(--md-sys-color-surface-container);
+  text-align: center;
+  transition: transform 0.3s var(--m3-spring-fast);
+}
+
+.person-card:hover { transform: translateY(-3px); }
+.person-card.is-suspended { opacity: 0.55; }
+.person-card > :first-child { margin-bottom: 6px; }
+.person-name { font-weight: 800; font-size: 1.1rem; font-variation-settings: var(--round-title); }
+.person-chips { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; min-height: 20px; }
+.person-quota { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--md-sys-color-on-surface-variant); }
+.person-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ── Logs ────────────────────────────────────────────────────────────────────────────────── */
+
+.terminal-card { padding: 16px; border-radius: 18px; background: var(--md-sys-color-surface-container-lowest); border: 2px solid var(--md-sys-color-outline-variant); }
+.terminal-line { display: flex; gap: 12px; padding: 4px 0; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; }
+.terminal-ts { color: var(--md-sys-color-tertiary); }
