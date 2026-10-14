@@ -1143,6 +1143,33 @@ type Mutation {
 	"""
 	setPublicKey(publicKey: String, deviceId: String): ProfilePayload!
 	"""
+	The switches that decide what a friend can see, whether strangers can find you, and whether
+	your plays feed the fleet-wide Popular on Agro chart.
+	
+	One mutation rather than one per switch, so the privacy screen writes what the user sees in
+	a single round trip and cannot land half-applied. Each switch is optional and one left out is
+	left alone.
+	
+	This matters more than it looks: the flags are independent decisions, and requiring all of
+	them on every call means a client flipping one has to resend its idea of the rest. Two
+	devices doing that concurrently silently undo each other — a switch turned on over here gets
+	reverted by a stale copy sent from over there.
+	"""
+	setVisibility(showNowPlaying: Boolean, showStats: Boolean, discoverable: Boolean, shareLibrary: Boolean, showActivity: Boolean, popularOptIn: Boolean): ProfilePayload!
+	"""
+	Goes quiet, or stops being quiet.
+	
+	Its own mutation rather than a sixth flag on `set_visibility`, because it is a different
+	kind of thing: the others are standing consents, this is a temporary override of all of
+	them. Bundling it would mean leaving incognito had to restore the rest from a client's idea
+	of what they were, and a stale copy would silently turn a privacy switch back on.
+	
+	The server is the authority. Every client reads this value rather than keeping its own, so
+	one device going quiet takes the whole account quiet — a phone still announcing the account
+	from a pocket is exactly the failure a device-local incognito has.
+	"""
+	setIncognito(incognito: Boolean!): Boolean!
+	"""
 	Begins enrolling a second factor for the caller.
 	
 	Writes a secret that is not yet binding: nothing enforces it until `confirmTotp` has seen a
@@ -1172,33 +1199,6 @@ type Mutation {
 	Issues a fresh set of recovery codes, invalidating the old ones. Requires a current code.
 	"""
 	regenerateRecoveryCodes(code: String!): [String!]!
-	"""
-	The switches that decide what a friend can see, whether strangers can find you, and whether
-	your plays feed the fleet-wide Popular on Agro chart.
-	
-	One mutation rather than one per switch, so the privacy screen writes what the user sees in
-	a single round trip and cannot land half-applied. Each switch is optional and one left out is
-	left alone.
-	
-	This matters more than it looks: the flags are independent decisions, and requiring all of
-	them on every call means a client flipping one has to resend its idea of the rest. Two
-	devices doing that concurrently silently undo each other — a switch turned on over here gets
-	reverted by a stale copy sent from over there.
-	"""
-	setVisibility(showNowPlaying: Boolean, showStats: Boolean, discoverable: Boolean, shareLibrary: Boolean, showActivity: Boolean, popularOptIn: Boolean): ProfilePayload!
-	"""
-	Goes quiet, or stops being quiet.
-	
-	Its own mutation rather than a sixth flag on `set_visibility`, because it is a different
-	kind of thing: the others are standing consents, this is a temporary override of all of
-	them. Bundling it would mean leaving incognito had to restore the rest from a client's idea
-	of what they were, and a stale copy would silently turn a privacy switch back on.
-	
-	The server is the authority. Every client reads this value rather than keeping its own, so
-	one device going quiet takes the whole account quiet — a phone still announcing the account
-	from a pocket is exactly the failure a device-local incognito has.
-	"""
-	setIncognito(incognito: Boolean!): Boolean!
 	"""
 	Asks to be someone's friend.
 	
@@ -1978,6 +1978,11 @@ type Query {
 	"""
 	searchUsers(query: String!, limit: Int): [ProfilePayload!]!
 	"""
+	Accounts waiting to be let in. The approval queue, for the dashboard.
+	"""
+	pendingAccounts: [ProfilePayload!]!
+	invites: [InvitePayload!]!
+	"""
 	Accepted friends, each with what they are playing when they allow that to be seen.
 	`device_id` carries the same meaning it does on [`Self::friends_now_playing`]: the sealed
 	copy of a session is addressed to one device's key, so it can only be picked once the asking
@@ -2014,11 +2019,6 @@ type Query {
 	session means being handed the copy sealed to this device, or the placeholder.
 	"""
 	listenAlong(deviceId: String): ListenAlongPayload
-	"""
-	Accounts waiting to be let in. The approval queue, for the dashboard.
-	"""
-	pendingAccounts: [ProfilePayload!]!
-	invites: [InvitePayload!]!
 	"""
 	Jams your friends have opened up, so one can be joined without being handed a code.
 	
