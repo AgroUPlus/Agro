@@ -78,6 +78,8 @@ mod schema_jam_recap;
 mod schema_playlists;
 mod schema_popularity;
 mod schema_replay;
+#[cfg(test)]
+mod schema_snapshot_tests;
 mod schema_social;
 mod schema_vault;
 mod secret_key_file;
