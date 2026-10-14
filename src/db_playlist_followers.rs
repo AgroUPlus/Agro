@@ -4,6 +4,7 @@
 //! loses access — the playlist made private, a friendship ended — keeps their row here and simply
 //! gets refused, which is how their copy learns it is no longer shared.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use crate::db::Db;
@@ -12,7 +13,7 @@ use crate::db_playlists::{playlist_from_row, Playlist, PLAYLIST_COLUMNS};
 impl Db {
     /// Records that `user_id` follows `playlist_id`. The caller checks they may open it first.
     pub fn follow_playlist(&self, playlist_id: &str, user_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR IGNORE INTO playlist_followers (playlist_id, user_id, followed_at)
              VALUES (?1, ?2, ?3)",
@@ -22,7 +23,7 @@ impl Db {
     }
 
     pub fn unfollow_playlist(&self, playlist_id: &str, user_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let count = conn.execute(
             "DELETE FROM playlist_followers WHERE playlist_id = ?1 AND user_id = ?2",
             params![playlist_id, user_id],

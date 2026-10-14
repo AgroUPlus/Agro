@@ -15,6 +15,7 @@
 //! scoped to one account *inside the statement*, so a row belonging to somebody else is a
 //! not-found rather than a refusal — the same shape `delete_link` uses.
 
+use crate::lock::LockExt;
 use rusqlite::{params, params_from_iter, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -160,7 +161,7 @@ impl Db {
     pub fn create_drop(&self, from: &str, to: &str, drop: &NewDrop) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO track_drops
                  (id, from_user, to_user, track_title, artist_name, album_name, artwork_url,
@@ -199,7 +200,7 @@ impl Db {
     /// Archived drops are excluded rather than flagged: archiving is how a recipient says they are
     /// done with one, and an inbox that keeps showing them is not an inbox.
     pub fn inbox(&self, user: &str, limit: i64, offset: i64) -> Result<Vec<Drop>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(&format!(
             "SELECT {DROP_COLUMNS} FROM track_drops
               WHERE to_user = ?1 COLLATE NOCASE AND archived = 0
@@ -215,7 +216,7 @@ impl Db {
 
     /// What `user` has sent, newest first. Their own record of it, not the recipient's.
     pub fn sent_drops(&self, user: &str, limit: i64, offset: i64) -> Result<Vec<Drop>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(&format!(
             "SELECT {DROP_COLUMNS} FROM track_drops
               WHERE from_user = ?1 COLLATE NOCASE
@@ -231,7 +232,7 @@ impl Db {
 
     /// How many unread, unarchived drops are waiting. The number a badge shows.
     pub fn unread_drop_count(&self, user: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.query_row(
             "SELECT COUNT(*) FROM track_drops
               WHERE to_user = ?1 COLLATE NOCASE AND archived = 0 AND read_at IS NULL",
@@ -242,7 +243,7 @@ impl Db {
 
     /// One drop, but only if it was addressed to `user`.
     pub fn drop_for(&self, user: &str, id: &str) -> Result<Option<Drop>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.query_row(
             &format!(
                 "SELECT {DROP_COLUMNS} FROM track_drops
@@ -265,7 +266,7 @@ impl Db {
     /// re-opens an item does not keep moving the timestamp forward.
     pub fn mark_drop_read(&self, user: &str, id: &str) -> Result<bool> {
         let now = chrono::Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE track_drops SET read_at = ?1
               WHERE id = ?2 AND to_user = ?3 COLLATE NOCASE AND read_at IS NULL",
@@ -277,7 +278,7 @@ impl Db {
     /// Takes a drop out of the inbox without deleting it, so the sender's record of having sent it
     /// survives. Only the recipient may do this.
     pub fn archive_drop(&self, user: &str, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE track_drops SET archived = 1
               WHERE id = ?1 AND to_user = ?2 COLLATE NOCASE",
@@ -293,7 +294,7 @@ impl Db {
     /// are looking at the same exchange, and the sender has to be able to load a message they
     /// sent.
     pub fn drop_for_party(&self, user: &str, id: &str) -> Result<Option<Drop>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.query_row(
             &format!(
                 "SELECT {DROP_COLUMNS} FROM track_drops
@@ -322,7 +323,7 @@ impl Db {
     /// of things to deal with; a conversation is a record, and silently dropping half of it would
     /// make the history lie.
     pub fn conversation(&self, user: &str, other: &str, limit: i64) -> Result<Vec<Drop>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(&format!(
             "SELECT {DROP_COLUMNS} FROM track_drops
               WHERE (from_user = ?1 COLLATE NOCASE AND to_user = ?2 COLLATE NOCASE)
@@ -343,7 +344,7 @@ impl Db {
     /// own message is not a thing, and allowing it would let a sender fabricate a response.
     /// Passing `None` removes the reaction, so tapping the same emoji twice can undo it.
     pub fn react_to_drop(&self, user: &str, id: &str, reaction: Option<&str>) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE track_drops SET reaction = ?1
               WHERE id = ?2 AND to_user = ?3 COLLATE NOCASE",

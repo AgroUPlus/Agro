@@ -4,6 +4,7 @@
 //! room when its host ends it — because that is the last moment the jam's rows are guaranteed to
 //! exist. The retention sweep removes any recap nobody dismissed after `JAM_RECAP_TTL_DAYS`.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use crate::db::Db;
@@ -63,7 +64,7 @@ impl Db {
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         let id = uuid::Uuid::new_v4().to_string();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO jam_recaps (id, username, payload_json, created_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -104,7 +105,7 @@ impl Db {
     /// Removes one of this account's recaps. `false` when it was not theirs or already gone,
     /// which reads the same on purpose: an id is not a way to learn whose recaps exist.
     pub fn dismiss_jam_recap(&self, username: &str, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM jam_recaps WHERE id = ?1 AND username = ?2 COLLATE NOCASE",
             params![id.trim(), username.trim()],

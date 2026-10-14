@@ -3,6 +3,7 @@
 //! Lazy on purpose: a blend nobody opens is never computed, and there is no timer to run. The read
 //! that finds one due pays for one aggregate query per member, over the scrobbles index.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use crate::blend::{generate, MemberTaste, Recipe, TasteTrack};
@@ -59,7 +60,7 @@ impl Db {
             },
         );
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM playlist_items WHERE playlist_id = ?1",
@@ -88,7 +89,7 @@ impl Db {
     /// Takes a waiting blend's tracks away, if it has any, and leaves it due for the last answer.
     /// The new revision when something was removed, so the members are told.
     fn empty_waiting_blend(&self, playlist_id: &str) -> Result<Option<i64>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let removed = tx.execute(
             "DELETE FROM playlist_items WHERE playlist_id = ?1",

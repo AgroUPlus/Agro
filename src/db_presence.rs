@@ -18,6 +18,7 @@
 //! ever *returned* for the exact `(recipient, device)` pair that asked for it, so a caller that
 //! forgets a gate leaks a ciphertext addressed to somebody else's key rather than plaintext.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -45,7 +46,7 @@ impl Db {
         device_id: &str,
         copies: &[PresenceCiphertext],
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         Self::replace_presence_ciphertexts_in(&conn, user_id, device_id, copies)
     }
 

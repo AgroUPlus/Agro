@@ -1,6 +1,7 @@
 //! The tracks in a playlist: reading them, and the owner-only writes that predate collaborative
 //! editing. Edits by anyone else go through `db_playlist_edits`, which checks the revision first.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Connection, Result};
 
 use crate::db::Db;
@@ -154,7 +155,7 @@ impl Db {
         actor: &str,
         item: NewPlaylistItem,
     ) -> Result<PlaylistItem> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let position = next_position(&tx, playlist_id)?;
         let added = insert_item(&tx, playlist_id, position, actor, &item)?;
@@ -170,7 +171,7 @@ impl Db {
         actor: &str,
         items: &[NewPlaylistItem],
     ) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let start = next_position(&tx, playlist_id)?;
         for (i, item) in items.iter().enumerate() {
@@ -183,7 +184,7 @@ impl Db {
 
     /// Removes a specific item from a playlist and compacts the position indices.
     pub fn remove_playlist_item(&self, playlist_id: &str, item_id: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let count = tx.execute(
             "DELETE FROM playlist_items WHERE playlist_id = ?1 AND id = ?2",

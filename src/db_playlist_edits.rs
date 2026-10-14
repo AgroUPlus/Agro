@@ -8,6 +8,7 @@
 //! Edits address items by id, never by position, so the only real conflict is one person changing
 //! an item another has just removed — which the client can see and say so.
 
+use crate::lock::LockExt;
 use std::collections::HashMap;
 
 use rusqlite::{params, OptionalExtension};
@@ -105,7 +106,7 @@ impl Db {
             ));
         }
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let current: i64 = tx.query_row(
             "SELECT revision FROM playlists WHERE id = ?1",
@@ -181,7 +182,7 @@ impl Db {
         title: &str,
         description: Option<&str>,
     ) -> Result<i64, EditError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let found: Option<(String, i64)> = tx
             .query_row(
@@ -221,7 +222,7 @@ impl Db {
             return Ok(None);
         }
         let stored = access.clamped_to(playlist.visibility());
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "UPDATE playlists SET edit_access = ?1 WHERE id = ?2",

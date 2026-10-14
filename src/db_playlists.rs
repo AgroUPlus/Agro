@@ -8,6 +8,7 @@
 //! are `db_playlist_items`, edits to them `db_playlist_edits`, and who keeps a live copy
 //! `db_playlist_followers`.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -79,7 +80,7 @@ impl Db {
         description: Option<&str>,
         visibility: PlaylistVisibility,
     ) -> Result<Playlist> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         let (is_public, friends_only) = visibility.flags();
@@ -160,7 +161,7 @@ impl Db {
         user_id: &str,
         visibility: PlaylistVisibility,
     ) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let current: Option<i32> = tx
             .query_row(
@@ -193,7 +194,7 @@ impl Db {
     /// Each named, in one transaction: foreign keys are not enforced here, so the `ON DELETE
     /// CASCADE` this once relied on never ran, and every deleted playlist left its tracks behind.
     pub fn delete_playlist(&self, playlist_id: &str, user_id: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let count = tx.execute(
             "DELETE FROM playlists WHERE id = ?1 AND user_id = ?2",

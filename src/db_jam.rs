@@ -7,6 +7,7 @@
 //! The host is whoever created it. That is the only asymmetry: they set the mode, can drop a track
 //! somebody else added, and can end the session. Everything else is equal between members.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use crate::db::Db;
@@ -169,7 +170,7 @@ impl Db {
         let now = chrono::Utc::now().to_rfc3339();
         let host = host.trim().to_lowercase();
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO jams (id, code, host, mode, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -227,7 +228,7 @@ impl Db {
 
     /// Adds someone to a jam. Leaving and rejoining is not an error.
     pub fn join_jam(&self, jam_id: &str, username: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR IGNORE INTO jam_members (jam_id, username, joined_at) VALUES (?1, ?2, ?3)",
             params![
@@ -240,7 +241,7 @@ impl Db {
     }
 
     pub fn leave_jam(&self, jam_id: &str, username: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM jam_members WHERE jam_id = ?1 AND username = ?2 COLLATE NOCASE",
             params![jam_id, username.trim()],
@@ -267,7 +268,7 @@ impl Db {
     }
 
     pub fn set_jam_mode(&self, jam_id: &str, mode: JamMode) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE jams SET mode = ?2 WHERE id = ?1 AND ended_at IS NULL",
             params![jam_id, mode.as_str()],
@@ -277,7 +278,7 @@ impl Db {
 
     /// Ends a jam without deleting it, so its history stays readable.
     pub fn end_jam(&self, jam_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE jams SET ended_at = ?2 WHERE id = ?1 AND ended_at IS NULL",
             params![jam_id, chrono::Utc::now().to_rfc3339()],
@@ -326,7 +327,7 @@ impl Db {
 
         let id = uuid::Uuid::new_v4().to_string();
         let adder = added_by.trim().to_lowercase();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO jam_tracks
                (id, jam_id, added_by, track_uri, title, artist, artwork_url, added_at, played,
@@ -361,7 +362,7 @@ impl Db {
     }
 
     pub fn remove_jam_track(&self, jam_id: &str, track_id: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM jam_votes WHERE track_id = ?1",
@@ -391,7 +392,7 @@ impl Db {
     ) -> Result<JamTrackState> {
         let needed = self.jam_approvals_needed(jam_id)?;
         let username = username.trim().to_lowercase();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
 
         tx.execute(
@@ -466,7 +467,7 @@ impl Db {
 
     /// Opens a jam to friends, or shuts it back to code-only.
     pub fn set_jam_visibility(&self, jam_id: &str, visibility: JamVisibility) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE jams SET visibility = ?2 WHERE id = ?1 AND ended_at IS NULL",
             params![jam_id, visibility.as_str()],
@@ -505,7 +506,7 @@ impl Db {
     /// Records a skip vote for the playing track, and says whether the room has had enough.
     pub fn vote_skip(&self, jam_id: &str, track_id: &str, username: &str) -> Result<bool> {
         let needed = self.jam_skips_needed(jam_id)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR IGNORE INTO jam_skips (jam_id, track_id, username) VALUES (?1, ?2, ?3)",
             params![jam_id, track_id, username.trim().to_lowercase()],
@@ -586,7 +587,7 @@ impl Db {
     }
 
     pub fn set_jam_now_playing(&self, jam_id: &str, track_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE jams SET now_playing_id = ?2, started_at = ?3 WHERE id = ?1",
             params![jam_id, track_id, chrono::Utc::now().to_rfc3339()],
@@ -595,7 +596,7 @@ impl Db {
     }
 
     pub fn clear_jam_now_playing(&self, jam_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE jams SET now_playing_id = NULL, started_at = NULL WHERE id = ?1",
             params![jam_id],
@@ -604,7 +605,7 @@ impl Db {
     }
 
     pub fn mark_jam_track_played(&self, jam_id: &str, track_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE jam_tracks SET state = 'played', played = 1 WHERE id = ?1 AND jam_id = ?2",
             params![track_id, jam_id],
@@ -627,7 +628,7 @@ impl Db {
     /// A jam is a room, not a document: once it is over there is nothing worth keeping, and leaving
     /// the rows behind means every member's client has to keep deciding whether a dead jam counts.
     pub fn delete_jam(&self, jam_id: &str) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM jam_votes WHERE jam_id = ?1", params![jam_id])?;
         tx.execute("DELETE FROM jam_skips WHERE jam_id = ?1", params![jam_id])?;

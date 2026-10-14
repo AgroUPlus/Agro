@@ -5,6 +5,7 @@
 //! accept; once they have, their listening counts only while their stats are open and they are not
 //! incognito — the same consent their profile already states — checked at every refresh.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::blend_recipe::{Blend, BlendMember, BlendRefresh, BlendSettings, BlendWindow};
@@ -22,7 +23,7 @@ impl Db {
     ) -> Result<Playlist> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         // Private as a playlist: who may open a blend is its joined members, which
         // `can_view_playlist` answers from `blend_members`, never the owner's friends at large.
@@ -130,7 +131,7 @@ impl Db {
         accept: bool,
     ) -> Result<bool> {
         let name = username.trim().to_lowercase();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let changed = if accept {
             tx.execute(
@@ -157,7 +158,7 @@ impl Db {
 
     /// Takes a member out, along with their follow, and has the blend written again without them.
     pub fn leave_blend(&self, playlist_id: &str, username: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let removed = tx.execute(
             "DELETE FROM blend_members WHERE playlist_id = ?1 AND username = ?2 COLLATE NOCASE",
@@ -179,7 +180,7 @@ impl Db {
         title: &str,
         settings: BlendSettings,
     ) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "UPDATE blends SET size = ?2, mix = ?3, time_window = ?4, refresh = ?5 WHERE playlist_id = ?1",
