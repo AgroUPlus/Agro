@@ -24,6 +24,7 @@
 //! bypass rather than a bug — a forged token with an unverified signature *is* a valid login — so
 //! the verification is `jsonwebtoken`'s rather than ours.
 
+use crate::lock::LockExt;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -115,7 +116,7 @@ impl FlowStore {
     }
 
     fn insert(&self, state: String, flow: PendingFlow) {
-        let mut flows = self.flows.lock().unwrap();
+        let mut flows = self.flows.lock_recover();
         if flows.len() > 1024 {
             flows.retain(|_, f| f.started.elapsed() < FLOW_TTL);
         }
@@ -125,7 +126,7 @@ impl FlowStore {
     /// Takes a flow, removing it. Single-use: a `state` that has been redeemed is gone, so a
     /// callback URL cannot be replayed out of a browser history or a proxy log.
     fn take(&self, state: &str) -> Option<PendingFlow> {
-        let mut flows = self.flows.lock().unwrap();
+        let mut flows = self.flows.lock_recover();
         let flow = flows.remove(state)?;
         (flow.started.elapsed() < FLOW_TTL).then_some(flow)
     }

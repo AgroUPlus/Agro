@@ -9,6 +9,7 @@
 //! counters would buy protection against an attacker willing to wait out a restart, and cost a
 //! write on every request from everybody else.
 
+use crate::lock::LockExt;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -36,7 +37,7 @@ impl FixedWindow {
     /// twenty, so batching cannot be used to buy throughput a client could not have one request at
     /// a time.
     pub fn charge(&self, key: &str, units: usize, budget: usize, window: Duration) -> bool {
-        let mut windows = self.windows.lock().unwrap();
+        let mut windows = self.windows.lock_recover();
         let now = Instant::now();
 
         if windows.len() > SWEEP_THRESHOLD {

@@ -19,6 +19,7 @@
 //! One exemption remains, and it is a capability URL rather than a hole: `/share/{token}` is opened
 //! by people who have no account here, and the token in the path *is* the credential.
 
+use crate::lock::LockExt;
 use axum::{
     extract::{Query, Request, State},
     http::StatusCode,
@@ -72,7 +73,7 @@ impl SetupToken {
 
     /// True when `presented` is the live setup token. Does not burn it.
     pub fn matches(&self, presented: &str) -> bool {
-        let guard = self.secret.lock().unwrap();
+        let guard = self.secret.lock_recover();
         guard
             .as_deref()
             .is_some_and(|s| credentials::secure_eq(s, presented.trim()))
@@ -80,12 +81,12 @@ impl SetupToken {
 
     /// Whether a setup token is still waiting to be used.
     pub fn is_live(&self) -> bool {
-        self.secret.lock().unwrap().is_some()
+        self.secret.lock_recover().is_some()
     }
 
     /// Burns the token so it cannot be replayed.
     pub fn consume(&self) {
-        *self.secret.lock().unwrap() = None;
+        *self.secret.lock_recover() = None;
     }
 }
 

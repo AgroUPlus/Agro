@@ -8,6 +8,7 @@
 //! Both are rate-limited per client address. A login endpoint without one is an offline password
 //! cracker with the server's own CPU doing the work.
 
+use crate::lock::LockExt;
 use axum::{
     extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
@@ -98,7 +99,7 @@ impl RateLimiter {
 
     /// How long to wait before answering a failed attempt for `account`.
     pub fn backoff_for(&self, account: &str) -> Duration {
-        let failures = self.failures.lock().unwrap();
+        let failures = self.failures.lock_recover();
         let Some((seen, count)) = failures.get(&account.to_ascii_lowercase()) else {
             return Duration::ZERO;
         };
@@ -112,7 +113,7 @@ impl RateLimiter {
 
     /// Records a failed attempt against an account.
     pub fn note_failure(&self, account: &str) {
-        let mut failures = self.failures.lock().unwrap();
+        let mut failures = self.failures.lock_recover();
         let now = Instant::now();
         if failures.len() > 4096 {
             failures.retain(|_, (seen, _)| now.duration_since(*seen) < FAILURE_MEMORY);
