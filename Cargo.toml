@@ -52,3 +52,6 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 [lints.clippy]
 # A panic in a request handler is a dropped request at best. Tests are exempt via clippy.toml.
 unwrap_used = "deny"
+
+[dev-dependencies]
+proptest = "1"
