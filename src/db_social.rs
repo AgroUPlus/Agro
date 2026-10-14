@@ -9,6 +9,7 @@
 //! and reading what the graph gates are therefore two separate questions, and callers must ask
 //! both.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -182,7 +183,7 @@ impl Db {
         bio: Option<&str>,
         avatar_url: Option<&str>,
     ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         // `COALESCE(?, column)` so omitting a field leaves it alone rather than blanking it — the
         // clients send partial updates and a null must not be a deletion.
         let changed = conn.execute(
@@ -202,7 +203,7 @@ impl Db {
     /// construction — which is the bug [`register_device_key`] exists to fix — so nothing that
     /// seals a message should read this. Use [`device_keys_for`](Self::device_keys_for).
     pub fn set_public_key(&self, username: &str, public_key: Option<&str>) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET public_key = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![public_key, username.trim()],
@@ -225,7 +226,7 @@ impl Db {
         device_id: &str,
         public_key: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let user = username.trim();
         let device = device_id.trim();
         let key = public_key.trim();
@@ -275,7 +276,7 @@ impl Db {
     /// withdrawn can never be opened by anyone, so what is left behind is not a message the device
     /// might still come back for — it is a secret being stored on nobody's behalf.
     pub fn forget_device_key(&self, username: &str, device_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM user_device_keys WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
             params![username.trim(), device_id.trim()],
@@ -289,7 +290,7 @@ impl Db {
     }
 
     pub fn set_discoverable(&self, username: &str, discoverable: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET discoverable = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![discoverable as i64, username.trim()],
@@ -341,7 +342,7 @@ impl Db {
         if self.friend_state(from, to)?.is_some() {
             return Ok(false);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "INSERT OR IGNORE INTO friendships (user_id, friend_id, state, created_at)
              VALUES (?1, ?2, 'pending', ?3)",
@@ -362,7 +363,7 @@ impl Db {
     /// privacy boundary.
     pub fn accept_friend_request(&self, to: &str, from: &str) -> Result<bool> {
         let (to, from) = (to.trim().to_lowercase(), from.trim().to_lowercase());
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let promoted = tx.execute(
             "UPDATE friendships SET state = 'accepted'
@@ -385,7 +386,7 @@ impl Db {
     /// Removes both rows, whatever state they were in. Declining and unfriending are the same
     /// operation on the data; only the word in front of the user differs.
     pub fn remove_friend(&self, a: &str, b: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM friendships
               WHERE (user_id = ?1 COLLATE NOCASE AND friend_id = ?2 COLLATE NOCASE)
@@ -408,7 +409,7 @@ impl Db {
             return Ok(false);
         }
         self.remove_friend(blocker, subject)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR REPLACE INTO friendships (user_id, friend_id, state, created_at)
              VALUES (?1, ?2, 'blocked', ?3)",
@@ -422,7 +423,7 @@ impl Db {
     }
 
     pub fn unblock_user(&self, blocker: &str, subject: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM friendships
               WHERE user_id = ?1 COLLATE NOCASE AND friend_id = ?2 COLLATE NOCASE
@@ -552,7 +553,7 @@ impl Db {
             return Ok(Vec::new());
         }
         let pattern = format!("{}%", term.replace(['%', '_'], ""));
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(&format!(
             "SELECT {PROFILE_COLUMNS} FROM users
               WHERE state = 'active' AND discoverable = 1
@@ -572,7 +573,7 @@ impl Db {
 
     /// Tunes `listener` in to `host`, replacing whatever they were following.
     pub fn set_listen_along(&self, listener: &str, host: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR REPLACE INTO listen_along (listener_id, host_id, started_at)
              VALUES (?1, ?2, ?3)",
@@ -586,7 +587,7 @@ impl Db {
     }
 
     pub fn clear_listen_along(&self, listener: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM listen_along WHERE listener_id = ?1 COLLATE NOCASE",
             params![listener.trim()],
@@ -621,7 +622,7 @@ impl Db {
         // Collected and the lock released before the friendship checks below, each of which takes
         // the same mutex.
         let listeners: Vec<String> = {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.conn.lock_recover();
             let mut stmt = conn.prepare(
                 "SELECT listener_id FROM listen_along WHERE host_id = ?1 COLLATE NOCASE",
             )?;
@@ -657,7 +658,7 @@ impl Db {
             expires_at: (chrono::Utc::now() + chrono::Duration::minutes(ttl_minutes.max(1)))
                 .to_rfc3339(),
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "DELETE FROM friend_codes WHERE user_id = ?1",
             params![owner],
@@ -672,7 +673,7 @@ impl Db {
 
     /// Drops an account's outstanding code, for a sheet being closed or the app going away.
     pub fn revoke_friend_codes(&self, user_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "DELETE FROM friend_codes WHERE user_id = ?1",
             params![user_id.trim().to_lowercase()],
@@ -688,7 +689,7 @@ impl Db {
     /// codes have existed.
     pub fn redeem_friend_code(&self, code: &str) -> Result<Option<String>> {
         let now = chrono::Utc::now().to_rfc3339();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let claimed = tx.execute(
             "UPDATE friend_codes SET used_at = ?1
@@ -726,7 +727,7 @@ impl Db {
             used_count: 0,
             revoked: false,
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO invites (code, created_by, created_at, expires_at, max_uses, used_count, revoked)
              VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
@@ -747,7 +748,7 @@ impl Db {
     /// the same moment must not both get in.
     pub fn redeem_invite(&self, code: &str) -> Result<bool> {
         let now = chrono::Utc::now().to_rfc3339();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let spent = tx.execute(
             "UPDATE invites SET used_count = used_count + 1
@@ -764,7 +765,7 @@ impl Db {
     /// Never below zero: a refund that outran its redemption would make a code usable more often
     /// than the operator allowed, which is the one thing `max_uses` exists to prevent.
     pub fn refund_invite(&self, code: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE invites SET used_count = used_count - 1
               WHERE code = ?1 AND used_count > 0",
@@ -778,7 +779,7 @@ impl Db {
     /// Distinct from revoking: revoking stops a code working but keeps the record, which is what
     /// you want the moment you realise a code has escaped. Deleting is the tidying-up afterwards.
     pub fn delete_invite(&self, code: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute("DELETE FROM invites WHERE code = ?1", params![code.trim()])?;
         Ok(removed > 0)
     }
@@ -806,7 +807,7 @@ impl Db {
     }
 
     pub fn revoke_invite(&self, code: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE invites SET revoked = 1 WHERE code = ?1",
             params![code.trim()],

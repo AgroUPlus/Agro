@@ -8,6 +8,7 @@
 //! clear. What lives here instead: one admin who owns the deployment, guests who can reach nothing
 //! but their own data, and credentials that are hashed at rest.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::credentials;
@@ -254,7 +255,7 @@ impl Db {
     /// the new lookup, so every device re-pairs exactly once. That is the intended break: a token
     /// that was stored in the clear should not survive the change that stopped storing it that way.
     pub fn migrate_credentials(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(
             "SELECT id, api_key FROM users WHERE passphrase_hash = '' AND api_key <> ''",
         )?;
@@ -288,7 +289,7 @@ impl Db {
     /// beside the ciphertext it opened, and which therefore protected the settings from nobody who
     /// could read the file. See migration 27.
     pub fn vault_envelope(&self, username: &str) -> Result<(Option<String>, Option<String>)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.query_row(
             "SELECT vault_salt, vault_key_wrapped FROM users WHERE username = ?1 COLLATE NOCASE",
             params![username.trim()],
@@ -305,7 +306,7 @@ impl Db {
     /// would strand them. Rotating a key is a different operation — it has to re-seal the settings
     /// in the same breath — and deliberately is not this one. Returns whether the enrolment landed.
     pub fn enrol_vault_key(&self, username: &str, salt: &str, wrapped: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET vault_salt = ?2, vault_key_wrapped = ?3
               WHERE username = ?1 COLLATE NOCASE AND vault_key_wrapped IS NULL",
@@ -325,7 +326,7 @@ impl Db {
     }
 
     pub fn list_accounts(&self) -> Result<Vec<Account>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare(&format!(
             "SELECT {ACCOUNT_COLUMNS} FROM users ORDER BY created_at ASC"
         ))?;
@@ -359,7 +360,7 @@ impl Db {
         };
 
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.conn.lock_recover();
             conn.execute(
                 // No `settings_key`: the server does not mint the key to its users' settings any
                 // more. The client generates one and enrols it sealed, through `enrol_vault_key`.
@@ -419,7 +420,7 @@ impl Db {
     /// Mints a device token, stores only its hash, and returns the secret to show once.
     pub fn mint_device_token(&self, username: &str, label: &str) -> Result<String> {
         let minted = credentials::mint_token();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let user_id: String = conn.query_row(
             "SELECT id FROM users WHERE username = ?1 COLLATE NOCASE",
             params![username.trim()],
@@ -545,7 +546,7 @@ impl Db {
         let hash = credentials::hash_passphrase(next)?;
 
         {
-            let mut conn = self.conn.lock().unwrap();
+            let mut conn = self.conn.lock_recover();
             let tx = conn
                 .transaction()
                 .map_err(|e| format!("could not change the passphrase: {e}"))?;
@@ -591,7 +592,7 @@ impl Db {
             return Err("Two-factor authentication is already enabled on this account".into());
         }
         let enrolment = crate::totp::begin(username)?;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE users SET totp_secret_enc = ?2, totp_confirmed_at = NULL, totp_last_step = NULL
               WHERE username = ?1 COLLATE NOCASE",
@@ -629,7 +630,7 @@ impl Db {
 
         let codes = crate::totp::mint_recovery_codes();
         {
-            let mut conn = self.conn.lock().unwrap();
+            let mut conn = self.conn.lock_recover();
             let tx = conn
                 .transaction()
                 .map_err(|e| format!("could not confirm the enrolment: {e}"))?;
@@ -710,7 +711,7 @@ impl Db {
         // The guard, and the reason this is an UPDATE with a WHERE rather than a read followed by a
         // write: two requests presenting the same code at the same instant must not both win, and
         // only one of them can change a row from "last step < this" to "last step = this".
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let accepted = conn.execute(
             "UPDATE users SET totp_last_step = ?2
               WHERE username = ?1 COLLATE NOCASE
@@ -726,7 +727,7 @@ impl Db {
 
     /// Turns the second factor off, discarding the secret and every recovery code.
     pub fn disable_totp(&self, username: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "UPDATE users
@@ -771,7 +772,7 @@ impl Db {
     /// Replaces the recovery codes with a fresh set, returning them to show once.
     pub fn regenerate_recovery_codes(&self, username: &str) -> Result<Vec<String>, String> {
         let codes = crate::totp::mint_recovery_codes();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn
             .transaction()
             .map_err(|e| format!("could not issue recovery codes: {e}"))?;
@@ -812,7 +813,7 @@ impl Db {
         if presented.trim().is_empty() {
             return Ok(false);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let spent = conn.execute(
             "UPDATE totp_recovery_codes SET used_at = ?3
               WHERE user_id = (SELECT id FROM users WHERE username = ?1 COLLATE NOCASE)
@@ -823,7 +824,7 @@ impl Db {
     }
 
     fn totp_secret_column(&self, username: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let sealed: Option<Option<String>> = conn
             .query_row(
                 "SELECT totp_secret_enc FROM users WHERE username = ?1 COLLATE NOCASE",
@@ -883,7 +884,7 @@ impl Db {
                 Err("That identity is already linked to another account".into())
             };
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let user_id: String = conn
             .query_row(
                 "SELECT id FROM users WHERE username = ?1 COLLATE NOCASE",
@@ -927,7 +928,7 @@ impl Db {
                     .into(),
             );
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn
             .execute(
                 "DELETE FROM federated_identities
@@ -978,7 +979,7 @@ impl Db {
     /// Set on accounts created through SSO. It is what [`Self::unlink_federated_identity`] consults
     /// before removing the last way into an account.
     pub fn mark_passphrase_unusable(&self, username: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE users SET passphrase_is_usable = 0 WHERE username = ?1 COLLATE NOCASE",
             params![username.trim()],
@@ -1019,7 +1020,7 @@ impl Db {
     /// Credentials are excluded. A token hash is not useful to its owner and a passphrase hash is
     /// not theirs to have; what is here is the data, not the keys to it.
     pub fn export_account_data(&self, username: &str) -> Result<serde_json::Value> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut export = serde_json::Map::new();
 
         let mut dump = |label: &str, sql: &str| -> Result<()> {
@@ -1130,7 +1131,7 @@ impl Db {
     /// than a gap in the record. Callers therefore do not have to decide what to do when auditing
     /// fails, which means they will not decide wrongly.
     pub fn record_event(&self, event: crate::audit::Event, record: crate::audit::Record) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let result = conn.execute(
             "INSERT INTO security_events (at, user_id, kind, client_ip, device_label, detail)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1205,7 +1206,7 @@ impl Db {
             .filter(|d| *d > 0)
             .unwrap_or(180);
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(days)).to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute("DELETE FROM security_events WHERE at < ?1", params![cutoff])
     }
 
@@ -1224,7 +1225,7 @@ impl Db {
     /// Returns how many were revoked.
     pub fn revoke_all_tokens(&self, username: &str, except: Option<&str>) -> Result<usize> {
         let spare = except.unwrap_or_default();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM app_passwords
               WHERE user_id = (SELECT id FROM users WHERE username = ?1 COLLATE NOCASE)
@@ -1242,7 +1243,7 @@ impl Db {
     pub fn sweep_expired_tokens(&self) -> Result<usize> {
         let now = chrono::Utc::now();
         let idle_days = token_idle_days();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
 
         let mut removed = conn.execute(
             "DELETE FROM app_passwords WHERE expires_at IS NOT NULL AND expires_at < ?1",
@@ -1275,7 +1276,7 @@ impl Db {
         if !stale {
             return;
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let _ = conn.execute(
             "UPDATE app_passwords SET last_used_at = ?1 WHERE token_hash = ?2",
             params![now.to_rfc3339(), token_hash],
@@ -1283,7 +1284,7 @@ impl Db {
     }
 
     pub fn set_account_state(&self, username: &str, state: AccountState) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET state = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![state.as_str(), username.trim()],
@@ -1292,7 +1293,7 @@ impl Db {
     }
 
     pub fn set_account_quota(&self, username: &str, quota_bytes: i64) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET quota_bytes = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![quota_bytes.max(0), username.trim()],
@@ -1301,7 +1302,7 @@ impl Db {
     }
 
     pub fn set_can_archive(&self, username: &str, can_archive: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET can_archive = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![if can_archive { 1 } else { 0 }, username.trim()],
@@ -1315,7 +1316,7 @@ impl Db {
     /// collection is a bigger decision than showing a now-playing line, and bundling it into the
     /// same call is how it ends up being turned on by a client that meant to set something else.
     pub fn set_share_library(&self, username: &str, share: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET share_library = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![share as i64, username.trim()],
@@ -1329,7 +1330,7 @@ impl Db {
     /// disclosure than a now-playing line, and it should never be switched on as a side effect of
     /// a client sending a whole visibility struct back with one field changed.
     pub fn set_show_activity(&self, username: &str, show: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET show_activity = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![show as i64, username.trim()],
@@ -1344,7 +1345,7 @@ impl Db {
     /// the two together would mean leaving incognito had to restore the other switches from
     /// somewhere, which is how a privacy setting silently comes back on.
     pub fn set_incognito(&self, username: &str, incognito: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET incognito = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![incognito as i64, username.trim()],
@@ -1358,7 +1359,7 @@ impl Db {
     /// client resending the whole visibility struct with one field changed must not silently
     /// re-enable a contribution decision it never touched.
     pub fn set_popular_opt_in(&self, username: &str, opt_in: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET popular_opt_in = ?1 WHERE username = ?2 COLLATE NOCASE",
             params![opt_in as i64, username.trim()],
@@ -1372,7 +1373,7 @@ impl Db {
         show_now_playing: bool,
         show_stats: bool,
     ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let changed = conn.execute(
             "UPDATE users SET show_now_playing = ?1, show_stats = ?2
               WHERE username = ?3 COLLATE NOCASE",
@@ -1460,7 +1461,7 @@ mod tests {
         .unwrap();
         db.enrol_vault_key("alpha", "s4lt", "sealed-key").unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let (hash, salt, wrapped, api_key): (String, String, String, String) = conn
             .query_row(
                 "SELECT passphrase_hash, vault_salt, vault_key_wrapped, api_key FROM users",
@@ -1532,7 +1533,7 @@ mod tests {
         // The name its owner gave it travels with the token, so registration need not invent one.
         assert_eq!(label, "phone");
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let stored: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM app_passwords WHERE token_hash = ?1 OR token = ?1",
@@ -1579,7 +1580,7 @@ mod tests {
     fn legacy_plaintext_passphrases_are_hashed_on_startup() {
         let db = db();
         {
-            let conn = db.conn.lock().unwrap();
+            let conn = db.conn.lock_recover();
             conn.execute(
                 "INSERT INTO users (id, username, api_key, created_at, passphrase_hash, role, state, quota_bytes)
                  VALUES ('legacy-id', 'legacy', 'old-passphrase', '2020-01-01T00:00:00Z', '', 'admin', 'active', 0)",

@@ -5,6 +5,7 @@
 //! is the label: when, from which device, how big, and how many records of each kind. That is what
 //! the dashboard lists, and it says nothing about what any record is.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -91,7 +92,7 @@ impl Db {
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let includes_accounts = label.sections.iter().any(|s| s.name == "ACCOUNTS");
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO vault_backups (id, user_id, created_at, device_id, device_name, app_version,
@@ -154,7 +155,7 @@ impl Db {
 
     /// `false` when there was no such backup of this account's — the same answer for "not yours".
     pub fn delete_vault_backup(&self, username: &str, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM vault_backups WHERE id = ?1 AND user_id = ?2",
             params![id, username],
