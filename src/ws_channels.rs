@@ -7,6 +7,7 @@
 //! few hundred people were online. Routing by account keeps the work proportional to the people a
 //! message is actually for.
 
+use crate::lock::LockExt;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -177,13 +178,13 @@ impl Channels {
         }
         let now = Instant::now();
         let mut found = {
-            let mut global = self.global_replay.lock().unwrap();
+            let mut global = self.global_replay.lock_recover();
             global.expire(now);
             global.after(after_seq, &wanted)?
         };
         if let Some(user) = username.map(key) {
             // No entry means nothing was ever sent to this account, so there is nothing to miss.
-            if let Some(replay) = self.user_replay.lock().unwrap().get_mut(&user) {
+            if let Some(replay) = self.user_replay.lock_recover().get_mut(&user) {
                 replay.expire(now);
                 found.extend(replay.after(after_seq, &wanted)?);
             }
@@ -195,8 +196,8 @@ impl Channels {
     /// Drops expired messages and the channels no socket is listening to any more.
     pub(crate) fn sweep(&self) {
         let now = Instant::now();
-        self.global_replay.lock().unwrap().expire(now);
-        for replay in self.user_replay.lock().unwrap().values_mut() {
+        self.global_replay.lock_recover().expire(now);
+        for replay in self.user_replay.lock_recover().values_mut() {
             replay.expire(now);
         }
         self.users
