@@ -48,6 +48,7 @@ mod library;
 mod listen;
 mod listen_playlist;
 mod listen_retired;
+mod lock;
 mod login;
 mod norm;
 mod offers;
