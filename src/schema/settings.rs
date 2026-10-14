@@ -153,7 +153,9 @@ impl SettingsMutation {
             },
         )?;
 
-        let settings = db.get_synced_settings(&input.user_id)?.unwrap();
+        let settings = db
+            .get_synced_settings(&input.user_id)?
+            .ok_or_else(|| async_graphql::Error::new("settings missing right after being saved"))?;
         let payload = SyncedSettingsPayload {
             user_id: input.user_id.clone(),
             settings_blob: settings.settings_blob,
