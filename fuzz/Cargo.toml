@@ -1,0 +1,32 @@
+[package]
+name = "agro-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+regex = "1.11"
+unicode-normalization = "0.1"
+argon2 = "0.5"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+
+# Kept out of the server's build: the fuzzer needs nightly, the server does not.
+[workspace]
+
+[[bin]]
+name = "normalise"
+path = "fuzz_targets/normalise.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "credentials"
+path = "fuzz_targets/credentials.rs"
+test = false
+doc = false
