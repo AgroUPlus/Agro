@@ -13,130 +13,10 @@
 //! Reading is self-only. An inbox is nobody else's business, including the sender's — `sentDrops`
 //! shows what you sent, never whether it was read.
 
-use async_graphql::{Context, InputObject, Object, SimpleObject};
-
 use crate::db::Db;
-use crate::db_drops::{DeviceCiphertext, Drop, NewDrop};
+use crate::db_drops::NewDrop;
 use crate::schema::{bounded, caller, forbidden, normalise_username};
-
-/// The longest note that may ride along with a drop.
-///
-/// A comment, not an essay. Long enough for the reason you sent it, short enough that an inbox row
-/// stays a row.
-const MAX_NOTE_LEN: usize = 500;
-const MAX_CIPHERTEXT_LEN: usize = 4096;
-
-/// How many devices one note may be sealed to.
-///
-/// A sender seals once per key in the recipient's registry plus once to its own, so this is a
-/// bound on somebody's device count, not on anything they type. Well clear of a person with a
-/// phone, a tablet and a desktop, and low enough that a client claiming a thousand devices cannot
-/// turn one drop into a megabyte of rows.
-const MAX_SEALED_COPIES: usize = 16;
-
-/// The longest any piece of track description may be. Titles are attacker-controlled here in a way
-/// they are not elsewhere: this is text one account writes into another account's inbox.
-const MAX_FIELD_LEN: usize = 512;
-const MAX_URL_LEN: usize = 2048;
-
-/// Most drops one account may send another inside [`RATE_WINDOW_SECS`].
-///
-/// Generous for anybody using the feature as intended — handing over an album a track at a time is
-/// still comfortably inside it — and low enough that an inbox cannot be buried. The limit is per
-/// *pair*, not per sender, so one tiresome friend cannot exhaust the quota you have for everyone
-/// else, and blocking remains the answer to somebody who keeps hitting it.
-const MAX_DROPS_PER_WINDOW: i64 = 20;
-const RATE_WINDOW_SECS: i64 = 3600;
-
-/// How many drops may be asked for at once.
-const MAX_PAGE: i64 = 100;
-
-/// Long enough for a flag, a family or a skin-tone modifier — all of which are several code
-/// points — and far too short to be a message.
-const MAX_REACTION_CHARS: usize = 8;
-
-/// One sealed copy of a note, as the client sends and reads it.
-#[derive(SimpleObject, InputObject, Clone)]
-#[graphql(input_name = "DeviceCiphertextInput")]
-pub struct DeviceCiphertextPayload {
-    pub device_id: String,
-    pub ciphertext: String,
-}
-
-#[derive(SimpleObject, Clone)]
-pub struct DropPayload {
-    pub id: String,
-    pub from_user: String,
-    pub to_user: String,
-    pub track_title: String,
-    pub artist_name: String,
-    pub album_name: Option<String>,
-    pub artwork_url: Option<String>,
-    /// Present when the sender's copy is in this server's index, so a client can offer to fetch the
-    /// file rather than only naming it.
-    pub content_hash: Option<String>,
-    pub track_uri: Option<String>,
-    pub note: Option<String>,
-    /// The recipient's sealed copy, duplicated out of `noteCiphertexts`.
-    ///
-    /// Kept for clients that predate the per-device list. A client that understands
-    /// `noteCiphertexts` should read that instead — this field cannot carry the sender's own copy.
-    pub note_ciphertext: Option<String>,
-    /// Every sealed copy of the note, by device — the recipient's devices and the sender's own.
-    pub note_ciphertexts: Vec<DeviceCiphertextPayload>,
-    pub is_encrypted: bool,
-    pub created_at: String,
-    /// Null while unread. Only ever populated on the recipient's own view; see `sentDrops`.
-    pub read_at: Option<String>,
-    pub archived: bool,
-    /// The recipient's one-emoji reply, or null if they have not reacted.
-    ///
-    /// Unlike `read_at`, this *is* shown to the sender. A read receipt is something the server
-    /// observed about the recipient; a reaction is something they chose to send back.
-    pub reaction: Option<String>,
-}
-
-/// A drop as the *recipient* sees it — everything, including whether they have read it.
-fn to_payload(drop: Drop) -> DropPayload {
-    DropPayload {
-        id: drop.id,
-        from_user: drop.from_user,
-        to_user: drop.to_user,
-        track_title: drop.track_title,
-        artist_name: drop.artist_name,
-        album_name: drop.album_name,
-        artwork_url: drop.artwork_url,
-        content_hash: drop.content_hash,
-        track_uri: drop.track_uri,
-        note: drop.note,
-        note_ciphertext: drop.note_ciphertext,
-        note_ciphertexts: drop
-            .note_ciphertexts
-            .into_iter()
-            .map(|copy| DeviceCiphertextPayload {
-                device_id: copy.device_id,
-                ciphertext: copy.ciphertext,
-            })
-            .collect(),
-        is_encrypted: drop.is_encrypted,
-        created_at: drop.created_at,
-        read_at: drop.read_at,
-        archived: drop.archived,
-        reaction: drop.reaction,
-    }
-}
-
-/// A drop as the *sender* sees it.
-///
-/// Identical but for `read_at`, which is blanked. Whether somebody has opened what you sent them is
-/// information about them, not about you — read receipts are a surveillance feature, and one that
-/// nobody consented to by accepting a friend request.
-fn to_sender_payload(drop: Drop) -> DropPayload {
-    DropPayload {
-        read_at: None,
-        ..to_payload(drop)
-    }
-}
+use async_graphql::{Context, Object};
 
 #[derive(Default)]
 pub struct DropsQuery;
@@ -371,68 +251,31 @@ impl DropsMutation {
     }
 }
 
-/// Clamps a page request. A page size is a hint from a caller, not an instruction.
-fn page(limit: Option<i64>, offset: Option<i64>) -> (i64, i64) {
-    (
-        limit.unwrap_or(50).clamp(1, MAX_PAGE),
-        offset.unwrap_or(0).max(0),
-    )
-}
+mod helpers;
 
-/// [`bounded`], but for a field that may legitimately be absent. An empty string is treated as
-/// absent rather than stored, so a client that sends `""` for "no album" does not produce a row
-/// that renders as a blank album name.
-/// Bounds and normalises the per-device sealed copies a sender supplied.
-///
-/// Each entry is checked exactly as the single `noteCiphertext` is, and the *list* is bounded
-/// separately — one argument that can repeat is one argument that can be repeated too often.
-/// Duplicate device ids collapse to the last one given, because the storage key is
-/// `(drop_id, device_id)` and a client that sent two copies for one device has already decided
-/// which it meant last.
-fn sealed_copies(
-    raw: Option<Vec<DeviceCiphertextPayload>>,
-) -> async_graphql::Result<Vec<crate::db_drops::DeviceCiphertext>> {
-    let Some(raw) = raw else {
-        return Ok(Vec::new());
-    };
-    if raw.len() > MAX_SEALED_COPIES {
-        return Err(format!("A note may be sealed to at most {MAX_SEALED_COPIES} devices").into());
-    }
+mod payloads;
 
-    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut order: Vec<String> = Vec::new();
-    for copy in raw {
-        let device_id = bounded(&copy.device_id, MAX_FIELD_LEN, "deviceId")?;
-        if device_id.is_empty() {
-            return Err("A sealed copy needs a device id".into());
-        }
-        let ciphertext = bounded(&copy.ciphertext, MAX_CIPHERTEXT_LEN, "ciphertext")?;
-        if ciphertext.is_empty() {
-            return Err("A sealed copy needs a ciphertext".into());
-        }
-        if seen.insert(device_id.clone(), ciphertext).is_none() {
-            order.push(device_id);
-        }
-    }
+use helpers::optional;
 
-    Ok(order
-        .into_iter()
-        .map(|device_id| {
-            let ciphertext = seen[&device_id].clone();
-            DeviceCiphertext {
-                device_id,
-                ciphertext,
-            }
-        })
-        .collect())
-}
+use helpers::page;
 
-fn optional(raw: Option<&str>, max: usize, field: &str) -> async_graphql::Result<Option<String>> {
-    match raw {
-        None => Ok(None),
-        Some(value) => {
-            let clean = bounded(value, max, field)?;
-            Ok(if clean.is_empty() { None } else { Some(clean) })
-        }
-    }
-}
+use helpers::sealed_copies;
+
+use payloads::to_payload;
+
+use payloads::to_sender_payload;
+
+pub use payloads::DeviceCiphertextPayload;
+
+pub use payloads::DropPayload;
+
+mod limits;
+use limits::MAX_CIPHERTEXT_LEN;
+use limits::MAX_DROPS_PER_WINDOW;
+use limits::MAX_FIELD_LEN;
+use limits::MAX_NOTE_LEN;
+use limits::MAX_PAGE;
+use limits::MAX_REACTION_CHARS;
+use limits::MAX_SEALED_COPIES;
+use limits::MAX_URL_LEN;
+use limits::RATE_WINDOW_SECS;
