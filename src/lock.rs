@@ -5,7 +5,7 @@
 //! SQLite connection (a dropped transaction rolls back), counters and short-lived session maps, so
 //! recovering the guard is safe and keeps the daemon serving.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub(crate) trait LockExt<T> {
     fn lock_recover(&self) -> MutexGuard<'_, T>;
@@ -14,6 +14,21 @@ pub(crate) trait LockExt<T> {
 impl<T> LockExt<T> for Mutex<T> {
     fn lock_recover(&self) -> MutexGuard<'_, T> {
         self.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+pub(crate) trait RwLockExt<T> {
+    fn read_recover(&self) -> RwLockReadGuard<'_, T>;
+    fn write_recover(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    fn read_recover(&self) -> RwLockReadGuard<'_, T> {
+        self.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write_recover(&self) -> RwLockWriteGuard<'_, T> {
+        self.write().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
