@@ -1287,14 +1287,6 @@ type Mutation {
 	"""
 	setJamVisibility(visibility: String!): JamPayload!
 	"""
-	Votes to skip whatever is playing.
-	
-	One vote per person per track, and the votes die with the track — a skip is about *this*
-	song, not a standing objection. Once more than half the room has asked, the track is retired
-	immediately rather than at the end of its duration, and the clock takes the next one.
-	"""
-	voteSkipJamTrack: JamPayload!
-	"""
 	Leaves the jam, and deletes it once nobody is left.
 	
 	The creator leaving ends it for everyone — a room with no one to govern it cannot change
@@ -1302,6 +1294,18 @@ type Mutation {
 	dead one means every client has to keep deciding whether it still counts.
 	"""
 	leaveJam: Boolean!
+	"""
+	Switches between `open` and `democracy`. Host only — it is the rule everyone else plays by.
+	"""
+	setJamMode(mode: String!): JamPayload!
+	"""
+	Votes to skip whatever is playing.
+	
+	One vote per person per track, and the votes die with the track — a skip is about *this*
+	song, not a standing objection. Once more than half the room has asked, the track is retired
+	immediately rather than at the end of its duration, and the clock takes the next one.
+	"""
+	voteSkipJamTrack: JamPayload!
 	"""
 	Suggests a track.
 	
@@ -1329,10 +1333,6 @@ type Mutation {
 	Removes a track. Your own, or anyone's if you are the host.
 	"""
 	removeJamTrack(trackId: String!): JamPayload!
-	"""
-	Switches between `open` and `democracy`. Host only — it is the rule everyone else plays by.
-	"""
-	setJamMode(mode: String!): JamPayload!
 	"""
 	Forgets one of your recaps. `false` when there was no such recap of yours.
 	
