@@ -11,6 +11,7 @@
 
 use crate::lock::LockExt;
 use axum::body::Bytes;
+use axum::http::HeaderValue;
 use axum::{
     body::Body,
     extract::{Path as AxumPath, State},
@@ -523,10 +524,10 @@ pub async fn receive_relay(
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(
             header::CONTENT_TYPE,
-            "application/octet-stream".parse().unwrap(),
+            HeaderValue::from_static("application/octet-stream"),
         );
         if *session.is_encrypted.lock_recover() {
-            headers.insert("x-agro-encrypted", "true".parse().unwrap());
+            headers.insert("x-agro-encrypted", HeaderValue::from_static("true"));
         }
         if let Some(nonce) = session.nonce.lock_recover().clone() {
             if let Ok(value) = nonce.parse() {
@@ -595,16 +596,17 @@ pub async fn receive_relay(
     let mut response_headers = axum::http::HeaderMap::new();
     response_headers.insert(
         header::CONTENT_TYPE,
-        "application/octet-stream".parse().unwrap(),
+        HeaderValue::from_static("application/octet-stream"),
     );
-    response_headers.insert(
-        header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{}.bin\"", session.content_hash)
-            .parse()
-            .unwrap(),
-    );
+    // The filename is cosmetic: a hash that is not a valid header value just means no suggestion.
+    if let Ok(disposition) = HeaderValue::from_str(&format!(
+        "attachment; filename=\"{}.bin\"",
+        session.content_hash
+    )) {
+        response_headers.insert(header::CONTENT_DISPOSITION, disposition);
+    }
     if is_encrypted {
-        response_headers.insert("x-agro-encrypted", "true".parse().unwrap());
+        response_headers.insert("x-agro-encrypted", HeaderValue::from_static("true"));
     }
     if let Some(n) = nonce {
         if let Ok(v) = n.parse() {
