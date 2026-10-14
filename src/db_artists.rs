@@ -121,8 +121,7 @@ impl Db {
 
     pub fn artist_by_id(&self, artist_id: &str) -> Result<Option<Artist>> {
         self.conn
-            .lock()
-            .unwrap()
+            .lock_recover()
             .query_row(
                 "SELECT artist_id, norm_name, display_name, external_id
                    FROM artists WHERE artist_id = ?1",
@@ -201,8 +200,7 @@ impl Db {
         }
         let found: Option<i64> = self
             .conn
-            .lock()
-            .unwrap()
+            .lock_recover()
             .query_row(
                 "SELECT 1 FROM artist_subscriptions s
                    JOIN artists a ON a.artist_id = s.artist_id

@@ -266,8 +266,7 @@ impl Db {
         // earlier client supplied and this one left null.
         let artist: Option<String> = self
             .conn
-            .lock()
-            .unwrap()
+            .lock_recover()
             .query_row(
                 "SELECT artist FROM catalog_recordings WHERE recording_id = ?1",
                 params![recording_id],
