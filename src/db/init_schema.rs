@@ -3,13 +3,14 @@
 //! Every database runs this first and then the whole of [`super::migrations`], so nothing may be
 //! declared here that a migration also adds.
 
+use crate::lock::LockExt;
 use rusqlite::Result;
 
 use super::Db;
 
 impl Db {
     pub(super) fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS users (

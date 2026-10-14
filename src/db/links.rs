@@ -1,5 +1,6 @@
 //! Short links, and the one listing that shows them beside ephemeral shares.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use super::{rfc3339_to_unix, unix_now, Db};
@@ -44,7 +45,7 @@ impl Db {
         source: Option<&str>,
         expires_at: Option<i64>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR REPLACE INTO short_links (id, target_url, user_id, created_at, source, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -75,7 +76,7 @@ impl Db {
 
     /// Bumps a short link's hit counter. Aggregate only — see migration 6.
     pub fn record_short_link_click(&self, id: &str) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         // A counter is never worth failing a redirect over: the visitor gets their page either way.
         let _ = conn.execute(
             "UPDATE short_links SET click_count = click_count + 1, last_clicked_at = ?2
@@ -90,7 +91,7 @@ impl Db {
     /// expiry, the other a forwarding target with a Unix one — so they are normalised here rather
     /// than in the resolver, which should not have to know that "a link" is two different things.
     pub fn list_links(&self, user_id: &str) -> Result<Vec<LinkRow>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut links = Vec::new();
 
         let mut stmt = conn.prepare(
@@ -146,7 +147,7 @@ impl Db {
     /// Scoped by `user_id` in the statement itself rather than checked first: a link belonging to
     /// somebody else must not be deletable, and a check-then-delete leaves a window where it is.
     pub fn delete_link(&self, user_id: &str, id: &str, kind: LinkKind) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         match kind {
             LinkKind::Short => {
                 let source: Option<String> = conn

@@ -1,5 +1,6 @@
 //! Ephemeral shares: a hosted audio page that expires.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::{unix_now, Db};
@@ -14,7 +15,7 @@ impl Db {
         audio_url: &str,
         ttl_hours: i64,
     ) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let token = uuid::Uuid::new_v4().to_string();
         let expires_at = (chrono::Utc::now() + chrono::Duration::hours(ttl_hours)).to_rfc3339();
         conn.execute(
@@ -45,7 +46,7 @@ impl Db {
 
     /// Bumps an ephemeral share's hit counter. Aggregate only — see migration 6.
     pub fn record_share_click(&self, token: &str) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let _ = conn.execute(
             "UPDATE ephemeral_shares SET click_count = click_count + 1, last_clicked_at = ?2
              WHERE token = ?1",

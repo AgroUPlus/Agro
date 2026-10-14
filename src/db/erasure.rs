@@ -8,6 +8,7 @@
 //! All of it runs in one transaction: a deletion that fails halfway must not leave an account
 //! half-erased, and one commit is also the cheap way to do a few dozen writes in SQLite.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result, Transaction};
 
 use super::Db;
@@ -40,7 +41,7 @@ impl Db {
     /// not. Deliberately thorough: leaving a user's nodes, session and settings behind would let a
     /// recreated account inherit them, and leaving their name behind would remember them anyway.
     pub fn delete_user(&self, username: &str) -> Result<bool> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let user_id: Option<String> = tx
             .query_row(

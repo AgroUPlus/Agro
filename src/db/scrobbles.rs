@@ -1,5 +1,6 @@
 //! Plays, as reported by the clients and stored for stats.
 
+use crate::lock::LockExt;
 use chrono::DurationRound;
 use rusqlite::{params, Result};
 
@@ -40,7 +41,7 @@ impl Db {
         client_type: Option<&str>,
         entries: &[ScrobbleEntry],
     ) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let mut inserted = 0;
         {
@@ -132,7 +133,7 @@ impl Db {
         year: Option<i32>,
         before: Option<&str>,
     ) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let count = match (year, before) {
             (Some(y), _) => {
                 let start = format!("{y:04}-01-01T00:00:00+00:00");

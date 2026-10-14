@@ -1,13 +1,14 @@
 //! Accounts at the level of the original `users` table: creating, finding and listing them.
 //! Removing one is `erasure`; roles, quotas and state live in `db_identity`.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::Db;
 
 impl Db {
     pub fn create_user(&self, username: &str, api_key: &str) -> Result<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let user_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(

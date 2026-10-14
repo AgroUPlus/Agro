@@ -1,5 +1,6 @@
 //! Registered devices: the fleet an account can hand playback between.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::Db;
@@ -14,7 +15,7 @@ impl Db {
         version: Option<&str>,
         current_track: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let now = chrono::Utc::now().to_rfc3339();
         // The name is decided in SQL rather than by reading the row first, so a heartbeat that
         // arrives while the user is renaming the device cannot write back the name it read. The
@@ -72,7 +73,7 @@ impl Db {
     /// picks it — so being stuck with an auto-generated one until the client happens to send a new
     /// name is a poor place to leave someone.
     pub fn rename_node(&self, user_id: &str, device_id: &str, petname: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let old_petname: Option<String> = conn
             .query_row(
                 "SELECT petname FROM registered_nodes WHERE user_id = ?1 COLLATE NOCASE AND device_id = ?2",
@@ -126,7 +127,7 @@ impl Db {
     }
 
     pub fn delete_node(&self, user_id: &str, device_id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let affected = conn.execute(
             "DELETE FROM registered_nodes WHERE user_id = ?1 AND device_id = ?2",
             params![user_id, device_id],

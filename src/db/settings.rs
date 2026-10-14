@@ -1,5 +1,6 @@
 //! Settings an account syncs across its devices, sealed where they say anything about the user.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::Db;
@@ -14,7 +15,7 @@ impl Db {
         stream_format: Option<&str>,
         share: ShareSettingsInput<'_>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO synced_settings (user_id, settings_blob, has_server_url, lyrics_fetch_online, stream_format, share_domain, share_hosts, share_enabled, updated_at)

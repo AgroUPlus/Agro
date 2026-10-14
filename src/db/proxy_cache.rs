@@ -1,5 +1,6 @@
 //! The cache behind `/proxy`: upstream responses kept until their own expiry.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::Db;
@@ -25,7 +26,7 @@ impl Db {
         body: &[u8],
         expires_at: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR REPLACE INTO proxy_cache (url, headers, body, expires_at) VALUES (?1, ?2, ?3, ?4)",
             params![url, headers, body, expires_at],

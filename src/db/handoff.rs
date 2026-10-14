@@ -1,5 +1,6 @@
 //! The handoff: what each device is playing, so another one can pick it up.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Result};
 
 use super::Db;
@@ -26,7 +27,7 @@ impl Db {
         encrypted_payload: Option<&str>,
         presence_ciphertexts: Option<&[crate::db_presence::PresenceCiphertext]>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO handoff_state (user_id, track_uri, track_title, artist_name, album_name, artwork_url, position_ms, is_playing, device_id, updated_at, queue_json, queue_index, duration_ms, content_hash, encrypted_payload)

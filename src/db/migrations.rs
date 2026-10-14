@@ -5,6 +5,7 @@
 //! anywhere else. `tests::migration_order` pins every shipped entry by digest and fails on any other
 //! edit.
 
+use crate::lock::LockExt;
 use std::sync::LazyLock;
 
 use rusqlite::Result;
@@ -43,7 +44,7 @@ impl Db {
     pub(super) fn migrate(&self) -> Result<()> {
         self.migrate_handoff_queue();
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
         for (index, migration) in MIGRATIONS.iter().enumerate() {
@@ -68,7 +69,7 @@ impl Db {
     /// "already there", so the error is the expected outcome on every run after the first — which
     /// is exactly why nothing newer than this is done that way.
     fn migrate_handoff_queue(&self) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let _ = conn.execute("ALTER TABLE handoff_state ADD COLUMN queue_json TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE handoff_state ADD COLUMN queue_index INTEGER",

@@ -8,6 +8,7 @@
 //! exactly as before, so a read-then-write sequence is no less atomic than it was. Only methods
 //! made entirely of SELECTs read through here.
 
+use crate::lock::LockExt;
 use rusqlite::{Connection, OpenFlags, Result};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89,6 +90,6 @@ impl ReadPool {
             }
         }
         let turn = self.next.fetch_add(1, Ordering::Relaxed) % self.slots.len();
-        Some(self.slots[turn].lock().unwrap())
+        Some(self.slots[turn].lock_recover())
     }
 }

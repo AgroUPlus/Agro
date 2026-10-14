@@ -1,5 +1,6 @@
 //! Proving who a caller is: the passphrase, the account key, and per-device app passwords.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use super::Db;
@@ -19,7 +20,7 @@ impl Db {
     }
 
     pub fn validate_api_key(&self, api_key: &str) -> Result<Option<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare("SELECT id, username FROM users WHERE api_key = ?1")?;
         let mut rows = stmt.query(params![api_key])?;
         if let Some(row) = rows.next()? {
@@ -44,7 +45,7 @@ impl Db {
         if token.is_empty() {
             return Ok(None);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let account: Option<String> = conn
             .query_row(
                 "SELECT username FROM users WHERE api_key = ?1",
@@ -76,7 +77,7 @@ impl Db {
     }
 
     pub fn create_app_password(&self, username: &str, label: &str, token: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let user_id: String = conn.query_row(
             "SELECT id FROM users WHERE username = ?1",
             params![username],
@@ -113,7 +114,7 @@ impl Db {
     /// Scoped to the account in the same statement rather than checked beforehand: an id is just a
     /// number, and a caller who guesses someone else's must not have it deleted for them.
     pub fn revoke_app_password(&self, username: &str, id: i64) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let removed = conn.execute(
             "DELETE FROM app_passwords WHERE rowid = ?1 AND user_id = (
                  SELECT id FROM users WHERE username = ?2 COLLATE NOCASE

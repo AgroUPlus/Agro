@@ -1,12 +1,13 @@
 //! Which plugins the operator has switched on.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use super::Db;
 
 impl Db {
     pub fn set_plugin_enabled(&self, plugin_id: &str, is_enabled: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO plugins_state (id, is_enabled) VALUES (?1, ?2)
              ON CONFLICT(id) DO UPDATE SET is_enabled = excluded.is_enabled",
@@ -28,7 +29,7 @@ impl Db {
     }
 
     pub fn get_plugin_states(&self) -> Result<std::collections::HashMap<String, bool>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut stmt = conn.prepare("SELECT id, is_enabled FROM plugins_state")?;
         let mut rows = stmt.query([])?;
         let mut map = std::collections::HashMap::new();

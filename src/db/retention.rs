@@ -1,5 +1,6 @@
 //! The retention sweep, and how long each kind of row is allowed to live.
 
+use crate::lock::LockExt;
 use rusqlite::{params, Connection};
 
 use super::Db;
@@ -52,7 +53,7 @@ impl Db {
     /// with the result. Failures are logged, not propagated: a sweep that cannot run is not a
     /// reason to take the ticker down with it.
     pub fn sweep_retention(&self) {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let now = chrono::Utc::now();
         let now_rfc = now.to_rfc3339();
         let now_unix = now.timestamp();
