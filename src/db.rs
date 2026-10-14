@@ -3,6 +3,7 @@
 //! The methods are spread across `db/` by subject, and further across the `db_*` files beside this
 //! one, each with its own `impl Db` block. This file holds only the handle and how it is opened.
 
+use crate::lock::LockExt;
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -118,7 +119,7 @@ impl Db {
     pub(crate) fn read(&self) -> MutexGuard<'_, Connection> {
         match self.readers.get() {
             Some(reader) => reader,
-            None => self.conn.lock().unwrap(),
+            None => self.conn.lock_recover(),
         }
     }
 }
