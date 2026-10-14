@@ -131,8 +131,7 @@ impl RateLimiter {
     /// Clears the run of failures after a successful sign-in.
     pub fn note_success(&self, account: &str) {
         self.failures
-            .lock()
-            .unwrap()
+            .lock_recover()
             .remove(&account.to_ascii_lowercase());
     }
 
