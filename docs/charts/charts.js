@@ -1,6 +1,6 @@
 const DEFAULT_SERVER = 'https://agro.kolbxyz.xyz';
 const STORAGE_KEY = 'agro_charts_server';
-const TOP_N = 50;
+const TOP_N = 20;
 const SKELETON_ROWS = 12;
 // The server only knows whole UTC days, so "last day" is today plus yesterday: a single bucket
 // is empty just after midnight and rarely clears the exposure floor on a small fleet.

@@ -233,6 +233,7 @@ export default function AccountSettingsTab({ username, onUnauthorized }) {
   return (
     <div className="settings-page">
       <ProfileSection
+        username={username}
         profile={profile}
         onProfileChange={setProfile}
         visibility={visibility}

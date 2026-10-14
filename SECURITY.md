@@ -6,7 +6,7 @@ deliberately does not.
 
 ## Reporting a vulnerability
 
-Email **contact@kolbxyz.xyz** with `SECURITY` in the subject. Please include what you did, what
+Email **security@kolbxyz.xyz** with `SECURITY` in the subject. Please include what you did, what
 happened, and what you expected. There is no bounty; there is a fast reply and credit in the
 changelog if you want it.
 

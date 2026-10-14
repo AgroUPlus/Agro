@@ -22,24 +22,20 @@ export default function SyncedPreferencesSection({
     <form onSubmit={onSave} className="card">
       <div className="card-header">
         <div>
-          <div className="card-title">Cross-Device Synced Preferences</div>
-          <div className="card-subtitle">Synchronized across your Wander desktop and Wanda mobile apps</div>
+          <div className="card-title">Synced to your apps</div>
+          <div className="card-subtitle">Set once here, picked up by Wanda and Wander.</div>
         </div>
         <button type="submit" className="btn btn-primary">
           {saved ? <Check size={13} /> : <Save size={13} />}
-          <span>{saved ? 'Synced!' : 'Save & Sync'}</span>
+          <span>{saved ? 'Synced' : 'Save'}</span>
         </button>
       </div>
 
       <div className="sealed-note">
         <Lock size={13} />
         <div>
-          <strong>
-            Your music server address, username and lyrics endpoint are end-to-end encrypted
-            {synced.hasServerUrl ? ' and set' : ''}.
-          </strong>{' '}
-          They are sealed with a key this server does not have, so they can only be viewed or
-          changed from Wander or Wanda. Nothing here has been reset.
+          <strong>Music server, username and lyrics endpoint are sealed{synced.hasServerUrl ? ' and set' : ''}.</strong>{' '}
+          This server can't read them; change them in Wanda or Wander.
         </div>
       </div>
 

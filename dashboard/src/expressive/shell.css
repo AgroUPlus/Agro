@@ -1,0 +1,207 @@
+/* ── Expressive shell ──────────────────────────────────────────────────────────────────────────
+   Loaded after index.css and overrides its shell. Material 3 Expressive as the promo site and
+   Wanda do it: solid tonal surfaces with crisp 2px outlines (no frosted glass), large rounded
+   type, a leaf-shaped sidebar and spring motion. Colour comes from the stage behind, not glows. */
+
+:root {
+  --shell-gap: 14px;
+  --now-bar-height: 76px;
+  --leaf-lg: 28px 12px 28px 12px;
+  --leaf-md: 20px 8px 20px 8px;
+  --spring-soft: cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  grid-template-rows: 1fr;
+  grid-template-areas: "sidebar main";
+  gap: var(--shell-gap);
+  padding: var(--shell-gap) var(--shell-gap) 0;
+  background: transparent;
+}
+
+/* Positioned, so it paints above the fixed ambient stage that shares the shell's stacking context. */
+.sidebar {
+  position: relative;
+  z-index: 1;
+  margin-bottom: calc(var(--now-bar-height) + var(--shell-gap) * 2);
+  padding: 22px 14px 16px;
+  background: var(--md-sys-color-surface-container-low);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--leaf-lg);
+}
+
+.sidebar-brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.sidebar-brand img { transition: transform 0.45s var(--m3-spring-fast); }
+.sidebar-brand:hover img { transform: rotate(-10deg) scale(1.1); }
+
+.sidebar-nav { position: relative; gap: 4px; }
+
+.nav-item {
+  position: relative;
+  z-index: 1;
+  height: 44px;
+  padding: 0 16px;
+  border: none;
+  font-size: 14.5px;
+  font-weight: 600;
+  transition: color 0.25s ease, background-color 0.2s ease, transform 0.25s var(--m3-spring-fast);
+}
+
+.nav-item:hover { background: var(--md-sys-color-surface-container-high); transform: translateX(3px); }
+
+.nav-item.active,
+.nav-item.active:hover {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--md-sys-color-on-primary-container);
+  font-weight: 700;
+  transform: none;
+}
+
+.nav-item svg { transition: transform 0.4s var(--m3-spring-fast); }
+.nav-item.active svg { transform: scale(1.12); }
+
+/* One tonal pill for the whole list, sprung to the active row. */
+.nav-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-primary-container);
+  transform: translateY(calc(var(--nav-index) * 48px));
+  transition: transform 0.5s var(--spring-soft);
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--md-sys-color-lemon);
+  color: var(--md-sys-color-on-lemon);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+  animation: badge-pop 0.5s var(--m3-spring-fast);
+}
+
+@keyframes badge-pop { from { transform: scale(0); } }
+
+.sidebar-footer { border-top: 2px dashed var(--md-sys-color-outline-variant); padding-top: 14px; }
+
+.user-badge-btn {
+  background: var(--md-sys-color-surface-container);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  font-weight: 700;
+}
+
+.user-badge-btn:hover,
+.user-badge-btn.active { border-color: var(--md-sys-color-primary); box-shadow: none; }
+
+.user-dropdown-menu {
+  padding: 8px;
+  background: var(--md-sys-color-surface-container-high);
+  border: 2px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--leaf-lg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  animation: menu-rise 0.3s var(--m3-spring-fast);
+  transform-origin: bottom center;
+}
+
+@keyframes menu-rise { from { opacity: 0; transform: translateY(8px) scale(0.96); } }
+
+.user-dropdown-action { border-radius: var(--leaf-md); font-weight: 700; }
+
+/* ── Main area & page header ─────────────────────────────────────────────────────────────── */
+
+.main-area { background: transparent; }
+
+.page-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0 40px;
+  padding: 28px 0 26px;
+  border-bottom: 2px dashed var(--md-sys-color-outline-variant);
+}
+
+.page-header > * { animation: header-rise 0.6s var(--spring-soft) both; }
+.page-header > :nth-child(2) { animation-delay: 0.05s; }
+.page-header > :nth-child(3) { animation-delay: 0.1s; }
+
+@keyframes header-rise { from { opacity: 0; transform: translateY(14px); } }
+
+.page-greeting {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--md-sys-color-outline);
+}
+
+.page-title-row { display: flex; align-items: center; gap: 18px; margin-top: 10px; }
+
+.page-header .page-title {
+  font-size: clamp(2.3rem, 3.4vw, 3.2rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  padding-bottom: 2px;
+  /* The one colour effect on the title: white settling into the brand lavender. */
+  background: linear-gradient(100deg, #FFFFFF 0%, #F1EAFF 45%, var(--md-sys-color-primary) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.page-blurb {
+  margin-top: 12px;
+  max-width: 62ch;
+  font-size: 1.05rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.page-content {
+  padding: 28px 40px calc(var(--now-bar-height) + 56px);
+  gap: 18px;
+  animation: none;
+}
+
+/* Each card rises in turn, so a page assembles rather than appears. */
+.page-content > * { animation: card-rise 0.6s var(--spring-soft) both; }
+.page-content > :nth-child(2) { animation-delay: 0.05s; }
+.page-content > :nth-child(3) { animation-delay: 0.1s; }
+.page-content > :nth-child(4) { animation-delay: 0.15s; }
+.page-content > :nth-child(5) { animation-delay: 0.2s; }
+.page-content > :nth-child(n + 6) { animation-delay: 0.25s; }
+
+@keyframes card-rise { from { opacity: 0; transform: translateY(18px) scale(0.985); } }
+
+/* The two-factor suggestion sits between header and content, aligned with both. */
+.main-area > .nudge { margin: 22px 40px 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-header > *, .page-content > *, .nav-badge, .user-dropdown-menu { animation: none; }
+  .nav-indicator { transition: none; }
+}
+
+@media (max-width: 860px) {
+  :root { --shell-gap: 8px; }
+  .sidebar { padding: 16px 8px; }
+  .nav-item { padding: 0; }
+  .page-header { margin: 0 16px; padding-top: 20px; }
+  .page-content { padding-left: 16px; padding-right: 16px; }
+  .main-area > .nudge { margin: 16px 16px 0; flex-wrap: wrap; }
+  .main-area > .nudge .nudge-text { flex-basis: calc(100% - 80px); }
+  /* Tab bars scroll sideways rather than breaking onto a second row. */
+  .page-content .segmented { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .page-content .segmented-btn { flex-shrink: 0; }
+}

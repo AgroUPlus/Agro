@@ -14,8 +14,9 @@ use crate::db::Db;
 const CACHE_TTL_SECS: i64 = 24 * 60 * 60;
 
 /// Looks up cover art for a recording. Returns `None` on any failure or if nothing was found — a
-/// missing cover is never worth failing the whole chart over, and a miss is cached too, so a track
-/// with no iTunes match does not repeat the lookup on every request.
+/// missing cover is never worth failing the whole chart over. Only a genuine miss (iTunes answered
+/// and had no match) is cached; a throttled or failed lookup is logged and retried next request,
+/// because iTunes answers bursts with 403/429 and caching those would blank covers for a day.
 pub(crate) async fn find_cover(
     http_client: &reqwest::Client,
     db: &Db,
@@ -36,7 +37,13 @@ pub(crate) async fn find_cover(
         };
     }
 
-    let artwork = fetch_artwork(http_client, &url).await;
+    let artwork = match fetch_artwork(http_client, &url).await {
+        Ok(artwork) => artwork,
+        Err(err) => {
+            tracing::warn!("cover lookup for {query:?} failed, not caching: {err}");
+            return None;
+        }
+    };
     let expires_at = chrono::Utc::now().timestamp() + CACHE_TTL_SECS;
     let _ = db.set_cached_proxy(
         &url,
@@ -47,9 +54,28 @@ pub(crate) async fn find_cover(
     artwork
 }
 
-async fn fetch_artwork(http_client: &reqwest::Client, url: &str) -> Option<String> {
-    let body: serde_json::Value = http_client.get(url).send().await.ok()?.json().await.ok()?;
-    extract_artwork(&body)
+async fn fetch_artwork(http_client: &reqwest::Client, url: &str) -> Result<Option<String>, String> {
+    let response = http_client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let body = response.bytes().await.map_err(|e| e.to_string())?;
+    artwork_from_response(status, &body)
+}
+
+/// `Ok(None)` only when iTunes actually answered with no match; anything else is an error.
+fn artwork_from_response(
+    status: reqwest::StatusCode,
+    body: &[u8],
+) -> Result<Option<String>, String> {
+    if !status.is_success() {
+        return Err(format!("iTunes answered {status}"));
+    }
+    let body: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("unreadable iTunes body: {e}"))?;
+    Ok(extract_artwork(&body))
 }
 
 /// Pulled out of [`fetch_artwork`] so the JSON shape can be tested without a network call.
@@ -81,6 +107,25 @@ mod tests {
     #[test]
     fn no_results_means_no_cover() {
         assert_eq!(extract_artwork(&serde_json::json!({"results": []})), None);
+    }
+
+    #[test]
+    fn a_throttled_answer_is_an_error_not_a_miss() {
+        for status in [
+            reqwest::StatusCode::FORBIDDEN,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            assert!(artwork_from_response(status, b"").is_err());
+        }
+    }
+
+    #[test]
+    fn an_empty_result_set_is_a_genuine_miss() {
+        let body = br#"{"resultCount":0,"results":[]}"#;
+        assert_eq!(
+            artwork_from_response(reqwest::StatusCode::OK, body),
+            Ok(None)
+        );
     }
 
     #[tokio::test]

@@ -1,0 +1,137 @@
+/* ── Ambient stage ────────────────────────────────────────────────────────────────────────────
+   A slow aurora behind every screen, in the site's three accents (violet, mint, lemon), kept low
+   so it tints rather than glows, under a faint dot grid. Fixed and pointer-transparent: scenery. */
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--md-sys-color-background);
+}
+
+.ambient-blob {
+  position: absolute;
+  width: 62vmax;
+  height: 62vmax;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.2;
+  will-change: transform;
+}
+
+.ambient-blob.violet {
+  top: -28vmax;
+  left: -14vmax;
+  background: radial-gradient(circle, #7C5CE0 0%, rgba(124, 92, 224, 0) 68%);
+  animation: ambient-drift-a 38s ease-in-out infinite alternate;
+}
+
+.ambient-blob.mint {
+  bottom: -34vmax;
+  right: -18vmax;
+  background: radial-gradient(circle, #3FB58F 0%, rgba(63, 181, 143, 0) 66%);
+  opacity: 0.12;
+  animation: ambient-drift-b 46s ease-in-out infinite alternate;
+}
+
+.ambient-blob.lemon {
+  top: 30%;
+  left: 46%;
+  width: 34vmax;
+  height: 34vmax;
+  background: radial-gradient(circle, #E6C95A 0%, rgba(230, 201, 90, 0) 66%);
+  opacity: 0.06;
+  animation: ambient-drift-c 54s ease-in-out infinite alternate;
+}
+
+/* The now-playing cover, washed across the top of the stage while something plays. */
+.ambient-art {
+  position: absolute;
+  inset: -20% -10% auto;
+  height: 70%;
+  background-image: var(--ambient-art);
+  background-size: cover;
+  background-position: center;
+  filter: blur(120px) saturate(1.4);
+  opacity: 0;
+  transform: scale(1.1);
+  transition: opacity 1.6s ease;
+}
+
+.ambient-art.on { opacity: 0.12; }
+
+/* A dot grid, as on kolbxyz.xyz: structure for the eye without another surface. */
+.ambient-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(229, 225, 233, 0.07) 1px, transparent 1.5px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 85%);
+  mask-image: radial-gradient(120% 100% at 50% 0%, #000 30%, transparent 85%);
+}
+
+/* A vignette, so the edges recede and the content sits forward. */
+.ambient::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(4, 4, 6, 0.7) 100%);
+}
+
+@keyframes ambient-drift-a {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(14vmax, 8vmax, 0) scale(1.12); }
+  100% { transform: translate3d(28vmax, -2vmax, 0) scale(0.96); }
+}
+
+@keyframes ambient-drift-b {
+  0% { transform: translate3d(0, 0, 0) scale(1.05); }
+  100% { transform: translate3d(-24vmax, -12vmax, 0) scale(0.9); }
+}
+
+@keyframes ambient-drift-c {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-30vmax, 18vmax, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-blob { animation: none; }
+}
+
+/* ── Cursor (see expressive/cursor.js) ───────────────────────────────────────────────────── */
+
+.has-custom-cursor, .has-custom-cursor * { cursor: none !important; }
+.has-custom-cursor :is(input, textarea, select, [contenteditable="true"]) { cursor: text !important; }
+.has-custom-cursor select { cursor: pointer !important; }
+
+.cursor-ring, .cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.cursor-ring {
+  border: 2px solid var(--md-sys-color-primary);
+  background: rgba(208, 188, 255, 0.08);
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+
+.cursor-ring.on-target { border-color: transparent; background: rgba(255, 255, 255, 0.12); }
+.cursor-ring.on-target.pressed { background: rgba(255, 255, 255, 0.24); }
+.cursor-ring.away, .cursor-ring.typing { opacity: 0; }
+
+.cursor-dot {
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary);
+  transition: opacity 0.15s ease;
+}
+
+.cursor-dot.hidden, .cursor-dot.typing { opacity: 0; }

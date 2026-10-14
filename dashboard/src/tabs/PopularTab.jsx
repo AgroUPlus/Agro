@@ -1,38 +1,34 @@
 import { useCallback, useEffect, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
-import { gql } from '../api.js';
+import { PopularPodium, PopularRow } from './popular/PopularRows.jsx';
 
 /**
- * What the fleet has been playing, blinded — see `submitPlayCounts`/`popularTracks` on the
- * server. Nothing here is tied to an account: rows below the exposure floor are simply absent,
- * and an admin-disabled chart comes back as an empty list rather than an error, so this component
- * never has to know *why* it has nothing to show.
+ * What the fleet has been playing, blinded: the same chart the promo site's Charts page shows,
+ * read from the same public endpoint so the two can never disagree, covers and rank movement
+ * included. Nothing in it is tied to an account, and rows below the exposure floor are simply
+ * absent — see `/api/v1/popular` on the server.
  */
-const POPULAR_TRACKS_QUERY = `query PopularTracks($days: Int!, $limit: Int!) {
-  popularTracks(days: $days, limit: $limit) {
-    title artist album count
-  }
-}`;
-
 const WINDOWS = [
-  { label: 'Last day', days: 2 },
+  { label: 'Today', days: 2 },
   { label: '7 days', days: 7 },
   { label: '30 days', days: 30 }
 ];
 
-export default function PopularTab({ onUnauthorized }) {
+export default function PopularTab() {
   const [days, setDays] = useState(7);
-  const [tracks, setTracks] = useState(null);
+  const [chart, setChart] = useState(null);
+  const [failed, setFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await gql(POPULAR_TRACKS_QUERY, { days, limit: 50 });
-      const body = await res.json();
-      setTracks(body?.data?.popularTracks ?? []);
-    } catch (error) {
-      if (error.unauthorized) onUnauthorized?.();
+      const res = await fetch(`/api/v1/popular?days=${days}&limit=20`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setChart(await res.json());
+      setFailed(false);
+    } catch {
+      setFailed(true);
     }
-  }, [days, onUnauthorized]);
+  }, [days]);
 
   useEffect(() => {
     load();
@@ -40,72 +36,42 @@ export default function PopularTab({ onUnauthorized }) {
     return () => clearInterval(timer);
   }, [load]);
 
-  const peak = Math.max(1, ...(tracks || []).map(t => t.count));
-
-  let chartContent;
-  if (tracks === null) {
-    chartContent = <div className="empty-hint">Loading…</div>;
-  } else if (tracks.length === 0) {
-    chartContent = (
-      <div className="empty-hint">
-        <TrendingUp size={15} style={{ marginRight: '6px', verticalAlign: '-2px' }} />
-        Nothing to show yet — either the server has not played enough for anything to clear the
-        exposure floor, or an admin has turned this chart off.
-      </div>
-    );
-  } else {
-    chartContent = (
-      <div className="chart-list">
-        {tracks.map((track, index) => (
-          <div key={`${track.artist}-${track.title}`} className="chart-row">
-            <div
-              className="chart-row-fill"
-              style={{ width: `${(track.count / peak) * 100}%` }}
-            />
-            <span className="chart-rank">{index + 1}</span>
-            <div className="chart-info">
-              <span className="chart-title" title={track.title}>{track.title}</span>
-              <span className="chart-artist" title={track.artist}>
-                {track.artist}{track.album ? ` · ${track.album}` : ''}
-              </span>
-            </div>
-            <span className="chart-count">{track.count} plays</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const tracks = chart?.tracks ?? [];
+  const podium = tracks.slice(0, 3);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">Popular on Agro</div>
-            <div className="card-subtitle">
-              What the whole server has been playing — counted with no account attached
-            </div>
-          </div>
-        </div>
+    <>
+      <div className="segmented">
+        {WINDOWS.map(option => (
+          <button
+            key={option.days}
+            className={`segmented-btn ${days === option.days ? 'active' : ''}`}
+            onClick={() => setDays(option.days)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
 
-        <div className="browse-controls">
-          <div className="segmented">
-            {WINDOWS.map(option => (
-              <button
-                key={option.days}
-                className={`segmented-btn ${days === option.days ? 'active' : ''}`}
-                onClick={() => setDays(option.days)}
-              >
-                {option.label}
-              </button>
+      {failed && <div className="empty-hint">Could not load the chart.</div>}
+      {chart && !chart.enabled && <div className="empty-hint">An admin has turned the chart off.</div>}
+      {chart?.enabled && tracks.length === 0 && (
+        <div className="empty-hint">
+          <TrendingUp size={16} /> Nothing has been played enough to chart yet.
+        </div>
+      )}
+
+      {podium.length > 0 && <PopularPodium tracks={podium} compared={chart.compared} />}
+
+      {tracks.length > 3 && (
+        <div className="card">
+          <ol className="chart-rows">
+            {tracks.slice(3).map((track, index) => (
+              <PopularRow key={`${track.artist}-${track.title}`} track={track} rank={index + 4} compared={chart.compared} />
             ))}
-          </div>
+          </ol>
         </div>
-      </div>
-
-      <div className="card">
-        {chartContent}
-      </div>
-    </div>
+      )}
+    </>
   );
 }
