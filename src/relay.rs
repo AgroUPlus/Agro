@@ -9,6 +9,7 @@
 //! them in real time via `GET /api/v1/relay/{id}/receive`. The server keeps only small in-flight
 //! buffers (64 KB) in memory, writes zero bytes to disk, and updates device holdings upon completion.
 
+use crate::lock::LockExt;
 use axum::body::Bytes;
 use axum::{
     body::Body,
@@ -101,7 +102,7 @@ impl RelayHub {
         sender_device: &str,
         content_hash: &str,
     ) -> (String, Arc<RelayChannel>) {
-        let mut guard = self.sessions.lock().unwrap();
+        let mut guard = self.sessions.lock_recover();
         let now = Instant::now();
         // Opportunistic sweep of expired sessions
         guard.retain(|_, s| now.duration_since(s.created_at) < SESSION_TTL);
@@ -140,7 +141,7 @@ impl RelayHub {
         sender_device: &str,
         content_hash: &str,
     ) -> (String, Arc<RelayChannel>) {
-        let mut guard = self.sessions.lock().unwrap();
+        let mut guard = self.sessions.lock_recover();
         let now = Instant::now();
         guard.retain(|_, s| now.duration_since(s.created_at) < SESSION_TTL);
 
@@ -172,7 +173,7 @@ impl RelayHub {
     }
 
     pub fn get_session(&self, session_id: &str) -> Option<Arc<RelayChannel>> {
-        let mut guard = self.sessions.lock().unwrap();
+        let mut guard = self.sessions.lock_recover();
         let now = Instant::now();
         let session = guard.get(session_id)?.clone();
         if now.duration_since(session.created_at) >= SESSION_TTL {
@@ -183,7 +184,7 @@ impl RelayHub {
     }
 
     pub fn remove_session(&self, session_id: &str) {
-        let mut guard = self.sessions.lock().unwrap();
+        let mut guard = self.sessions.lock_recover();
         guard.remove(session_id);
     }
 }
@@ -381,22 +382,22 @@ pub async fn send_relay(
     // Capture encryption headers if present for E2EE relaying
     if let Some(enc) = headers.get("x-agro-encrypted") {
         if let Ok(val) = enc.to_str() {
-            *session.is_encrypted.lock().unwrap() = val.eq_ignore_ascii_case("true");
+            *session.is_encrypted.lock_recover() = val.eq_ignore_ascii_case("true");
         }
     }
     if let Some(nonce) = headers.get("x-agro-nonce") {
         if let Ok(val) = nonce.to_str() {
-            *session.nonce.lock().unwrap() = Some(val.to_string());
+            *session.nonce.lock_recover() = Some(val.to_string());
         }
     }
     if let Some(fp) = headers.get("x-agro-key-fingerprint") {
         if let Ok(val) = fp.to_str() {
-            *session.key_fingerprint.lock().unwrap() = Some(val.to_string());
+            *session.key_fingerprint.lock_recover() = Some(val.to_string());
         }
     }
     if let Some(sealed) = headers.get("x-agro-sealed-key") {
         if let Ok(val) = sealed.to_str() {
-            *session.sealed_key.lock().unwrap() = Some(val.to_string());
+            *session.sealed_key.lock_recover() = Some(val.to_string());
         }
     }
 
@@ -427,7 +428,7 @@ pub async fn send_relay(
         unreachable!("fanout handled above");
     };
     let tx = {
-        let mut guard = pipe_tx.lock().unwrap();
+        let mut guard = pipe_tx.lock_recover();
         guard.take()
     };
 
@@ -524,20 +525,20 @@ pub async fn receive_relay(
             header::CONTENT_TYPE,
             "application/octet-stream".parse().unwrap(),
         );
-        if *session.is_encrypted.lock().unwrap() {
+        if *session.is_encrypted.lock_recover() {
             headers.insert("x-agro-encrypted", "true".parse().unwrap());
         }
-        if let Some(nonce) = session.nonce.lock().unwrap().clone() {
+        if let Some(nonce) = session.nonce.lock_recover().clone() {
             if let Ok(value) = nonce.parse() {
                 headers.insert("x-agro-nonce", value);
             }
         }
-        if let Some(fp) = session.key_fingerprint.lock().unwrap().clone() {
+        if let Some(fp) = session.key_fingerprint.lock_recover().clone() {
             if let Ok(value) = fp.parse() {
                 headers.insert("x-agro-key-fingerprint", value);
             }
         }
-        if let Some(sealed) = session.sealed_key.lock().unwrap().clone() {
+        if let Some(sealed) = session.sealed_key.lock_recover().clone() {
             if let Ok(value) = sealed.parse() {
                 headers.insert("x-agro-sealed-key", value);
             }
@@ -549,7 +550,7 @@ pub async fn receive_relay(
         unreachable!("fanout handled above");
     };
     let rx = {
-        let mut guard = pipe_rx.lock().unwrap();
+        let mut guard = pipe_rx.lock_recover();
         guard.take()
     };
 
@@ -565,10 +566,10 @@ pub async fn receive_relay(
     let sid = session_id.clone();
 
     // Read encryption metadata to pass down in response headers
-    let is_encrypted = *session.is_encrypted.lock().unwrap();
-    let nonce = session.nonce.lock().unwrap().clone();
-    let key_fp = session.key_fingerprint.lock().unwrap().clone();
-    let sealed_key = session.sealed_key.lock().unwrap().clone();
+    let is_encrypted = *session.is_encrypted.lock_recover();
+    let nonce = session.nonce.lock_recover().clone();
+    let key_fp = session.key_fingerprint.lock_recover().clone();
+    let sealed_key = session.sealed_key.lock_recover().clone();
 
     // Cleanup and bookkeeping happen when the stream *ends*, not on a timer.
     let mut transferred: u64 = 0;
@@ -727,8 +728,8 @@ mod tests {
         let RelayPipe::Direct { tx, rx } = &session.pipe else {
             panic!("create_session makes a direct pipe");
         };
-        let tx = tx.lock().unwrap().take().unwrap();
-        let mut rx = rx.lock().unwrap().take().unwrap();
+        let tx = tx.lock_recover().take().unwrap();
+        let mut rx = rx.lock_recover().take().unwrap();
 
         tokio::spawn(async move {
             tx.send(Ok(Bytes::from_static(b"audio stream chunk 1")))
