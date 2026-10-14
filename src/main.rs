@@ -61,6 +61,8 @@ mod playlist_edit_tests;
 mod playlist_visibility;
 mod plugins;
 mod popular;
+#[cfg(test)]
+mod property_tests;
 mod proxy;
 mod rate_limit;
 mod relay;
