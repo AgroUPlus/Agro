@@ -70,6 +70,17 @@ jobs:
       - name: Run Test Suite & Boundary Checks
         run: cargo test --all-targets
 
+  supply-chain:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: cargo-deny (advisories, licenses, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
