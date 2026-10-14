@@ -48,3 +48,7 @@ jsonwebtoken = "11.0.0"
 # the spec cannot drift silently the way a hand-maintained document would.
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+[lints.clippy]
+# A panic in a request handler is a dropped request at best. Tests are exempt via clippy.toml.
+unwrap_used = "deny"
