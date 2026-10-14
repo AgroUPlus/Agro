@@ -7,7 +7,7 @@
 //! few hundred people were online. Routing by account keeps the work proportional to the people a
 //! message is actually for.
 
-use crate::lock::LockExt;
+use crate::lock::{LockExt, RwLockExt};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -131,20 +131,18 @@ impl Channels {
 
         let Some(user) = msg.user_id.as_deref().map(key) else {
             self.global_replay
-                .lock()
-                .unwrap()
+                .lock_recover()
                 .push(now, msg.clone(), REPLAY_CAPACITY);
             let _ = self.global.send(msg);
             return;
         };
 
         self.user_replay
-            .lock()
-            .unwrap()
+            .lock_recover()
             .entry(user.clone())
             .or_default()
             .push(now, msg.clone(), USER_REPLAY_CAPACITY);
-        if let Some(channel) = self.users.read().unwrap().get(&user) {
+        if let Some(channel) = self.users.read_recover().get(&user) {
             let _ = channel.send(msg);
         }
     }
@@ -156,8 +154,7 @@ impl Channels {
     /// The account's own channel, created on first use.
     pub(crate) fn subscribe_user(&self, username: &str) -> broadcast::Receiver<WsMessage> {
         self.users
-            .write()
-            .unwrap()
+            .write_recover()
             .entry(key(username))
             .or_insert_with(|| broadcast::channel(USER_CHANNEL_CAPACITY).0)
             .subscribe()
@@ -201,8 +198,7 @@ impl Channels {
             replay.expire(now);
         }
         self.users
-            .write()
-            .unwrap()
+            .write_recover()
             .retain(|_, channel| channel.receiver_count() > 0);
     }
 }
@@ -287,7 +283,7 @@ mod tests {
         drop(channels.subscribe_user("alice"));
         let _bob = channels.subscribe_user("bob");
         channels.sweep();
-        let users = channels.users.read().unwrap();
+        let users = channels.users.read_recover();
         assert!(!users.contains_key("alice"));
         assert!(users.contains_key("bob"));
     }
