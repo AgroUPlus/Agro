@@ -91,7 +91,7 @@ pub fn build(state: AppState, schema: AgroSchema) -> Router {
     // directory), buffered whole files in RAM on a 512 MB host, and wrote nothing to the database.
     // It is replaced by the authenticated streaming routes in `library`, which live inside
     // `protected` above.
-    let app = Router::new()
+    Router::new()
         .merge(protected)
         // The only two routes that can be reached without a token: there has to be some way to
         // get one. Both are rate-limited; see `login`.
@@ -132,6 +132,5 @@ pub fn build(state: AppState, schema: AgroSchema) -> Router {
         .layer(axum::middleware::from_fn(security_headers))
         .layer(cors)
         .with_state(state)
-        .layer(axum::Extension(schema));
-    app
+        .layer(axum::Extension(schema))
 }
