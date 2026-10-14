@@ -15,6 +15,7 @@
 //! subscriber's list on every publish, and neither spelling is more correct than the other.
 
 use crate::db::Db;
+use crate::lock::LockExt;
 use crate::norm::normalize_artist;
 use rusqlite::{params, OptionalExtension, Result};
 
@@ -62,7 +63,7 @@ impl Db {
             return Ok(None);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let existing: Option<(String, Option<String>)> = conn
             .query_row(
                 "SELECT artist_id, external_id FROM artists WHERE norm_name = ?1",
@@ -111,7 +112,7 @@ impl Db {
         let Some(id) = self.upsert_artist(name, None)? else {
             return Ok(None);
         };
-        self.conn.lock().unwrap().execute(
+        self.conn.lock_recover().execute(
             "UPDATE catalog_recordings SET artist_id = ?1 WHERE recording_id = ?2",
             params![id, recording_id],
         )?;
@@ -153,7 +154,7 @@ impl Db {
         let Some(id) = self.upsert_artist(display_name, external_id)? else {
             return Ok(None);
         };
-        self.conn.lock().unwrap().execute(
+        self.conn.lock_recover().execute(
             "INSERT OR IGNORE INTO artist_subscriptions (user_id, artist_id, since_at)
              VALUES (?1, ?2, strftime('%s','now'))",
             params![user_id, id],
@@ -162,7 +163,7 @@ impl Db {
     }
 
     pub fn unsubscribe_artist(&self, user_id: &str, artist_id: &str) -> Result<bool> {
-        let removed = self.conn.lock().unwrap().execute(
+        let removed = self.conn.lock_recover().execute(
             "DELETE FROM artist_subscriptions WHERE user_id = ?1 AND artist_id = ?2",
             params![user_id, artist_id],
         )?;

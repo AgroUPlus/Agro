@@ -7,6 +7,7 @@
 //! `handoff_state` and `synced_settings`. Only `app_passwords.user_id` holds the `users.id` UUID.
 
 use crate::db::Db;
+use crate::lock::LockExt;
 use crate::norm::{recording_key, DURATION_TOLERANCE_MS};
 use rusqlite::{params, OptionalExtension, Result};
 
@@ -122,7 +123,7 @@ impl Db {
     pub fn upsert_library_track(&self, track: &LibraryTrack) -> Result<()> {
         let key = recording_key(&track.artist, &track.title);
         let now = chrono::Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO library_tracks (
                  content_hash, title, artist, album, album_artist, track_no, disc_no, year, genre,
@@ -166,7 +167,7 @@ impl Db {
     }
 
     pub fn set_archived_path(&self, content_hash: &str, path: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE library_tracks SET archived_path = ?2, updated_at = ?3 WHERE content_hash = ?1",
             params![content_hash, path, chrono::Utc::now().to_rfc3339()],
@@ -183,7 +184,7 @@ impl Db {
         content_hash: &str,
         local_ref: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO device_holdings (device_id, user_id, content_hash, local_ref, reported_at)
              VALUES (?1,?2,?3,?4,?5)
@@ -212,7 +213,7 @@ impl Db {
         device_id: &str,
         hashes: &[String],
     ) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let mut removed = 0;
         for hash in hashes {
             removed += conn.execute(
@@ -445,7 +446,7 @@ impl Db {
         offset: i64,
         include_archive: bool,
     ) -> Result<Vec<BrowseItem>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
 
         // The scope and the search, written once because all three kinds need the same ones and
         // three copies of them would drift.
@@ -586,7 +587,7 @@ impl Db {
         album: &str,
         extension: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT OR REPLACE INTO library_covers
                  (album_key, album_artist, album, extension, updated_at)
@@ -643,7 +644,7 @@ impl Db {
         ttl_hours: i64,
     ) -> Result<()> {
         let now = chrono::Utc::now();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO upload_sessions
                  (upload_id, user_id, device_id, content_hash, size_bytes, received_bytes,
@@ -703,7 +704,7 @@ impl Db {
     }
 
     pub fn set_upload_received(&self, upload_id: &str, received: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "UPDATE upload_sessions SET received_bytes = ?2 WHERE upload_id = ?1",
             params![upload_id, received],
@@ -712,7 +713,7 @@ impl Db {
     }
 
     pub fn delete_upload(&self, upload_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "DELETE FROM upload_sessions WHERE upload_id = ?1",
             params![upload_id],
@@ -740,7 +741,7 @@ impl Db {
         ttl_hours: i64,
     ) -> Result<()> {
         let now = chrono::Utc::now();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO spool_items (content_hash, size_bytes, from_device, user_id,
                                       created_at, expires_at)
@@ -833,7 +834,7 @@ impl Db {
     }
 
     pub fn spool_delete(&self, content_hash: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "DELETE FROM spool_items WHERE content_hash = ?1",
             params![content_hash],
@@ -843,7 +844,7 @@ impl Db {
 
     /// Removes a track from the library index entirely.
     pub fn delete_library_item(&self, kind: BrowseKind, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         match kind {
             BrowseKind::Track => {
                 conn.execute(
@@ -884,7 +885,7 @@ impl Db {
         }
     }
     pub fn delete_library_track(&self, content_hash: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.execute(
             "DELETE FROM device_holdings WHERE content_hash = ?1",
             params![content_hash],
@@ -948,7 +949,7 @@ impl Db {
     /// after [`ReindexOutcome::done`] is true is a scan and nothing else, which also makes this
     /// safe to call speculatively after a deploy.
     pub fn reindex_normalisation(&self, batch: usize) -> Result<ReindexOutcome> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
 
         let stale_tracks: Vec<(String, String, String)> = {
             let mut stmt = conn.prepare(
@@ -1094,7 +1095,7 @@ mod tests {
         )]);
 
         {
-            let conn = db.conn.lock().unwrap();
+            let conn = db.conn.lock_recover();
             conn.execute(
                 "UPDATE library_tracks
                  SET norm_artist = 'stale', norm_title = 'stale', norm_variants = 'stale'
@@ -1109,7 +1110,7 @@ mod tests {
         assert!(first.done);
 
         let expected = recording_key("Boards of Canada", "Roygbiv (Remastered 2011)");
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let (artist, title, variants): (String, String, String) = conn
             .query_row(
                 "SELECT norm_artist, norm_title, norm_variants FROM library_tracks
@@ -1136,7 +1137,7 @@ mod tests {
             (track("h2", "B", "Two", 100_000), "laptop"),
         ]);
         {
-            let conn = db.conn.lock().unwrap();
+            let conn = db.conn.lock_recover();
             conn.execute("UPDATE library_tracks SET norm_title = 'stale'", [])
                 .unwrap();
         }

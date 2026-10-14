@@ -24,6 +24,7 @@
 //! where the queue is actually assembled. This end simply answers what is near what.
 
 use crate::db::Db;
+use crate::lock::LockExt;
 use crate::norm::recording_key;
 use rusqlite::{params, Result};
 
@@ -118,7 +119,7 @@ impl Db {
     /// broken or hostile, and either way the fix is the same: it cannot move the mean anywhere the
     /// axis does not go.
     pub fn submit_vectors(&self, entries: &[VectorSubmission]) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
         let mut stored = 0usize;
 
@@ -310,7 +311,7 @@ mod tests {
         db.submit_vectors(&[vector("Radiohead", "All I Need", 0.6, 0.5)])
             .unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let (tempo, observations): (f64, i64) = conn
             .query_row(
                 "SELECT tempo, observations FROM acoustic_vectors",
@@ -336,7 +337,7 @@ mod tests {
         db.submit_vectors(&[vector("Radiohead", "All I Need", 1.0, 1.0)])
             .unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let observations: i64 = conn
             .query_row("SELECT observations FROM acoustic_vectors", [], |row| {
                 row.get(0)
@@ -359,7 +360,7 @@ mod tests {
         )])
         .unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM acoustic_vectors", [], |row| {
                 row.get(0)
@@ -375,7 +376,7 @@ mod tests {
         db.submit_vectors(&[vector("Broken", "Client", 400.0, -5.0)])
             .unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let (tempo, energy): (f64, f64) = conn
             .query_row("SELECT tempo, energy FROM acoustic_vectors", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))

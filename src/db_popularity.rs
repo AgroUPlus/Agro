@@ -28,6 +28,7 @@
 //! `reindex_normalisation` keeps this table's convention identical to the library index's.
 
 use crate::db::Db;
+use crate::lock::LockExt;
 use crate::norm::recording_key;
 use rusqlite::{params, Result};
 
@@ -87,7 +88,7 @@ impl Db {
         if entries.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction()?;
 
         let mut counted = 0;
@@ -257,7 +258,7 @@ mod tests {
         )
         .unwrap();
 
-        let conn = db.conn.lock().unwrap();
+        let conn = db.conn.lock_recover();
         let remaining: i64 = conn
             .query_row("SELECT COUNT(*) FROM popularity_counters", [], |row| {
                 row.get(0)

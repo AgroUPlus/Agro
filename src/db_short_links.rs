@@ -8,6 +8,7 @@
 //! - A link nobody has opened or re-shared for [`IDLE_DAYS`] is deleted, and its id is kept as a
 //!   tombstone so `/listen` can tell the visitor it was deleted rather than that it never existed.
 
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 use crate::db::Db;
@@ -33,7 +34,7 @@ impl Db {
         target_url: &str,
         source: Option<&str>,
     ) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         let id: Option<String> = conn
             .query_row(
                 "SELECT id FROM short_links
@@ -54,7 +55,7 @@ impl Db {
 
     /// Whether `id` was a link deleted for going unused, as opposed to one that never existed.
     pub fn short_link_retired(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock_recover();
         conn.query_row(
             "SELECT 1 FROM retired_short_links WHERE id = ?1",
             params![id],
@@ -70,7 +71,7 @@ impl Db {
     /// A link's last use is the latest of when it was made, last opened and last re-shared. One
     /// transaction, so a link is never deleted without its tombstone or the other way round.
     pub fn sweep_idle_short_links(&self) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock_recover();
         let now = chrono::Utc::now().timestamp();
         let idle_before = now - IDLE_DAYS * DAY_SECS;
         let tx = conn.transaction()?;

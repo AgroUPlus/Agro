@@ -19,6 +19,7 @@
 //! three-minute track past the request cap on its own.
 
 use crate::db::Db;
+use crate::lock::LockExt;
 use rusqlite::{params, OptionalExtension, Result};
 
 /// How alike two sequences must be to be one recording.
@@ -174,7 +175,7 @@ impl Db {
             Some(id) => {
                 // Metadata is filled in, never overwritten. The first client to supply a title
                 // usually had tags worth having; a later one may be the source with none.
-                let conn = self.conn.lock().unwrap();
+                let conn = self.conn.lock_recover();
                 conn.execute(
                     // `lyrics_source` is filled in only alongside the lyrics it describes: a row
                     // that already holds text keeps the attribution that came with it, and a row
@@ -203,7 +204,7 @@ impl Db {
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
                 let mean = quantise(&mean_vector(&vectors));
-                let conn = self.conn.lock().unwrap();
+                let conn = self.conn.lock_recover();
                 conn.execute(
                     "INSERT INTO catalog_recordings
                          (recording_id, duration_ms, title, artist, album, lyrics, lyrics_source,
@@ -244,7 +245,7 @@ impl Db {
 
         if let Some(source_uri) = published.source_uri.as_deref().map(str::trim) {
             if !source_uri.is_empty() {
-                let conn = self.conn.lock().unwrap();
+                let conn = self.conn.lock_recover();
                 conn.execute(
                     "INSERT INTO catalog_sources (source_uri, recording_id, updated_at)
                      VALUES (?1, ?2, ?3)
