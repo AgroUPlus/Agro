@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     http::{header, HeaderValue, StatusCode, Uri},
-    response::{IntoResponse, Response},
+    response::IntoResponse,
 };
 use rust_embed::RustEmbed;
 
@@ -17,21 +17,21 @@ pub async fn static_dashboard_handler(uri: Uri) -> impl IntoResponse {
     match DashboardAssets::get(target).or_else(|| DashboardAssets::get("index.html")) {
         Some(content) => {
             let mime = mime_guess::from_path(target).first_or_octet_stream();
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_str(mime.as_ref()).unwrap(),
-                )
-                .body(Body::from(content.data))
-                .unwrap()
+            // A MIME type is ASCII by construction; the fallback exists only to keep the type total.
+            let content_type = HeaderValue::from_str(mime.as_ref())
+                .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, content_type)],
+                Body::from(content.data),
+            )
+                .into_response()
         }
-        None => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html")
-            .body(Body::from(
-                "<h1>Agro Web Dashboard</h1><p>Frontend assets building...</p>",
-            ))
-            .unwrap(),
+        None => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, HeaderValue::from_static("text/html"))],
+            "<h1>Agro Web Dashboard</h1><p>Frontend assets building...</p>",
+        )
+            .into_response(),
     }
 }
