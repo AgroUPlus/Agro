@@ -59,7 +59,7 @@ GET /listen?<target>[&s=<speed>&p=<pitch>]
 | `id` | Agro short-link UID | Minted by `createShortLink`. Resolved by `resolveShortLink`. Preferred whenever Agro is paired: it keeps raw URLs and video ids out of the query string, and it is the only form Agro's link manager can list, count or revoke. |
 | `v` | YouTube video id | Exactly **11** characters of URL-safe base64. Carried in the open — it is public already, and it is what makes a shared link readable. |
 | `u` | Any other track URL, percent-encoded | Checked against the allowlist in §5 before use. |
-| `pl` | Agro playlist id (a UUID) | A playlist published to this server. The forwarder MUST refuse anything that is not a UUID, MUST NOT look the id up, and MUST NOT show anything about the playlist: who may open it is decided when the app fetches it with the visitor's own account (§7a). |
+| `pl` | Agro playlist id (a UUID) | A playlist published to this server. The forwarder MUST refuse anything that is not a UUID. It MUST NOT show anything about a playlist that is not **public** — for those, the page MUST be identical to the one an unknown id gets: who may open it is decided when the app fetches it with the visitor's own account (§7a). For a public playlist it MAY show the title and track count (§3.4), and nothing else. |
 
 A forwarder that receives none of these, or more than one, MUST refuse (§6).
 
@@ -86,6 +86,24 @@ version you meant, not the one the file happens to hold.
 
 Any parameter not listed above is unassigned. A forwarder MUST NOT pass an unrecognised parameter
 onward (§4). Future parameters take a new name; none is ever reinterpreted.
+
+### 3.4 Link previews
+
+A chat unfurls a link by reading the page's `<title>` and Open Graph tags, not by running it. A
+forwarder SHOULD give it something better than a generic line, from what the link is already
+public about, and MUST NOT fetch anything from a third party to do so:
+
+- **`id`** — the minter MAY send `title` and `subtitle` (a track and its artist) to
+  `createShortLink`. The forwarder puts them in `og:title` / `og:description` and the page title.
+  A track shared as a link is public by construction ("anyone can open it"), so this is the
+  sharer's choice to describe it, not a disclosure. Sharing again without them MUST keep what the
+  link already has. Each is trimmed, stripped of control characters and capped at 200 characters.
+- **`v`, or an `id`/`u` whose target is a YouTube video** — `og:image` MAY be the video's
+  `i.ytimg.com` thumbnail. The id is already in the target, so it tells a reader nothing new.
+- **`pl`** — only for a public playlist, per §3.1.
+
+Titles MUST use a literal `·`, not `&middot;`: some chats show a title's entities as typed.
+All of it is escaped per §5a.
 
 ---
 
@@ -205,6 +223,7 @@ it has no server behind.
 | §5a escaping | n/a | ✅ `escape_html()` | ✅ DOM APIs, no `innerHTML` |
 | §7 accepts own hosts | ✅ `ownHosts()` | n/a | n/a |
 | §6a reuse and lapse | n/a | ✅ `db_short_links` | n/a |
+| §3.4 link previews | ✅ `rewrite()` sends title | ✅ `listen::preview` | — (static, generic) |
 | §8 no visitor log | n/a | ✅ | ✅ |
 
 All three conform as of version 1.

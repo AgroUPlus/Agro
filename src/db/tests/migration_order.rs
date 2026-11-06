@@ -117,6 +117,8 @@ const SHIPPED: &[&str] = &[
     "e96d5df36a9708a4",
     // Cloud vault.
     "b13680827a693bcb",
+    // Short-link preview metadata.
+    "e2590841439b0395",
 ];
 
 fn digest(migration: &str) -> String {

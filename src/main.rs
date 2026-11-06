@@ -34,6 +34,7 @@ mod db_popularity;
 mod db_popularity_movement;
 mod db_presence;
 mod db_replay;
+mod db_short_link_preview;
 mod db_short_links;
 mod db_social;
 mod db_vault;

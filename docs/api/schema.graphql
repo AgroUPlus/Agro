@@ -1017,8 +1017,12 @@ type Mutation {
 	
 	`source` records which backend minted the underlying share — `"navidrome"` or `"subsonic"` when the
 	link points at a share on the music server, so deleting it later can also revoke it there.
+	
+	`title` and `subtitle` are what the link is of — a track and its artist — and become the
+	preview a chat draws under the link. Both optional; sharing again without them keeps
+	whatever the link already had. See `listen::preview`.
 	"""
-	createShortLink(userId: String!, targetUrl: String!, source: String, expiresAt: Int): String!
+	createShortLink(userId: String!, targetUrl: String!, source: String, expiresAt: Int, title: String, subtitle: String): String!
 	"""
 	Removes a link so it stops resolving.
 	
@@ -2323,7 +2327,8 @@ type ShareLink {
 	"""
 	url: String!
 	"""
-	What the link is of, when the row knows. Only ephemeral shares carry track metadata.
+	What the link is of, when the row knows: an ephemeral share's track, or the title a short
+	link was minted with.
 	"""
 	label: String
 	createdAt: Int
