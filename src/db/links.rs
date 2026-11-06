@@ -95,16 +95,22 @@ impl Db {
         let mut links = Vec::new();
 
         let mut stmt = conn.prepare(
-            "SELECT id, target_url, created_at, expires_at, click_count, last_clicked_at, source
+            "SELECT id, target_url, created_at, expires_at, click_count, last_clicked_at, source,
+                    title, subtitle
              FROM short_links WHERE user_id = ?1 ORDER BY created_at DESC",
         )?;
         let mut rows = stmt.query(params![user_id])?;
         while let Some(row) = rows.next()? {
+            let title: Option<String> = row.get(7)?;
+            let subtitle: Option<String> = row.get(8)?;
             links.push(LinkRow {
                 id: row.get(0)?,
                 kind: LinkKind::Short,
                 target: row.get(1)?,
-                label: None,
+                label: title.map(|title| match subtitle {
+                    Some(subtitle) => format!("{subtitle} — {title}"),
+                    None => title,
+                }),
                 created_at: row.get(2)?,
                 expires_at: row.get(3)?,
                 click_count: row.get(4)?,
@@ -195,7 +201,8 @@ pub struct LinkRow {
     pub id: String,
     pub kind: LinkKind,
     pub target: String,
-    /// What the link is *of*, when the row knows. Only ephemeral shares carry track metadata.
+    /// What the link is *of*, when the row knows: an ephemeral share's track, or the title a short
+    /// link was minted with.
     pub label: Option<String>,
     pub created_at: Option<i64>,
     pub expires_at: Option<i64>,

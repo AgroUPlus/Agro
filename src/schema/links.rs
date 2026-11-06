@@ -2,6 +2,7 @@
 
 use crate::db::Db;
 use crate::db::LinkKind;
+use crate::db_short_link_preview::clean_preview_text;
 use async_graphql::{Context, Object, SimpleObject};
 
 use super::{authorize, caller, public_url, MAX_URL_LEN};
@@ -25,7 +26,8 @@ pub struct ShareLink {
     pub target: String,
     /// The full address to hand out.
     pub url: String,
-    /// What the link is of, when the row knows. Only ephemeral shares carry track metadata.
+    /// What the link is of, when the row knows: an ephemeral share's track, or the title a short
+    /// link was minted with.
     pub label: Option<String>,
     pub created_at: Option<i64>,
     pub expires_at: Option<i64>,
@@ -122,6 +124,11 @@ impl LinksMutation {
     ///
     /// `source` records which backend minted the underlying share — `"navidrome"` or `"subsonic"` when the
     /// link points at a share on the music server, so deleting it later can also revoke it there.
+    ///
+    /// `title` and `subtitle` are what the link is of — a track and its artist — and become the
+    /// preview a chat draws under the link. Both optional; sharing again without them keeps
+    /// whatever the link already had. See `listen::preview`.
+    #[allow(clippy::too_many_arguments)]
     async fn create_short_link(
         &self,
         ctx: &Context<'_>,
@@ -129,6 +136,8 @@ impl LinksMutation {
         target_url: String,
         source: Option<String>,
         expires_at: Option<i64>,
+        title: Option<String>,
+        subtitle: Option<String>,
     ) -> async_graphql::Result<String> {
         // A link attributed to an account has to be authorised as that account. `userId` used to
         // be optional, and omitting it skipped this check entirely — minting an unowned link that
@@ -147,9 +156,12 @@ impl LinksMutation {
         if !target_url.starts_with("https://") && !target_url.starts_with("http://") {
             return Err("A link target must be an http or https URL".into());
         }
+        let title = clean_preview_text(title.as_deref());
+        let subtitle = clean_preview_text(subtitle.as_deref());
         // The same target shared again gets the link it already has, rather than one more row.
         if expires_at.is_none() {
             if let Some(existing) = db.reuse_short_link(&user_id, target_url, source.as_deref())? {
+                db.set_short_link_preview(&existing, title.as_deref(), subtitle.as_deref())?;
                 return Ok(existing);
             }
         }
@@ -170,6 +182,7 @@ impl LinksMutation {
             source.as_deref(),
             expires_at,
         )?;
+        db.set_short_link_preview(&uid, title.as_deref(), subtitle.as_deref())?;
         Ok(uid)
     }
 

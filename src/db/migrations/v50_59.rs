@@ -105,4 +105,13 @@ pub(super) const ENTRIES: &[&str] = &[
          blob              BLOB NOT NULL
      );
      CREATE INDEX IF NOT EXISTS idx_vault_backups_user ON vault_backups(user_id, created_at);",
+    // 55 — what a short link is *of*, for the preview a chat draws under it.
+    //
+    // A chat that unfurls `/listen?id=…` read the page's title and showed "Wanda · Forwarding" for
+    // every track. The sharer's app now sends the track's title and artist with the link, and the
+    // page puts them in its Open Graph tags. Both are optional: a link minted before this, or by a
+    // client that sends neither, keeps the generic preview. They are library metadata the sharer
+    // chose to put on a public link, never anything about whoever opens it — see `listen::preview`.
+    "ALTER TABLE short_links ADD COLUMN title TEXT;
+     ALTER TABLE short_links ADD COLUMN subtitle TEXT;",
 ];
