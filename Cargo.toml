@@ -46,8 +46,8 @@ totp-rs = "6.0.0"
 jsonwebtoken = "11.0.0"
 # Generates the OpenAPI spec for the REST surface from annotations on the handlers themselves, so
 # the spec cannot drift silently the way a hand-maintained document would.
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "10", features = ["axum"] }
 
 [lints.clippy]
 # A panic in a request handler is a dropped request at best. Tests are exempt via clippy.toml.
