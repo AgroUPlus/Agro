@@ -3,11 +3,17 @@
 //! **Part of `SHARE_LINKS.md` §3.1, which is normative.** A `wanda://playlist?agro=<id>` link cannot
 //! be tapped in a chat, so Wanda shares this page instead and the page hands the app that link.
 //!
-//! The page says nothing about the playlist. Who can open it is decided by the server when the app
-//! asks for it with the visitor's own account; an unauthenticated page that showed the title or
-//! the tracks would publish a friends-only or private playlist to anyone holding the link. So the
-//! id is checked for shape, never looked up, and the page is the same whether it exists or not.
+//! The page says nothing about a playlist that is not public. Who can open one is decided by the
+//! server when the app asks for it with the visitor's own account; an unauthenticated page that
+//! showed the title of a friends-only or private playlist would publish it to anyone holding the
+//! link. So for those the page is byte-for-byte the one an id that does not exist gets.
+//!
+//! A **public** playlist is the exception: anyone may open it already, so its title and track
+//! count go in the page and its link preview. Nothing else does — not the owner, not the tracks.
 
+use crate::listen::escape_html;
+use crate::listen::preview::Preview;
+use crate::AppState;
 use axum::{
     http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
@@ -28,9 +34,43 @@ pub(crate) fn is_playlist_id(value: &str) -> bool {
             .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+/// What the page may say about playlist `id`: its title and size when it is public, and the same
+/// nothing as for an unknown id otherwise.
+pub(crate) fn preview(state: &AppState, id: &str) -> Preview {
+    let public = state.db.get_playlist(id).unwrap_or_else(|e| {
+        tracing::warn!("listen: playlist preview lookup failed: {e}");
+        None
+    });
+    let named = public
+        .filter(|playlist| playlist.is_public)
+        .map(|playlist| {
+            let count = state.db.get_playlist_items(id).map(|items| items.len());
+            let subtitle = match count {
+                Ok(1) => Some("1 track".to_string()),
+                Ok(n) => Some(format!("{n} tracks")),
+                Err(e) => {
+                    tracing::warn!("listen: playlist size lookup failed: {e}");
+                    None
+                }
+            };
+            (playlist.title, subtitle)
+        });
+    let (title, subtitle) = named.unzip();
+    Preview {
+        title,
+        subtitle: subtitle.flatten(),
+        image: None,
+        noun: "playlist",
+    }
+}
+
 /// The page for a well-formed id; the caller refuses anything else.
-pub(crate) fn page(id: &str) -> Response {
+pub(crate) fn page(id: &str, preview: &Preview) -> Response {
     debug_assert!(is_playlist_id(id));
+    let subheading = preview
+        .subtitle
+        .as_deref()
+        .unwrap_or("It opens with your account on this server, if its owner shared it with you.");
     let app_link = format!("wanda://playlist?agro={id}");
     let intent = format!(
         "intent://playlist?agro={id}#Intent;scheme=wanda;package=com.wander.android;S.browser_fallback_url={};end",
@@ -42,7 +82,11 @@ pub(crate) fn page(id: &str) -> Response {
             "__INTENT_JSON__",
             &serde_json::to_string(&intent).expect("a String always serializes"),
         )
-        .replace("__INSTALL__", INSTALL_URL);
+        .replace("__INSTALL__", INSTALL_URL)
+        .replace("__TITLE__", &escape_html(&preview.page_title()))
+        .replace("__PREVIEW_META__", &preview.meta_tags())
+        .replace("__HEADING__", &escape_html(preview.heading()))
+        .replace("__SUBHEADING__", &escape_html(subheading));
 
     (
         StatusCode::OK,
@@ -57,6 +101,7 @@ pub(crate) fn page(id: &str) -> Response {
 }
 
 // Nothing interpolated here comes from the visitor except the id, and the id is hex and dashes.
+// A public playlist's title is its owner's text, and is escaped like any other.
 const TEMPLATE: &str = r##"<!doctype html>
 <html lang="en">
 <head>
@@ -64,7 +109,8 @@ const TEMPLATE: &str = r##"<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Wanda &middot; Shared playlist</title>
+<title>__TITLE__</title>
+__PREVIEW_META__
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1.25rem;
@@ -84,8 +130,8 @@ const TEMPLATE: &str = r##"<!doctype html>
 <body>
 <main>
   <div class="tag">Wanda &middot; Shared playlist</div>
-  <h1>Open this playlist in Wanda</h1>
-  <p>It opens with your account on this server, if its owner shared it with you.</p>
+  <h1>__HEADING__</h1>
+  <p>__SUBHEADING__</p>
   <a id="open" class="primary" href="__APP_LINK__">Open in Wanda</a>
   <a class="secondary" href="__INSTALL__" rel="noreferrer">Get Wanda</a>
 </main>
@@ -115,7 +161,13 @@ mod tests {
     #[tokio::test]
     async fn hands_the_app_its_own_playlist_link() {
         let id = "3f2b8c1e-9a4d-4e57-8b21-6d0f5c7a9e10";
-        let response = page(id);
+        let preview = Preview {
+            title: None,
+            subtitle: None,
+            image: None,
+            noun: "playlist",
+        };
+        let response = page(id, &preview);
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
